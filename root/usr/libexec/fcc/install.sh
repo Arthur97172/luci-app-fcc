@@ -179,29 +179,54 @@ write_runtime_metadata() {
 # Update safety net (DESIGN_SPEC.md section 23 steps 6, 12 and 13)
 # ---------------------------------------------------------------------------
 backup_runtime() {
-	# backup_runtime -> path to the archive, or empty when there was nothing
-	# worth keeping (which is the normal case on a first install).
+	# backup_runtime -> the backup directory, or empty when there was nothing
+	# worth keeping (the normal case on a first install).
 	#
-	# Only data/ and runtime.json are archived. The runtime tree itself is not:
-	# it is large, the installer rebuilds it, and archiving it would double the
-	# disk the preflight just checked for. What cannot be rebuilt is the user's
-	# FCC configuration and agent state, and that is what this keeps.
-	_bk_dir="$(fcc_dir_backup)"
-	mkdir -p "$_bk_dir" 2>/dev/null || return 1
-	[ -d "$ROOT/data" ] || [ -f "$ROOT/runtime.json" ] || return 1
-
+	# Two different things are being protected, and they want opposite
+	# treatments (sections 25, 78 and 79):
+	#
+	#   data/ + runtime.json  small, and must survive a *successful* update in
+	#                         place, so they are copied
+	#   runtime/ + bin/       large — a Python interpreter and the uv tools —
+	#                         and only needed if the update *fails*, so they are
+	#                         renamed aside. Within one filesystem a rename is
+	#                         instant and costs no extra space, which is what
+	#                         makes section 79's rollback affordable on a router
+	#                         that could never hold two copies of the runtime.
+	_bk_root="$(fcc_dir_backup)"
 	_bk_stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
-	_bk_out="$_bk_dir/runtime-$_bk_stamp.tar"
-	_bk_list=""
-	[ -d "$ROOT/data" ] && _bk_list="$_bk_list data"
-	[ -f "$ROOT/runtime.json" ] && _bk_list="$_bk_list runtime.json"
-	[ -n "$_bk_list" ] || return 1
+	_bk_dir="$_bk_root/$_bk_stamp"
+	mkdir -p "$_bk_dir" 2>/dev/null || return 1
 
-	# The list is built from fixed names above, never from user input, so the
-	# unquoted expansion is the intended word splitting.
-	# shellcheck disable=SC2086
-	( cd "$ROOT" && tar -cf "$_bk_out" $_bk_list ) >/dev/null 2>&1 || return 1
-	printf '%s' "$_bk_out"
+	_bk_any=0
+	if [ -d "$ROOT/data" ]; then
+		cp -a "$ROOT/data" "$_bk_dir/data" 2>/dev/null && _bk_any=1
+	fi
+	if [ -f "$ROOT/runtime.json" ]; then
+		cp "$ROOT/runtime.json" "$_bk_dir/runtime.json" 2>/dev/null && _bk_any=1
+	fi
+	for _bk_d in runtime bin; do
+		[ -d "$ROOT/$_bk_d" ] || continue
+		mv "$ROOT/$_bk_d" "$_bk_dir/$_bk_d" 2>/dev/null && _bk_any=1
+	done
+
+	if [ "$_bk_any" -eq 0 ]; then
+		rmdir "$_bk_dir" 2>/dev/null
+		return 1
+	fi
+	printf '%s' "$_bk_dir"
+}
+
+commit_backup() {
+	# The update succeeded, so the moved-aside runtime tree is dead weight.
+	# Section 78 asks for the last successful backup to be kept; the data copy
+	# is what that means here — it is small, and it is the part that cannot be
+	# reinstalled. Keeping the old runtime tree as well would cost a permanent
+	# second copy for no benefit, since a successful update has no use for it.
+	_cb_dir="$1"
+	[ -n "$_cb_dir" ] && [ -d "$_cb_dir" ] || return 0
+	rm -rf "$_cb_dir/runtime" "$_cb_dir/bin" 2>/dev/null
+	return 0
 }
 
 wait_for_health() {
@@ -222,27 +247,49 @@ wait_for_health() {
 	return 1
 }
 
-recover_after_failure() {
-	# recover_after_failure <backup-archive> <was-running>
+rollback_runtime() {
+	# rollback_runtime <backup-dir> <was-running>
 	#
-	# Section 23 step 13: leave the box in a usable state. If the server was
-	# running before the update, start it again so the user is not left with
-	# nothing; the backup is reported so the data can be restored by hand.
+	# Section 79: stop, restore the previous runtime, restore the config, start,
+	# health check. The messages are the ones section 79 specifies, because the
+	# user is being told what state their router is in and that is not a place
+	# for improvisation.
 	#
-	# Section 23 step 14 asks for a rollback to the previous version. That is
-	# NOT done here, and cannot be: upstream's installer takes no version
-	# argument — it always installs the newest release from PyPI — so there is
-	# no older build to return to. Section 103 requires saying so rather than
-	# reporting a rollback that did not happen.
-	_rc_bk="$1"
-	_rc_was="$2"
-	if [ "$_rc_was" = true ]; then
-		/etc/init.d/fcc start >/dev/null 2>&1
-		fcc_log "$LOG" "restarted the FCC server after the failed update"
+	# The previous runtime is not downloaded again — upstream's installer takes
+	# no version argument, so the only copy of it is the one this function
+	# renamed aside before the update started.
+	_rb_dir="$1"
+	_rb_was="$2"
+
+	if [ -n "$_rb_dir" ] && [ -d "$_rb_dir" ]; then
+		# Discard whatever the failed install left, then put the previous tree
+		# back exactly where it was.
+		rm -rf "$ROOT/runtime" "$ROOT/bin" 2>/dev/null
+		for _rb_d in runtime bin; do
+			[ -d "$_rb_dir/$_rb_d" ] || continue
+			mv "$_rb_dir/$_rb_d" "$ROOT/$_rb_d" 2>/dev/null
+		done
+		if [ -d "$_rb_dir/data" ]; then
+			rm -rf "$ROOT/data" 2>/dev/null
+			cp -a "$_rb_dir/data" "$ROOT/data" 2>/dev/null
+		fi
+		[ -f "$_rb_dir/runtime.json" ] && cp "$_rb_dir/runtime.json" "$ROOT/runtime.json" 2>/dev/null
 	fi
-	[ -n "$_rc_bk" ] && fcc_log "$LOG" "the pre-update backup is at $_rc_bk (restore it by hand if needed)"
-	fcc_log "$LOG" "NOTE: rollback to the previous FCC version is not possible — the upstream installer accepts no version argument and always installs the latest release"
-	return 0
+
+	# Whatever version is on disk now is the truth; drop the cached one so the
+	# status page cannot keep reporting the version that failed to install.
+	fcc_cache_set fcc_version ""
+
+	[ "$_rb_was" = true ] && /etc/init.d/fcc start >/dev/null 2>&1
+
+	if [ -x "$ROOT/bin/fcc-server" ] && wait_for_health "$FCC_HEALTH_TIMEOUT"; then
+		fcc_log "$LOG" "Update failed. Previous FCC version restored."
+		printf 'ROLLED_BACK\n'
+		return 0
+	fi
+	fcc_log "$LOG" "FCC Server remains stopped. Please inspect logs."
+	printf 'ROLLBACK_FAILED\n'
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -296,7 +343,7 @@ cmd_runtime() {
 	_cr_was_running=false
 	[ -n "$(fcc_server_pid 2>/dev/null || true)" ] && _cr_was_running=true
 	_cr_backup="$(backup_runtime 2>/dev/null || true)"
-	[ -n "$_cr_backup" ] && fcc_log "$LOG" "backed up data/ and runtime.json to $_cr_backup"
+	[ -n "$_cr_backup" ] && fcc_log "$LOG" "backed up to $_cr_backup (data copied, previous runtime renamed aside)"
 
 	# --- sections 23 steps 7-8: stop --------------------------------------
 	# The upstream installer refuses to run while FCC processes are alive.
@@ -304,7 +351,7 @@ cmd_runtime() {
 
 	_cr_script="$ROOT/cache/fcc-install-$$.sh"
 	if ! download_installer "$_cr_script"; then
-		recover_after_failure "$_cr_backup" "$_cr_was_running"
+		rollback_runtime "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return 1
 	fi
@@ -319,7 +366,7 @@ cmd_runtime() {
 
 	if [ "$_cr_rc" -ne 0 ]; then
 		fcc_log "$LOG" "installer exited with status $_cr_rc; see logs/installer.out"
-		recover_after_failure "$_cr_backup" "$_cr_was_running"
+		rollback_runtime "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return "$_cr_rc"
 	fi
@@ -327,7 +374,7 @@ cmd_runtime() {
 	# --- section 23 step 10: verify ---------------------------------------
 	if ! "$ROOT/bin/fcc-server" --version >/dev/null 2>&1; then
 		fcc_log "$LOG" "validation failed: fcc-server --version did not succeed"
-		recover_after_failure "$_cr_backup" "$_cr_was_running"
+		rollback_runtime "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return 1
 	fi
@@ -352,12 +399,18 @@ cmd_runtime() {
 			fcc_log "$LOG" "health check passed: $(fcc_server_health)"
 		else
 			fcc_log "$LOG" "health check FAILED after ${FCC_HEALTH_TIMEOUT}s: $(fcc_server_health)"
-			recover_after_failure "$_cr_backup" "$_cr_was_running"
+			# rollback_runtime prints the outcome itself — ROLLED_BACK or
+			# ROLLBACK_FAILED — so this path does not add a second, vaguer word
+			# for the same thing.
+			rollback_runtime "$_cr_backup" "$_cr_was_running"
 			fcc_lock_release "$_cr_lock"
-			printf 'HEALTH_FAILED\n'
 			return 1
 		fi
 	fi
+
+	# The update is verified and the server is answering; the previous runtime
+	# is no longer needed (section 78 keeps the data copy).
+	commit_backup "$_cr_backup"
 
 	_cr_after="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
 	fcc_lock_release "$_cr_lock"

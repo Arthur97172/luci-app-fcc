@@ -67,10 +67,17 @@ own admin UI and are never stored in UCI — this package has nowhere to put the
 
 **4. Update.** *Basic Information* → **Check Update** → **Update FCC**. The
 update is a sequence, not a single call: it checks free space, warns about open
-console sessions, archives `data/` and `runtime.json` under `backup/`, stops the
-server, reinstalls, verifies the binary, restarts, and then confirms the server
-is actually answering before reporting success. If that last check fails the
-update is reported as failed rather than as done.
+console sessions, saves the current state, stops the server, reinstalls, verifies
+the binary, restarts, and then confirms the server is actually answering before
+reporting success.
+
+If any step fails, the previous runtime is put back. The old runtime tree is
+*renamed* aside before the update rather than copied — on one filesystem that is
+instant and costs no extra space — so restoring it needs no download and no
+second copy. Your `data/` is copied, since a successful update has to find it
+still in place. After a rollback the log says either `Previous FCC version
+restored` or, if the restored server will not start, `FCC Server remains
+stopped. Please inspect logs.` LuCI itself is untouched either way.
 
 ---
 
@@ -208,14 +215,11 @@ and `tests/test_shell.sh` enforces it.
   whose CLI changes its output format will show an unfamiliar string.
 * **The console needs `tmux`.** Without it the other two pages still work; the
   console reports the missing dependency instead of failing silently.
-* **An update cannot be rolled back to the previous FCC version.** This is a
-  limitation of upstream's installer, not a choice made here: it takes no
-  version argument and always installs the newest release from PyPI, so there is
-  no older build to return to. What the update *does* do on failure is restart
-  the server and leave the pre-update archive of `data/` and `runtime.json` in
-  `backup/`, which covers the part that cannot be reinstalled — your FCC
-  configuration and agent state. The code itself is not recoverable, and the
-  update log says so rather than claiming a rollback.
+* **A rolled-back update costs a second runtime's worth of disk while it runs.**
+  Rollback works by renaming the previous runtime aside rather than copying it,
+  which is free on one filesystem — but the new runtime still has to be written
+  before the old one is discarded, so the free-space preflight has to cover one
+  runtime, not zero. That is what it checks.
 
 ---
 

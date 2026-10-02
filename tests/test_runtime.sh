@@ -401,6 +401,51 @@ SHIM
 	chmod +x "$SANDBOX/bin/uci"
 }
 
+# make_standin_server <path> <port>
+#
+# A stand-in fcc-server. It deliberately does not exec: the process has to stay
+# in the process table under its own path so the /proc scan finds it, while a
+# child holds the port. The trap keeps the child from being orphaned on the port
+# when the test tears the server down.
+make_standin_server() {
+	_ms_path="$1"
+	_ms_port="$2"
+	mkdir -p "$(dirname -- "$_ms_path")"
+	cat > "$_ms_path" <<'EOF'
+#!/bin/sh
+# Stand-in fcc-server — see tests/test_runtime.sh.
+python3 -m http.server __PORT__ --bind 127.0.0.1 >/dev/null 2>&1 &
+_child=$!
+trap 'kill "$_child" 2>/dev/null' TERM INT EXIT
+wait "$_child"
+EOF
+	sed "s/__PORT__/$_ms_port/" "$_ms_path" > "$_ms_path.new"
+	mv "$_ms_path.new" "$_ms_path"
+	chmod +x "$_ms_path"
+}
+
+# install.sh ends with a dispatch on $1, so sourcing it directly would run the
+# dispatch and exit. The functions are what is under test, so the dispatch is
+# stripped from a copy — a test-only branch inside the real script would be a
+# seam in production code to make a test easier, which is the wrong trade.
+install_lib() {
+	_il_dst="$SANDBOX/lib-install.sh"
+	[ -f "$_il_dst" ] || sed '/^case "${1:-}" in$/,$d' "$LIBEXEC/install.sh" > "$_il_dst"
+	printf '%s' "$_il_dst"
+}
+
+# Run a snippet with install.sh's functions defined and the sandbox in place.
+sh_install() {
+	FCC_LIBDIR="$LIBEXEC" \
+	FCC_AGENTS_CONF="$AGENTS_CONF" \
+	FCC_VERSION_FILE="$ROOT/VERSION" \
+	FCC_DEFAULT_BASE="$SANDBOX/opt" \
+	UCI_SHIM_DIR="$SANDBOX/uci" \
+	FCC_HEALTH_TIMEOUT=3 \
+	PATH="$SANDBOX/bin:$PATH" \
+	sh -c '. "$1"; eval "$2"' _ "$(install_lib)" "$1" 2>&1
+}
+
 test_port_listening_rejects_bad_input() {
 	setup_sandbox
 	assert_no "an empty port is rejected"     sh_common 'fcc_port_listening ""'
@@ -508,23 +553,7 @@ test_server_health_follows_a_real_server() {
 	_hl_port=47313
 	_hl_dead=47314
 	_hl_bin="$SANDBOX/opt/fcc/bin"
-	mkdir -p "$_hl_bin"
-
-	# A stand-in fcc-server. It deliberately does not exec: the process has to
-	# stay in the process table under its own path so the /proc scan finds it,
-	# while a child holds the port. The trap keeps the child from being orphaned
-	# on the port when this test tears the server down.
-	cat > "$_hl_bin/fcc-server" <<'EOF'
-#!/bin/sh
-# Stand-in fcc-server — see tests/test_runtime.sh.
-python3 -m http.server __PORT__ --bind 127.0.0.1 >/dev/null 2>&1 &
-_child=$!
-trap 'kill "$_child" 2>/dev/null' TERM INT EXIT
-wait "$_child"
-EOF
-	sed "s/__PORT__/$_hl_port/" "$_hl_bin/fcc-server" > "$_hl_bin/fcc-server.new"
-	mv "$_hl_bin/fcc-server.new" "$_hl_bin/fcc-server"
-	chmod +x "$_hl_bin/fcc-server"
+	make_standin_server "$_hl_bin/fcc-server" "$_hl_port"
 
 	make_uci_shim
 	printf '%s' "$_hl_port" > "$SANDBOX/uci/fcc.main.port"
@@ -568,6 +597,128 @@ EOF
 	kill "$_hl_pid" 2>/dev/null
 	wait "$_hl_pid" 2>/dev/null
 	rm -rf "$SANDBOX/opt"
+}
+
+# ---------------------------------------------------------------------------
+# Backup and rollback (DESIGN_SPEC.md sections 23, 78 and 79).
+#
+# The interesting property is not that a backup is written but that the
+# *previous runtime* comes back. The two halves are stored differently on
+# purpose — data copied, runtime renamed aside — so the test checks both the
+# rename (the runtime tree is gone from its old place while the update runs) and
+# the restore.
+# ---------------------------------------------------------------------------
+
+test_backup_renames_the_runtime_and_copies_the_data() {
+	setup_sandbox
+	mkdir -p "$SANDBOX/opt/fcc/runtime" "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data"
+	printf 'previous interpreter\n' > "$SANDBOX/opt/fcc/runtime/marker"
+	printf 'previous config\n'      > "$SANDBOX/opt/fcc/data/config"
+	printf '{"fcc_version":"1.0.0"}\n' > "$SANDBOX/opt/fcc/runtime.json"
+	printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/opt/fcc/bin/fcc-server"
+
+	_bk="$(sh_install 'backup_runtime')"
+
+	assert_dir "$_bk"
+	# The runtime tree is renamed, not copied: it must be absent from its old
+	# place while the update runs, or the installer would write into it.
+	assert_eq "no" "$([ -d "$SANDBOX/opt/fcc/runtime" ] && echo yes || echo no)" \
+		"the previous runtime is moved out of the way"
+	assert_eq "no" "$([ -d "$SANDBOX/opt/fcc/bin" ] && echo yes || echo no)" \
+		"the previous bin/ is moved out of the way"
+	assert_file "$_bk/runtime/marker"
+	assert_file "$_bk/bin/fcc-server"
+	# The data is copied, not moved: a *successful* update has to find it still
+	# in place, because that is the user's configuration.
+	assert_file "$SANDBOX/opt/fcc/data/config"
+	assert_file "$_bk/data/config"
+	assert_file "$_bk/runtime.json"
+}
+
+test_rollback_restores_the_previous_runtime() {
+	setup_sandbox
+	command -v python3 >/dev/null 2>&1 || { skip "no python3 — cannot run a stand-in server"; return 0; }
+
+	_rb_port=47315
+	_rb_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_rb_root/runtime" "$_rb_root/data"
+	printf 'previous interpreter\n' > "$_rb_root/runtime/marker"
+	printf 'previous config\n'      > "$_rb_root/data/config"
+	printf '{"fcc_version":"1.0.0"}\n' > "$_rb_root/runtime.json"
+	make_standin_server "$_rb_root/bin/fcc-server" "$_rb_port"
+
+	make_uci_shim
+	printf '%s' "$_rb_port" > "$SANDBOX/uci/fcc.main.port"
+
+	# Start the "previous" server so the post-rollback health check has
+	# something to find, and so the success message is the one under test.
+	"$_rb_root/bin/fcc-server" >/dev/null 2>&1 &
+	_rb_pid=$!
+	_rb_i=0
+	while [ "$_rb_i" -lt 20 ]; do
+		case "$(sh_common_path 'fcc_server_health' 2>/dev/null)" in
+			*'"healthy": true'*) break ;;
+		esac
+		sleep 1
+		_rb_i=$(( _rb_i + 1 ))
+	done
+
+	_bk="$(sh_install 'backup_runtime')"
+	assert_dir "$_bk"
+
+	# A failed update: the installer wrote a new runtime, then died.
+	mkdir -p "$_rb_root/runtime" "$_rb_root/bin"
+	printf 'broken interpreter\n' > "$_rb_root/runtime/marker"
+	printf '#!/bin/sh\nexit 1\n' > "$_rb_root/bin/fcc-server"
+	printf 'clobbered\n'         > "$_rb_root/data/config"
+
+	_out="$(sh_install "rollback_runtime '$_bk' true")"
+	_log="$(cat "$_rb_root/logs/fcc-runtime.log" 2>/dev/null)"
+
+	assert_contains "$_out" "ROLLED_BACK" "the rollback reports success on stdout"
+	assert_contains "$_log" "Previous FCC version restored" \
+		"the log carries section 79's message"
+	assert_eq "previous interpreter" "$(cat "$_rb_root/runtime/marker" 2>/dev/null)" \
+		"the previous runtime tree is back"
+	assert_eq "previous config" "$(cat "$_rb_root/data/config" 2>/dev/null)" \
+		"the previous configuration is back"
+	assert_file "$_rb_root/runtime.json"
+	# The binary the failed install left must not survive the restore.
+	assert_contains "$(cat "$_rb_root/bin/fcc-server" 2>/dev/null)" "http.server" \
+		"the previous binary is back, not the one the failed install left"
+
+	kill "$_rb_pid" 2>/dev/null
+	wait "$_rb_pid" 2>/dev/null
+}
+
+test_rollback_reports_when_the_server_cannot_be_restarted() {
+	setup_sandbox
+	_rr_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_rr_root/runtime" "$_rr_root/bin" "$_rr_root/data"
+	printf 'previous interpreter\n' > "$_rr_root/runtime/marker"
+	# Deliberately no working fcc-server: the restore has the files back but
+	# nothing can start, which is section 79's second outcome.
+	printf '#!/bin/sh\nexit 1\n' > "$_rr_root/bin/fcc-server"
+	chmod +x "$_rr_root/bin/fcc-server"
+
+	make_uci_shim
+	printf '47316' > "$SANDBOX/uci/fcc.main.port"
+
+	_bk="$(sh_install 'backup_runtime')"
+	assert_dir "$_bk"
+
+	_out="$(sh_install "rollback_runtime '$_bk' true")"
+	_log="$(cat "$_rr_root/logs/fcc-runtime.log" 2>/dev/null)"
+
+	assert_contains "$_log" "FCC Server remains stopped" \
+		"a restore that cannot start the server says so"
+	assert_contains "$_out" "ROLLBACK_FAILED" \
+		"the outcome is reported rather than swallowed"
+	# Section 79 also requires Luci-FCC to keep working. Nothing here touches
+	# the LuCI package, so what that means for this function is that it returns
+	# a status rather than taking the caller down with it.
+	assert_eq "previous interpreter" "$(cat "$_rr_root/runtime/marker" 2>/dev/null)" \
+		"the files are restored even though the server will not start"
 }
 
 tests_main
