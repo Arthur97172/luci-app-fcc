@@ -9,6 +9,7 @@
 
 	var FCC = window.FCC;
 	var timer = null;
+	var versionTimer = null;
 
 	function card(title, value, sub) {
 		return FCC.el('div', { class: 'fcc-card' }, [
@@ -197,12 +198,22 @@
 		checkUpdates();
 		loadLog();
 
-		// Keep the monitor live without hammering the router.
+		/* Section 20 splits the two cadences, and the split is the point: status
+		 * is cheap because the backend reads /proc once and batches every agent
+		 * into a single pass, so it can run every 2s; versions shell out to each
+		 * agent's CLI, so they run every 60s and come from the backend's cache
+		 * in between. Polling both at the fast rate would run --version ten
+		 * times a minute; polling both at the slow rate would make the monitor
+		 * feel dead. */
 		timer = setInterval(function () {
 			loadStatus(false).catch(function () {});
-		}, 15000);
+		}, 2000);
+		versionTimer = setInterval(function () {
+			loadStatus(true).catch(function () {});
+		}, 60000);
 		window.addEventListener('beforeunload', function () {
 			if (timer) { clearInterval(timer); }
+			if (versionTimer) { clearInterval(versionTimer); }
 		});
 	}
 
