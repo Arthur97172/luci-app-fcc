@@ -18,6 +18,9 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
+msgid "%d agent session(s) are running and will be left as they are."
+msgstr ""
+
 msgid "Actions"
 msgstr ""
 
@@ -27,6 +30,9 @@ msgstr ""
 msgid "Agent"
 msgstr ""
 
+msgid "Agent exited unexpectedly."
+msgstr ""
+
 msgid "Agents"
 msgstr ""
 
@@ -34,6 +40,9 @@ msgid "An interactive terminal running a coding agent on this router. Sessions k
 msgstr ""
 
 msgid "Architecture"
+msgstr ""
+
+msgid "Are you sure you want to close this session?\nAll unsaved terminal state will be lost."
 msgstr ""
 
 msgid "Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation."
@@ -81,6 +90,12 @@ msgstr ""
 msgid "Enable FCC"
 msgstr ""
 
+msgid "Error"
+msgstr ""
+
+msgid "Exit code: %d"
+msgstr ""
+
 msgid "FCC"
 msgstr ""
 
@@ -91,6 +106,9 @@ msgid "FCC Server"
 msgstr ""
 
 msgid "Health"
+msgstr ""
+
+msgid "Hide"
 msgstr ""
 
 msgid "Install"
@@ -150,6 +168,9 @@ msgstr ""
 msgid "No active sessions. Start one to open a terminal."
 msgstr ""
 
+msgid "No agent sessions are running."
+msgstr ""
+
 msgid "No agents in the registry."
 msgstr ""
 
@@ -177,6 +198,9 @@ msgstr ""
 msgid "Re-detect versions"
 msgstr ""
 
+msgid "Reconnect"
+msgstr ""
+
 msgid "Refresh"
 msgstr ""
 
@@ -192,6 +216,9 @@ msgstr ""
 msgid "Restart"
 msgstr ""
 
+msgid "Retry"
+msgstr ""
+
 msgid "Run checks"
 msgstr ""
 
@@ -204,6 +231,12 @@ msgstr ""
 msgid "Save &amp; Apply"
 msgstr ""
 
+msgid "Session has exited."
+msgstr ""
+
+msgid "Session is still running."
+msgstr ""
+
 msgid "Sessions are hosted by tmux on the router, so they survive a page reload or a browser restart. Closing a session from its tab ends the agent process."
 msgstr ""
 
@@ -214,6 +247,9 @@ msgid "Settings saved."
 msgstr ""
 
 msgid "Start"
+msgstr ""
+
+msgid "Start New Session"
 msgstr ""
 
 msgid "Start on boot"
@@ -234,10 +270,16 @@ msgstr ""
 msgid "Stopped"
 msgstr ""
 
+msgid "Stopping FCC Server may affect active Coding Agent sessions."
+msgstr ""
+
 msgid "Storage"
 msgstr ""
 
 msgid "System"
+msgstr ""
+
+msgid "Terminal connection lost."
 msgstr ""
 
 msgid "The LuCI app version could not be checked — the router could not reach the version source."
@@ -249,7 +291,7 @@ msgstr ""
 msgid "The operation failed."
 msgstr ""
 
-msgid "The session has ended."
+msgid "This log is empty."
 msgstr ""
 
 msgid "To upgrade luci-app-fcc itself, run on the router:"
@@ -262,6 +304,9 @@ msgid "Uninstall and remove all data"
 msgstr ""
 
 msgid "Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo."
+msgstr ""
+
+msgid "Unknown"
 msgstr ""
 
 msgid "Update"
@@ -286,6 +331,9 @@ msgid "Version"
 msgstr ""
 
 msgid "Versions updated."
+msgstr ""
+
+msgid "View Log"
 msgstr ""
 
 msgid "Web Console"

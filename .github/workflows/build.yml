@@ -13,6 +13,26 @@
 # only in the static checks.
 #
 # On a v* tag the same run also publishes a GitHub release (section 62).
+#
+# --- why the official SDK tarball and not a container ------------------------
+#
+# This job used to run openwrt/gh-action-sdk against the openwrt/sdk image. That
+# image is not an SDK: /builder/setup.sh in it downloads an *Image Builder*
+# (DOWNLOAD_FILE defaults to "imagebuilder-.*x86_64.tar.[xz|zst]"), whose
+# .config carries CONFIG_ALL=y, CONFIG_ALL_KMODS=y and CONFIG_ALL_NONSHARED=y.
+# A bare `make` there therefore builds the entire package universe — LLVM,
+# erlang, dbus, glib — which is why every matrix entry used to sit at the
+# 60-minute ceiling and get cancelled rather than finish.
+#
+# downloads.openwrt.org ships real SDKs: the tarball contains a prebuilt
+# toolchain under staging_dir/toolchain-*, so only our package and its declared
+# dependencies compile. Measured on the 24.10.4 x86-64 SDK: 91s to download
+# 246MB, 2s to extract, and about two minutes to build luci-app-fcc together
+# with luci-base and the rest of its dependency chain. The package itself
+# compiles in under two seconds.
+#
+# The releases are pinned to point releases, not to -SNAPSHOT, so a green run
+# means the same thing next month.
 
 name: Build
 
@@ -56,43 +76,38 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Build matrix (section 61).
-  #
-  # CONTAINER is pinned to Docker Hub's openwrt/sdk, whose tags name the
-  # architecture, the target and the release branch directly. The tags used
-  # below were verified to exist and resolve. They track the maintenance branch
-  # rather than a point release, so this job answers "does it still build
-  # against the maintained 24.10 / 25.12?", which is the question worth asking
-  # on every push.
   # ---------------------------------------------------------------------------
   build:
     name: ${{ matrix.release }} / ${{ matrix.arch }}
     needs: check
     runs-on: ubuntu-latest
-    # The SDK build is mostly waiting on a container pull, and a pull that
-    # stalls has no failure mode of its own — the first run of this workflow sat
-    # in "Build the package" for nearly three hours before anyone noticed. A
-    # bounded job turns that into a red X in under an hour, which is the signal
-    # worth having. A real build takes roughly ten.
-    timeout-minutes: 60
+    # A real build is a 91s download plus roughly two minutes of compiling. The
+    # bound is generous enough for a cold cache on a slow runner and tight
+    # enough that a stall goes red well before GitHub's ceiling.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - release: openwrt-24.10
+          - release: '24.10.4'
             arch: x86_64
-            container: x86_64-openwrt-24.10
+            target: x86/64
+            sdk: openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             ext: ipk
-          - release: openwrt-24.10
+          - release: '24.10.4'
             arch: aarch64
-            container: aarch64_cortex-a53-openwrt-24.10
+            target: armsr/armv8
+            sdk: openwrt-sdk-24.10.4-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             ext: ipk
-          - release: openwrt-25.12
+          - release: '25.12.0'
             arch: x86_64
-            container: x86_64-openwrt-25.12
+            target: x86/64
+            sdk: openwrt-sdk-25.12.0-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             ext: apk
-          - release: openwrt-25.12
+          - release: '25.12.0'
             arch: aarch64
-            container: aarch64_cortex-a53-openwrt-25.12
+            target: armsr/armv8
+            sdk: openwrt-sdk-25.12.0-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             ext: apk
 
     steps:
@@ -100,17 +115,107 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install extraction tooling
+        # The SDK tarballs are zstd-compressed.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+
+      - name: Cache the SDK
+        id: sdk
+        uses: actions/cache@v4
+        with:
+          path: sdk.tar.zst
+          key: ${{ matrix.sdk }}
+
+      - name: Download the SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          url="https://downloads.openwrt.org/releases/${{ matrix.release }}/targets/${{ matrix.target }}/${{ matrix.sdk }}"
+          echo "fetching $url"
+          curl -fsSL --retry 3 --retry-delay 5 -o sdk.tar.zst "$url"
+          ls -l sdk.tar.zst
+
+      - name: Extract the SDK
+        run: |
+          set -eu
+          mkdir -p sdk
+          tar --zstd -xf sdk.tar.zst -C sdk --strip-components=1
+          test -d sdk/staging_dir
+          test -x sdk/scripts/feeds
+          # The toolchain is what makes this an SDK and not an Image Builder.
+          # Without it the build silently falls back to building everything.
+          ls -d sdk/staging_dir/toolchain-*
+
+      - name: Configure feeds
+        run: |
+          set -eu
+          cd sdk
+          # feeds.conf.default pins the luci feed to the commit this SDK release
+          # was built against; keeping it is what makes luci-base/host (po2lmo)
+          # available below.
+          cp feeds.conf.default feeds.conf
+          # A src-link feed is scanned for <pkgname>/Makefile, and this package
+          # keeps its Makefile at the repository root, so the feed root needs a
+          # directory named after the package pointing back at the checkout.
+          mkdir -p "$GITHUB_WORKSPACE/feedroot"
+          ln -sfn "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/feedroot/luci-app-fcc"
+          echo "src-link fcc $GITHUB_WORKSPACE/feedroot" >> feeds.conf
+          cat feeds.conf
+
+      - name: Update feeds
+        run: |
+          set -eu
+          cd sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -p fcc -a
+          # luci-base is a build dependency of our package
+          # (PKG_BUILD_DEPENDS:=luci-base/host) but it is not part of our feed,
+          # so install it explicitly rather than relying on the build system to
+          # discover it.
+          ./scripts/feeds install luci-base
+
+      - name: Configure the build
+        run: |
+          set -eu
+          cd sdk
+          # The SDK's Config.in has `config ALL` with a bare `default y` ("Select
+          # all userspace packages by default"), so a plain `make defconfig`
+          # selects the entire package universe — kmods included, which drags in
+          # package/kernel/linux and a full kernel compile. That is the same trap
+          # as the Image Builder, one layer down, and it is why the 25.12 entry
+          # of this matrix has to turn it off explicitly rather than trusting
+          # defconfig to be minimal.
+          #
+          # ALL_KMODS and ALL_NONSHARED both default to ALL, but the generated
+          # .config spells them out, so all three are overridden. The rest of
+          # the file is kept: it carries the target and toolchain selection.
+          grep -vE '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED)=' .config > .config.tmp
+          printf 'CONFIG_ALL=n\nCONFIG_ALL_KMODS=n\nCONFIG_ALL_NONSHARED=n\n' >> .config.tmp
+          mv .config.tmp .config
+          make defconfig
+          # Fail loudly if the defaults came back: a silent return to ALL would
+          # turn this job into a kernel build rather than a package build.
+          ! grep -qE '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED)=y' .config
+          echo "kmods selected: $(grep -cE '^CONFIG_PACKAGE_kmod.*=y' .config)"
+
+      - name: Build luci-base host tools
+        # The released SDK ships no po2lmo — it has no tools/ tree, and the 324
+        # host tools in staging_dir/host/bin do not include it. luci-base builds
+        # it as a HostBuild into staging_dir/hostpkg/bin, which is what a full
+        # buildroot does and what turns our po/zh_Hans/fcc.po into the .lmo the
+        # i18n package ships. It takes about a second.
+        run: |
+          set -eu
+          cd sdk
+          make package/luci-base/host/compile V=s
+          test -x staging_dir/hostpkg/bin/po2lmo
+          staging_dir/hostpkg/bin/po2lmo 2>&1 | head -1 || true
+
       - name: Build the package
-        # Pinned to a tag, not main: this action decides what actually builds
-        # the package, and a change under us would alter the artifact rather
-        # than fail the build.
-        uses: openwrt/gh-action-sdk@v11
-        env:
-          ARCH: ${{ matrix.container }}
-          CONTAINER: openwrt/sdk
-          FEEDNAME: fcc
-          INDEX: 1
-          BUILD_LOG: 1
+        run: |
+          set -eu
+          cd sdk
+          make package/luci-app-fcc/compile V=s
 
       - name: Collect artifacts
         run: |
@@ -118,13 +223,73 @@ jobs:
           mkdir -p dist
           # The feed name is the directory the SDK writes into, so glob the
           # extension across bin/packages rather than guessing the arch path.
-          find bin/packages -name "*.${{ matrix.ext }}" -exec cp -v {} dist/ \;
+          find sdk/bin/packages -name "*.${{ matrix.ext }}" -exec cp -v {} dist/ \;
           test -n "$(ls -A dist)" || {
             echo "::error::the build produced no .${{ matrix.ext }}"
-            find bin -maxdepth 4 -type d | head -50
+            find sdk/bin -maxdepth 4 -type d | head -50
             exit 1
           }
           ls -l dist
+
+      - name: Verify the artifacts
+        # A cheap integrity check on what we are about to publish. It is not a
+        # substitute for installing the package on a real system — that is the
+        # smoke test section 90/91 asks for, and it needs a running OpenWrt, so
+        # it is not something this job can do. What it does catch is the failure
+        # that matters here: a package that builds but ships nothing, or an
+        # i18n package whose .lmo never got compiled because po2lmo was absent.
+        #
+        # The checks are per package, not per extension. Asserting the
+        # controller inside every .ipk would fail the translation package, which
+        # correctly contains only the catalogue.
+        run: |
+          set -eu
+          cd dist
+          fail=0
+
+          # An .ipk is a tar holding control.tar.gz and data.tar.gz. Unpacking
+          # both is safe: neither is executed.
+          unpack_ipk() {
+            _vi_d="$(mktemp -d)"
+            tar -C "$_vi_d" -xzf "$1"
+            tar -C "$_vi_d" -xzf "$_vi_d/data.tar.gz"
+            printf '%s' "$_vi_d"
+          }
+
+          for f in luci-app-fcc_*.*; do
+            [ -e "$f" ] || continue
+            d="$(unpack_ipk "$f")"
+            test -f "$d/usr/lib/lua/luci/controller/fcc.lua" \
+              || { echo "::error::$f is missing the controller"; fail=1; }
+            test -d "$d/usr/lib/lua/luci/view/fcc" \
+              || { echo "::error::$f is missing the views"; fail=1; }
+            test -f "$d/usr/libexec/fcc/session.sh" \
+              || { echo "::error::$f is missing the backends"; fail=1; }
+            rm -rf "$d"
+            echo "$f: ok"
+          done
+
+          for f in luci-i18n-fcc-*.*; do
+            [ -e "$f" ] || continue
+            d="$(unpack_ipk "$f")"
+            find "$d" -name '*.lmo' | grep -q . \
+              || { echo "::error::$f carries no compiled catalogue"; fail=1; }
+            rm -rf "$d"
+            echo "$f: ok"
+          done
+
+          # The apk container is not the ipk one, so the payload is listed
+          # rather than unpacked. This is deliberately weaker than the ipk
+          # checks above and only asserts the archive is readable and non-empty.
+          for f in *.apk; do
+            [ -e "$f" ] || continue
+            tar -tzf "$f" >/dev/null || { echo "::error::$f is not a readable archive"; fail=1; }
+            tar -tzf "$f" | grep -q . || { echo "::error::$f is empty"; fail=1; }
+            echo "$f: archive ok ($(tar -tzf "$f" | wc -l) entries)"
+          done
+
+          test "$fail" = 0
+          echo "artifacts look sane"
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -132,14 +297,6 @@ jobs:
           name: luci-app-fcc-${{ matrix.release }}-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
-
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-${{ matrix.release }}-${{ matrix.arch }}
-          path: logs/
-          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Release (section 62). Only on a v* tag, and only after every architecture

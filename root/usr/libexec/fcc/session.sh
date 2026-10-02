@@ -52,6 +52,31 @@ session_exists() {
 	tmux has-session -t "$1" 2>/dev/null
 }
 
+# A session whose pane process has exited. Sessions are created with
+# remain-on-exit on, so tmux keeps the dead pane instead of destroying the
+# session outright: that is the only way to answer section 74's "Exit code: N"
+# after the agent has already gone. cmd_cleanup() is what eventually reaps them.
+session_dead() {
+	[ "$(tmux display-message -p -t "$1" '#{pane_dead}' 2>/dev/null)" = "1" ]
+}
+
+# The dead pane's exit status, or nothing when tmux cannot report one (an older
+# tmux without pane_dead_status, or a session that is still alive). Reporting no
+# code is better than reporting a wrong one.
+session_exit_code() {
+	_sxc_v="$(tmux display-message -p -t "$1" '#{pane_dead_status}' 2>/dev/null)"
+	case "$_sxc_v" in ''|*[!0-9]*) return 1 ;; esac
+	printf '%s' "$_sxc_v"
+}
+
+# True while the pane's process is still running: the session exists and the
+# pane is not dead.
+session_live() {
+	session_exists "$1" || return 1
+	session_dead "$1" && return 1
+	return 0
+}
+
 # Environment shared by every agent session so it matches the install layout.
 session_env_exports() {
 	printf 'export HOME=%s/data TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8;' "$ROOT"
@@ -86,6 +111,17 @@ cmd_create() {
 	command -v "$_cr_launcher" >/dev/null 2>&1 || {
 		fcc_die "agent '$_cr_agent' is not installed (launcher '$_cr_launcher' not found)"; return 1; }
 
+	# Section 3.6.10: a session may only be created once the runtime is in place
+	# and the server it talks to is up. Enforced here rather than only in the UI
+	# because the launcher would otherwise start, fail to reach the server, and
+	# leave the user looking at a dead terminal with no explanation.
+	if [ -z "$(fcc_find_server_exe 2>/dev/null || true)" ]; then
+		fcc_die "the FCC runtime is not installed — install it first"; return 1
+	fi
+	if [ -z "$(fcc_server_pid 2>/dev/null || true)" ]; then
+		fcc_die "the FCC server is not running — start it first"; return 1
+	fi
+
 	_cr_name="$(next_session_name "$_cr_agent")" || { fcc_die "no free session slot"; return 1; }
 
 	# The launcher itself connects to the FCC server. $_cr_launcher and $ROOT are
@@ -95,6 +131,12 @@ cmd_create() {
 	if ! tmux new-session -d -s "$_cr_name" -x "$_cr_cols" -y "$_cr_rows" "$_cr_cmd" 2>/dev/null; then
 		fcc_die "failed to create tmux session"; return 1
 	fi
+
+	# Keep the pane (and its exit status) after the agent exits, so the console
+	# can report section 74's exit code instead of a session that simply vanished.
+	# Set on this session only — a global option would change the behaviour of
+	# whatever else the user runs in tmux.
+	tmux set-option -t "$_cr_name" remain-on-exit on 2>/dev/null
 
 	# Start capturing pane output from the very beginning.
 	: > "$(out_file "$_cr_name")"
@@ -116,20 +158,26 @@ cmd_list() {
 		case "$_ls_sname" in fcc-*-[0-9][0-9][0-9]) : ;; *) continue ;; esac
 		fcc_valid_session "$_ls_sname" || continue
 		_ls_agent="$(printf '%s' "$_ls_sname" | sed -n 's/^fcc-\([a-z0-9]\{1,16\}\)-[0-9]\{3\}$/\1/p')"
+		# A dead pane keeps its recorded pid, which may since have been reused by
+		# an unrelated process; never measure a process we already know is gone.
+		_ls_dead=false; session_dead "$_ls_sname" && _ls_dead=true
 		_ls_up=""; _ls_rss=""
-		if [ -n "$_ls_spid" ] && fcc_proc_alive "$_ls_spid"; then
+		if [ "$_ls_dead" = false ] && [ -n "$_ls_spid" ] && fcc_proc_alive "$_ls_spid"; then
 			_ls_up="$(fcc_proc_uptime_secs "$_ls_spid")"
 			_ls_rss="$(fcc_proc_rss_kb "$_ls_spid")"
 		fi
+		_ls_exit=""; [ "$_ls_dead" = true ] && _ls_exit="$(session_exit_code "$_ls_sname" 2>/dev/null || true)"
 		[ "$_ls_first" -eq 1 ] || printf ','
 		_ls_first=0
-		printf '\n  {"name": %s, "agent": %s, "display_name": %s, "pid": %s, "created": %s, "uptime": %s, "memory_rss_kb": %s}' \
+		printf '\n  {"name": %s, "agent": %s, "display_name": %s, "pid": %s, "created": %s, "uptime": %s, "memory_rss_kb": %s, "dead": %s, "exit_code": %s}' \
 			"$(fcc_json_str "$_ls_sname")" "$(fcc_json_str "$_ls_agent")" \
 			"$(fcc_json_str "$(fcc_agent_name "$_ls_agent")")" \
 			"$(fcc_json_num_or_null "$_ls_spid")" \
 			"$(fcc_json_num_or_null "$_ls_screated")" \
 			"$(fcc_json_num_or_null "$_ls_up")" \
-			"$(fcc_json_num_or_null "$_ls_rss")"
+			"$(fcc_json_num_or_null "$_ls_rss")" \
+			"$_ls_dead" \
+			"$(fcc_json_num_or_null "${_ls_exit:-}")"
 	done
 	printf '\n]\n'
 }
@@ -172,7 +220,7 @@ cmd_output() {
 		_ou_sz="$(wc -c < "$_ou_f" 2>/dev/null | tr -d ' ')"
 		case "$_ou_sz" in ''|*[!0-9]*) _ou_sz=0 ;; esac
 		_ou_abs=$(( _ou_base + _ou_sz ))
-		if [ "$_ou_abs" -gt "$_ou_off" ] || [ "$_ou_waited" -ge "$_ou_wait" ] || ! session_exists "$_ou_name"; then
+		if [ "$_ou_abs" -gt "$_ou_off" ] || [ "$_ou_waited" -ge "$_ou_wait" ] || ! session_live "$_ou_name"; then
 			break
 		fi
 		sleep 1
@@ -182,12 +230,18 @@ cmd_output() {
 	_ou_reset=false
 	if [ "$_ou_off" -lt "$_ou_base" ]; then _ou_reset=true; _ou_off="$_ou_base"; fi
 	_ou_skip=$(( _ou_off - _ou_base ))
-	_ou_alive=true; session_exists "$_ou_name" || _ou_alive=false
+	_ou_alive=true; session_live "$_ou_name" || _ou_alive=false
 	_ou_eof=false; [ "$_ou_alive" = false ] && _ou_eof=true
 
+	# Section 74: when the pane is dead its exit status is the whole answer —
+	# 0 means the agent finished, anything else means it died. Absent (null)
+	# when tmux cannot report it.
+	_ou_exit="$(session_exit_code "$_ou_name" 2>/dev/null || true)"
+
 	# Header line (JSON), then the raw bytes.
-	printf '{"name": %s, "offset": %s, "reset": %s, "alive": %s, "eof": %s}\n' \
-		"$(fcc_json_str "$_ou_name")" "$_ou_abs" "$_ou_reset" "$_ou_alive" "$_ou_eof"
+	printf '{"name": %s, "offset": %s, "reset": %s, "alive": %s, "eof": %s, "exit_code": %s}\n' \
+		"$(fcc_json_str "$_ou_name")" "$_ou_abs" "$_ou_reset" "$_ou_alive" "$_ou_eof" \
+		"$(fcc_json_num_or_null "${_ou_exit:-}")"
 	if [ "$_ou_abs" -gt "$_ou_off" ]; then
 		tail -c "+$(( _ou_skip + 1 ))" "$_ou_f" 2>/dev/null
 	fi
@@ -201,7 +255,8 @@ cmd_input() {
 	# words ("68 69 0a"); both are joined back into one space-separated list.
 	_in_hex="$*"
 	fcc_valid_session "$_in_name" || { fcc_die "invalid session"; return 2; }
-	session_exists "$_in_name" || { fcc_die "session not found"; return 1; }
+	# A dead pane accepts no more input; saying so beats silently dropping keys.
+	session_live "$_in_name" || { fcc_die "session not found"; return 1; }
 	# Only hex digits and spaces are accepted.
 	case "$_in_hex" in *[!0-9a-fA-F\ ]*) fcc_die "invalid input encoding"; return 2 ;; esac
 	[ -n "$_in_hex" ] || return 0

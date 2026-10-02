@@ -75,11 +75,27 @@ emit_agent_json() {
 	fi
 	_ea_ver="$(fcc_cache_get "agent_$_ea_id" 2>/dev/null || true)"
 
-	printf '{"id": %s, "name": %s, "command": %s, "installed": %s, "running": %s, "pid": %s, "uptime": %s, "memory_rss_kb": %s, "version": %s}' \
+	# Section 44: an installed agent whose version could not be read reports
+	# null plus version_error, and the UI shows "Unknown". Saying nothing would
+	# leave the two cases — "no version because it is not installed" and "no
+	# version because the probe failed" — looking identical, and inventing a
+	# version is worse than either.
+	_ea_verr=""
+	if [ -z "$_ea_ver" ] && [ "$_ea_inst" = true ]; then
+		_ea_probe="$(fcc_agent_probe "$_ea_id" 2>/dev/null || true)"
+		if [ -z "$_ea_probe" ]; then
+			_ea_verr="no version probe for this agent"
+		else
+			_ea_verr="version command failed"
+		fi
+	fi
+
+	printf '{"id": %s, "name": %s, "command": %s, "installed": %s, "running": %s, "pid": %s, "uptime": %s, "memory_rss_kb": %s, "version": %s, "version_error": %s}' \
 		"$(fcc_json_str "$_ea_id")" "$(fcc_json_str "$_ea_name")" "$(fcc_json_str "$_ea_cmd")" \
 		"$_ea_inst" "$_ea_run" \
 		"$(fcc_json_num_or_null "$_ea_pid")" "$(fcc_json_num_or_null "$_ea_up")" \
-		"$(fcc_json_num_or_null "$_ea_rss")" "$(fcc_json_str_or_null "${_ea_ver:-}")"
+		"$(fcc_json_num_or_null "$_ea_rss")" "$(fcc_json_str_or_null "${_ea_ver:-}")" \
+		"$(fcc_json_str_or_null "${_ea_verr:-}")"
 }
 
 cmd_list() {

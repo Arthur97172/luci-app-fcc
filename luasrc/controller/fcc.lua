@@ -285,7 +285,10 @@ end
 
 function act_update_runtime()
 	if not require_post() then return end
-	start_job({ "update", "runtime" }, "fcc-update.log", "install")
+	-- Section 47's lock, not the install one: the update holds fcc-update.lock
+	-- for its whole run, so this is the name the page polls to know it is still
+	-- working.
+	start_job({ "update", "runtime" }, "fcc-update.log", "update")
 end
 
 -- ---------------------------------------------------------------------------

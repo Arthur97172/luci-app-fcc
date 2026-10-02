@@ -254,6 +254,42 @@ backup_runtime() {
 	printf '%s' "$_bk_dir"
 }
 
+prune_backups() {
+	# Section 25: keep the most recent N backups.
+	#
+	# Without this a router that is updated monthly accumulates a data copy per
+	# update for the life of the device. Each one is small, but the flash it
+	# lives on is smaller, and nothing else ever removes them.
+	#
+	# The directories are named YYYYMMDDTHHMMSSZ in UTC, so a reverse
+	# lexicographic sort is a newest-first sort and no mtime is involved — mtimes
+	# are the first thing a flash restore or a tar round-trip gets wrong.
+	#
+	# Only names matching our own stamp are counted or removed. Anything else in
+	# backup/ is left exactly where it is: guessing wrong about a directory here
+	# destroys the only copy of a user's data.
+	_pb_keep="$(fcc_uci_get main backup_keep 3)"
+	case "$_pb_keep" in ''|*[!0-9]*) _pb_keep=3 ;; esac
+	[ "$_pb_keep" -ge 1 ] || _pb_keep=1
+
+	_pb_root="$(fcc_dir_backup)"
+	[ -d "$_pb_root" ] || return 0
+
+	_pb_n=0
+	for _pb_d in $(ls -1 "$_pb_root" 2>/dev/null | LC_ALL=C sort -r); do
+		case "$_pb_d" in
+			[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
+			*) continue ;;
+		esac
+		[ -d "$_pb_root/$_pb_d" ] || continue
+		_pb_n=$(( _pb_n + 1 ))
+		[ "$_pb_n" -le "$_pb_keep" ] && continue
+		rm -rf "$_pb_root/$_pb_d" 2>/dev/null && \
+			fcc_log "$LOG" "pruned old backup $_pb_d (keeping the most recent $_pb_keep)"
+	done
+	return 0
+}
+
 commit_backup() {
 	# The update succeeded, so the moved-aside runtime tree is dead weight.
 	# Section 78 asks for the last successful backup to be kept; the data copy
@@ -263,6 +299,7 @@ commit_backup() {
 	_cb_dir="$1"
 	[ -n "$_cb_dir" ] && [ -d "$_cb_dir" ] || return 0
 	rm -rf "$_cb_dir/runtime" "$_cb_dir/bin" 2>/dev/null
+	prune_backups
 	return 0
 }
 
@@ -313,6 +350,12 @@ rollback_runtime() {
 		[ -f "$_rb_dir/runtime.json" ] && cp "$_rb_dir/runtime.json" "$ROOT/runtime.json" 2>/dev/null
 	fi
 
+	# Section 25's retention applies to failed updates too. The directory this
+	# rollback just consumed is the newest, so it is the one that survives —
+	# which is right, since it is the state the router was in when the update
+	# was attempted.
+	prune_backups
+
 	# Whatever version is on disk now is the truth; drop the cached one so the
 	# status page cannot keep reporting the version that failed to install.
 	fcc_cache_set fcc_version ""
@@ -344,6 +387,14 @@ cmd_runtime() {
 
 	fcc_ensure_dirs
 	_cr_lock="$(fcc_lock_acquire install)" || { fcc_die "another install/update is already running"; return 1; }
+	# Section 48's lock only excludes other installs. An update is a different
+	# operation with its own lock (section 47) but it rewrites the same runtime,
+	# so the two still have to exclude each other.
+	if fcc_lock_held update; then
+		fcc_lock_release "$_cr_lock"
+		fcc_die "an update is already running"
+		return 1
+	fi
 
 	# --- section 23 step 1: what is being replaced ------------------------
 	_cr_before="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"

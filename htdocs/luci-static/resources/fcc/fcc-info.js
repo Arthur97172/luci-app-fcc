@@ -73,19 +73,70 @@
 		}
 		ids.forEach(function (id) {
 			var a = agents[id];
-			var state = a.running
-				? FCC.el('span', { class: 'fcc-badge ok', text: FCC._('running') })
-				: (a.installed
-					? FCC.el('span', { class: 'fcc-badge', text: FCC._('installed') })
-					: FCC.el('span', { class: 'fcc-badge off', text: FCC._('not installed') }));
+			/* Section 73: an agent that died is not merely "not running". The
+			 * backend reports why, so show that instead of a bare state, and
+			 * offer the two things that actually help — the log, and starting it
+			 * again. Only the two states that say nothing on their own
+			 * (installed-but-not-running and not-installed) fall through to the
+			 * plain badge. */
+			var cell;
+			if (a.error) {
+				cell = FCC.el('td', {}, [
+					FCC.el('span', { class: 'fcc-badge warn', text: '⚠ ' + FCC._('Error') })
+				]);
+				if (a.error.message) {
+					cell.appendChild(FCC.el('div', {
+						class: 'fcc-muted fcc-agent-error', text: a.error.message
+					}));
+				}
+				var viewLog = FCC.el('button', { class: 'cbi-button cbi-button-reset' }, [FCC._('View Log')]);
+				viewLog.addEventListener('click', viewAgentLog);
+				var retry = FCC.el('button', { class: 'cbi-button cbi-button-reset' }, [FCC._('Retry')]);
+				retry.addEventListener('click', function () { retryAgent(id, retry); });
+				cell.appendChild(FCC.el('div', { class: 'fcc-agent-error-actions' }, [viewLog, retry]));
+			} else {
+				var state = a.running
+					? FCC.el('span', { class: 'fcc-badge ok', text: FCC._('running') })
+					: (a.installed
+						? FCC.el('span', { class: 'fcc-badge', text: FCC._('installed') })
+						: FCC.el('span', { class: 'fcc-badge off', text: FCC._('not installed') }));
+				cell = FCC.el('td', {}, [state]);
+			}
 			tbody.appendChild(FCC.el('tr', {}, [
 				FCC.el('td', { text: a.name }),
 				FCC.el('td', { class: 'fcc-mono', text: a.version || '—' }),
-				FCC.el('td', {}, [state]),
+				cell,
 				FCC.el('td', { class: 'fcc-mono', text: a.pid || '—' }),
 				FCC.el('td', { text: a.uptime !== null && a.uptime !== undefined ? FCC.fmtDuration(a.uptime) : '—' }),
 				FCC.el('td', { class: 'fcc-mono', text: a.memory_rss_kb !== null && a.memory_rss_kb !== undefined ? FCC.fmtKB(a.memory_rss_kb) : '—' })
 			]));
+		});
+	}
+
+	/* Section 73's [View Log]: the agent's own output is what the terminal
+	 * session wrote, and this page already has a viewer for it — so point the
+	 * viewer at that file and bring it into sight rather than adding a second
+	 * log panel that would drift from the first. */
+	function viewAgentLog() {
+		var select = FCC.$('#fcc-info-log-select');
+		if (select) { select.value = 'fcc-terminal.log'; }
+		loadLog();
+		var pre = FCC.$('#fcc-info-log');
+		if (pre && pre.scrollIntoView) { pre.scrollIntoView({ block: 'nearest' }); }
+	}
+
+	/* Section 73's [Retry]: start the agent again. Agents run inside a tmux
+	 * session (that is what the Web Console attaches to), so starting one is
+	 * exactly what creating a session does. The button is disabled while the
+	 * request is in flight so a double click cannot start two. */
+	function retryAgent(id, btn) {
+		btn.disabled = true;
+		FCC.api('session_create', { agent: id }, { method: 'POST' }).then(function () {
+			return loadStatus(false);
+		}).catch(function (err) {
+			FCC.notice(FCC.$('#fcc-info-fcc'), 'fail', err.message);
+		}).then(function () {
+			btn.disabled = false;
 		});
 	}
 

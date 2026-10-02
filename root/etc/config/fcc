@@ -7,6 +7,11 @@ config fcc 'main'
 	option session_backend 'tmux'
 	option agent_backend 'python'
 	option log_level 'info'
+	# How many timestamped runtime backups to keep under <install_path>/backup
+	# (DESIGN_SPEC.md section 25). Each holds a copy of the FCC data directory,
+	# which cannot be reinstalled, so this is the one thing an update must not
+	# throw away — but it must not grow without bound on a router either.
+	option backup_keep '3'
 
 # NOTE: API keys / provider credentials are NEVER stored here.
 # They live in the FCC Admin UI (FCC's own configuration) and are managed by

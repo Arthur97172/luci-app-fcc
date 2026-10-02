@@ -34,6 +34,9 @@
 		listTimer: null
 	};
 
+	// Which banner is on screen, so re-rendering an identical one is skipped.
+	var banner = null;
+
 	/* ------------------------------------------------------------ session list */
 
 	function loadAgents() {
@@ -146,6 +149,7 @@
 
 	function attach(name) {
 		state.active = name;
+		clearBanner();
 		renderTabs();
 		ensureTerm();
 
@@ -205,28 +209,143 @@
 				state.offset = r.offset;
 
 				if (r.alive) {
+					if (banner) { clearBanner(); }
 					pollLoop();
 				} else {
 					state.polling = false;
-					FCC.notice(FCC.$('#fcc-term-status'), 'warn',
-						FCC._('The session has ended.'));
+					// Section 74: the exit code decides which ending this was.
+					// Zero finished cleanly; anything else — including a code
+					// tmux could not report — is shown as an unexpected exit.
+					showBanner(r.exit_code === 0 ? 'exited' : 'crashed',
+						{ code: r.exit_code, agent: agentOf(name) });
 					loadSessions();
 				}
 			})
 			.catch(function (err) {
 				if (err && err.name === 'AbortError') { return; }
 				if (!state.polling || state.active !== name) { return; }
-				// Transient failure (router busy, network blip): back off and
-				// retry from the same offset. Nothing is lost.
+				// The session outlives the connection: tmux is still holding it,
+				// so say so and keep retrying from the same offset. Nothing is
+				// lost, and the banner clears itself on the next success.
+				showBanner('lost', {});
 				setTimeout(pollLoop, 2000);
 			});
 	}
 
+	/* -------------------------------------------------- section 74: endings */
+
+	/** The agent a session belongs to, from the last session list we fetched. */
+	function agentOf(name) {
+		var match = state.sessions.filter(function (s) { return s.name === name; })[0];
+		return match ? match.agent : '';
+	}
+
+	function bannerAction(label, style, fn) {
+		return FCC.el('button', {
+			class: 'cbi-button cbi-button-' + style,
+			text: label,
+			onclick: fn
+		});
+	}
+
+	function exitCodeLine(code) {
+		return FCC._('Exit code: %d').replace('%d', code);
+	}
+
+	function clearBanner() {
+		var box = FCC.$('#fcc-term-banner');
+		if (box) { box.innerHTML = ''; box.hidden = true; }
+		banner = null;
+	}
+
+	/**
+	 * Section 74. A dropped connection, a session that finished and an agent
+	 * that died are three different events with three different remedies, so
+	 * each gets its own banner. A single "Stopped" is exactly the outcome the
+	 * section exists to prevent: the user cannot tell which happened or what to
+	 * do next.
+	 *
+	 * The exit code picks between the last two. Zero is a clean finish. A
+	 * non-zero code is a crash. No code at all means tmux could not account for
+	 * the exit, which is reported as a plain exit rather than guessed at — the
+	 * buttons still lead somewhere useful either way.
+	 */
+	function showBanner(kind, opts) {
+		var box = FCC.$('#fcc-term-banner');
+		if (!box) { return; }
+		if (banner === kind && !box.hidden) { return; }
+
+		opts = opts || {};
+		var code = (typeof opts.code === 'number') ? opts.code : null;
+		var lines, buttons;
+
+		if (kind === 'lost') {
+			lines = [
+				FCC._('Terminal connection lost.'),
+				FCC._('Session is still running.')
+			];
+			buttons = [bannerAction(FCC._('Reconnect'), 'apply', function () {
+				clearBanner();
+				startPolling();
+			})];
+		} else if (kind === 'exited') {
+			lines = [FCC._('Session has exited.')];
+			if (code !== null) { lines.push(exitCodeLine(code)); }
+			buttons = [
+				bannerAction(FCC._('Start New Session'), 'apply', function () {
+					createSession(opts.agent);
+				}),
+				bannerAction(FCC._('View Log'), 'reset', showLog)
+			];
+		} else {
+			lines = [code === null
+				? FCC._('Session has exited.')
+				: FCC._('Agent exited unexpectedly.')];
+			if (code !== null) { lines.push(exitCodeLine(code)); }
+			buttons = [
+				bannerAction(FCC._('View Log'), 'reset', showLog),
+				bannerAction(FCC._('Restart'), 'apply', function () {
+					createSession(opts.agent);
+				})
+			];
+		}
+
+		box.innerHTML = '';
+		lines.forEach(function (text) {
+			box.appendChild(FCC.el('div', { class: 'fcc-term-banner-line', text: text }));
+		});
+		box.appendChild(FCC.el('div', { class: 'fcc-term-banner-actions' }, buttons));
+		box.hidden = false;
+		banner = kind;
+	}
+
+	/* The session log: what the backend records about this session's lifecycle.
+	 * It is the log that exists — the agent's own output went to the pane, which
+	 * is the terminal itself and still readable above. */
+	function showLog() {
+		var panel = FCC.$('#fcc-term-log');
+		var body = FCC.$('#fcc-term-log-body');
+		if (!panel || !body) { return; }
+		panel.hidden = false;
+		body.textContent = FCC._('Loading…');
+		FCC.api('log', { name: 'fcc-terminal.log', lines: 200 }, { method: 'GET' })
+			.then(function (r) {
+				FCC.$('#fcc-term-log-name').textContent = r.path || 'fcc-terminal.log';
+				body.textContent = (r.lines && r.lines.length)
+					? r.lines.join('\n')
+					: FCC._('This log is empty.');
+			})
+			.catch(function (err) { body.textContent = err.message; });
+	}
+
 	/* ----------------------------------------------------------------- actions */
 
-	function createSession() {
-		var sel = FCC.$('#fcc-agent-select');
-		var agent = sel ? sel.value : '';
+	/** Open a new session, for `agent` or for whatever the toolbar has selected. */
+	function createSession(agent) {
+		if (!agent) {
+			var sel = FCC.$('#fcc-agent-select');
+			agent = sel ? sel.value : '';
+		}
 		if (!agent) {
 			FCC.notice(FCC.$('#fcc-term-status'), 'warn',
 				FCC._('Install an agent first (Configuration → Agents).'));
@@ -237,6 +356,7 @@
 
 		FCC.api('session_create', { agent: agent, cols: cols, rows: rows }, { method: 'POST' })
 			.then(function (r) {
+				clearBanner();
 				FCC.notice(FCC.$('#fcc-term-status'), '', '');
 				return loadSessions().then(function () { attach(r.name); });
 			})
@@ -246,6 +366,12 @@
 	}
 
 	function closeSession(name) {
+		/* Section 10 requires the confirmation before the session dies, and it
+		 * is not ceremony: closing kills the agent process, and whatever the
+		 * agent was holding in the terminal is gone. */
+		if (!window.confirm(FCC._('Are you sure you want to close this session?\nAll unsaved terminal state will be lost.'))) {
+			return;
+		}
 		FCC.api('session_close', { name: name }, { method: 'POST' }).then(function () {
 			if (state.active === name) {
 				state.active = null;
@@ -268,10 +394,19 @@
 
 	function init() {
 		var createBtn = FCC.$('#fcc-term-create');
-		if (createBtn) { createBtn.addEventListener('click', createSession); }
+		// Wrapped, not passed directly: addEventListener hands the handler a
+		// MouseEvent, which createSession() would take for an agent id.
+		if (createBtn) { createBtn.addEventListener('click', function () { createSession(); }); }
 
 		var cleanupBtn = FCC.$('#fcc-term-cleanup');
 		if (cleanupBtn) { cleanupBtn.addEventListener('click', cleanupSessions); }
+
+		var logHide = FCC.$('#fcc-term-log-hide');
+		if (logHide) {
+			logHide.addEventListener('click', function () {
+				FCC.$('#fcc-term-log').hidden = true;
+			});
+		}
 
 		ensureTerm();
 		loadAgents();

@@ -32,11 +32,21 @@
 
 	<div id="fcc-term-tabs" class="fcc-term-tabs"></div>
 
+	<div id="fcc-term-banner" class="fcc-term-banner" hidden></div>
+
 	<div class="fcc-term-wrap">
 		<div id="fcc-term"></div>
 	</div>
 
 	<div id="fcc-term-status"></div>
+
+	<div id="fcc-term-log" class="fcc-term-log" hidden>
+		<div class="fcc-term-log-head">
+			<span id="fcc-term-log-name" class="fcc-mono"></span>
+			<button id="fcc-term-log-hide" class="cbi-button cbi-button-reset"><%:Hide%></button>
+		</div>
+		<pre id="fcc-term-log-body" class="fcc-mono"></pre>
+	</div>
 
 	<div class="fcc-note">
 		<%:Sessions are hosted by tmux on the router, so they survive a page reload or a browser restart. Closing a session from its tab ends the agent process.%>

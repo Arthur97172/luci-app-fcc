@@ -89,6 +89,28 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 .fcc-badge.fail { color: var(--fcc-fail); }
 .fcc-badge.off  { color: var(--fcc-text-dim); }
 
+/* Section 73: what went wrong, and the two ways out of it, under the state
+ * badge in the agent table. The message is the reason the badge is not just
+ * "installed", so it sits with it rather than in a column of its own. */
+.fcc-agent-error {
+	font-size: .85em;
+	margin-top: .3em;
+	max-width: 32em;
+	word-break: break-word;
+}
+
+.fcc-agent-error-actions {
+	margin-top: .4em;
+	display: flex;
+	gap: .4em;
+	flex-wrap: wrap;
+}
+
+.fcc-agent-error-actions .cbi-button {
+	padding: .15em .6em;
+	font-size: .85em;
+}
+
 .fcc-dot {
 	display: inline-block;
 	width: .6em; height: .6em;
@@ -121,6 +143,50 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 	flex-wrap: wrap;
 	gap: .25em;
 	margin-bottom: .5em;
+}
+
+/* Section 74: the terminal's three endings. It sits directly above the
+   terminal, where the user is already looking when it appears. */
+.fcc-term-banner {
+	border: 1px solid var(--fcc-border);
+	border-left: 3px solid var(--fcc-warn);
+	border-radius: 4px;
+	padding: .6em .8em;
+	margin-bottom: .5em;
+	background: var(--fcc-bg-soft, transparent);
+}
+
+.fcc-term-banner-line { margin-bottom: .2em; }
+
+.fcc-term-banner-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5em;
+	margin-top: .6em;
+}
+
+.fcc-term-log {
+	border: 1px solid var(--fcc-border);
+	border-radius: 4px;
+	margin-top: .75em;
+}
+
+.fcc-term-log-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: .5em;
+	padding: .4em .6em;
+	border-bottom: 1px solid var(--fcc-border);
+}
+
+.fcc-term-log pre {
+	margin: 0;
+	padding: .6em;
+	max-height: 18em;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
 }
 
 .fcc-term-tab {

@@ -149,6 +149,20 @@ cmd_runtime() {
 	# What belongs here is the part specific to *updating*: recording what is
 	# being replaced, and preserving the agent set the user actually has so an
 	# upgrade does not silently drop agents they added.
+	# Section 47: an update takes its own lock, so two browsers both clicking
+	# Update cannot start two updates. The UI polls this same name to know the
+	# job is still running. install.sh takes the install lock on top, and the
+	# two refuse each other, so neither operation can overlap the other.
+	_cru_lock="$(fcc_lock_acquire update)" || { fcc_die "another update is already running"; return 1; }
+	if fcc_lock_held install; then
+		fcc_lock_release "$_cru_lock"
+		fcc_die "an install is already running"
+		return 1
+	fi
+	# Release on every exit, including a signal, so a killed update does not
+	# block the next one for the full stale-lock hour.
+	trap 'fcc_lock_release "$_cru_lock"' EXIT INT TERM HUP
+
 	_cru_before="$(installed_fcc_version 2>/dev/null || true)"
 	_cru_set="$(installed_agents | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
 	fcc_log "$LOG" "runtime update requested (installed=${_cru_before:-unknown}, agents='${_cru_set:-<defaults>}')"
@@ -159,6 +173,8 @@ cmd_runtime() {
 		"${FCC_LIBDIR:-/usr/libexec/fcc}/install.sh" runtime
 	fi
 	_cru_rc=$?
+	fcc_lock_release "$_cru_lock"
+	trap - EXIT INT TERM HUP
 
 	# Read the version straight from the binary rather than through
 	# installed_fcc_version(), whose cache entry was invalidated by the install

@@ -16,6 +16,11 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+
+
+msgid "%d agent session(s) are running and will be left as they are."
+msgstr "%d 个智能体会话正在运行，将保持原状。"
+
 msgid "Actions"
 msgstr "操作"
 
@@ -25,6 +30,9 @@ msgstr "FCC 服务器监听的地址。除非你需要从局域网内的其他�
 msgid "Agent"
 msgstr "智能体"
 
+msgid "Agent exited unexpectedly."
+msgstr "智能体意外退出。"
+
 msgid "Agents"
 msgstr "智能体"
 
@@ -33,6 +41,9 @@ msgstr "在此路由器上运行编码智能体的交互式终端。关闭本页
 
 msgid "Architecture"
 msgstr "架构"
+
+msgid "Are you sure you want to close this session?\nAll unsaved terminal state will be lost."
+msgstr "确定要关闭此会话吗？\n所有未保存的终端状态都将丢失。"
 
 msgid "Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation."
 msgstr "FCC 运行时的基础目录。运行时会放在其下的“fcc”子目录中，因此 /opt 对应 /opt/fcc。修改此项不会移动已安装的运行时。"
@@ -79,6 +90,12 @@ msgstr "完成。"
 msgid "Enable FCC"
 msgstr "启用 FCC"
 
+msgid "Error"
+msgstr "错误"
+
+msgid "Exit code: %d"
+msgstr "退出码：%d"
+
 msgid "FCC"
 msgstr "FCC"
 
@@ -90,6 +107,9 @@ msgstr "FCC Server"
 
 msgid "Health"
 msgstr "健康状态"
+
+msgid "Hide"
+msgstr "隐藏"
 
 msgid "Install"
 msgstr "安装"
@@ -148,6 +168,9 @@ msgstr "新建会话"
 msgid "No active sessions. Start one to open a terminal."
 msgstr "没有活动会话。新建一个以打开终端。"
 
+msgid "No agent sessions are running."
+msgstr "当前没有正在运行的智能体会话。"
+
 msgid "No agents in the registry."
 msgstr "注册表中没有智能体。"
 
@@ -175,6 +198,9 @@ msgstr "端口"
 msgid "Re-detect versions"
 msgstr "重新检测版本"
 
+msgid "Reconnect"
+msgstr "重新连接"
+
 msgid "Refresh"
 msgstr "刷新"
 
@@ -190,6 +216,9 @@ msgstr "移除 FCC 运行时？安装路径下的配置和数据将被保留。"
 msgid "Restart"
 msgstr "重启"
 
+msgid "Retry"
+msgstr "重试"
+
 msgid "Run checks"
 msgstr "运行检查"
 
@@ -202,6 +231,12 @@ msgstr "正在运行检查…"
 msgid "Save &amp; Apply"
 msgstr "保存并应用"
 
+msgid "Session has exited."
+msgstr "会话已退出。"
+
+msgid "Session is still running."
+msgstr "会话仍在运行。"
+
 msgid "Sessions are hosted by tmux on the router, so they survive a page reload or a browser restart. Closing a session from its tab ends the agent process."
 msgstr "会话由路由器上的 tmux 托管，因此页面重新加载或浏览器重启后仍会保留。从标签页关闭会话将结束该智能体进程。"
 
@@ -213,6 +248,9 @@ msgstr "设置已保存。"
 
 msgid "Start"
 msgstr "启动"
+
+msgid "Start New Session"
+msgstr "启动新会话"
 
 msgid "Start on boot"
 msgstr "开机自启"
@@ -232,11 +270,17 @@ msgstr "停止"
 msgid "Stopped"
 msgstr "已停止"
 
+msgid "Stopping FCC Server may affect active Coding Agent sessions."
+msgstr "停止 FCC 服务器可能会影响正在进行的编码智能体会话。"
+
 msgid "Storage"
 msgstr "存储空间"
 
 msgid "System"
 msgstr "系统"
+
+msgid "Terminal connection lost."
+msgstr "终端连接已断开。"
 
 msgid "The LuCI app version could not be checked — the router could not reach the version source."
 msgstr "无法检查 LuCI 应用版本 —— 路由器无法访问版本源。"
@@ -247,8 +291,8 @@ msgstr "安装路径已更改 —— 请在新位置安装运行时后再使用�
 msgid "The operation failed."
 msgstr "操作失败。"
 
-msgid "The session has ended."
-msgstr "会话已结束。"
+msgid "This log is empty."
+msgstr "此日志为空。"
 
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
@@ -261,6 +305,9 @@ msgstr "卸载并清除所有数据"
 
 msgid "Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo."
 msgstr "卸载会移除运行时和智能体，但保留安装路径下的配置，以便日后重新安装时自动沿用。卸载并清除所有数据还会删除该配置及所有已保存的备份，且无法撤销。"
+
+msgid "Unknown"
+msgstr "未知"
 
 msgid "Update"
 msgstr "更新"
@@ -285,6 +332,9 @@ msgstr "版本"
 
 msgid "Versions updated."
 msgstr "版本已更新。"
+
+msgid "View Log"
+msgstr "查看日志"
 
 msgid "Web Console"
 msgstr "Web 控制台"

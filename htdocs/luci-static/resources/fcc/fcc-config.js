@@ -70,7 +70,11 @@
 			link.title = FCC._('The server is bound to loopback. Bind it to this router\'s LAN address to open the Admin page from your computer.');
 			link.setAttribute('aria-disabled', 'true');
 		} else {
-			link.href = location.protocol + '//' + location.hostname + ':' + port + '/';
+			/* Section 13's target is http://<LAN-IP>:8082/admin. Two details
+			 * matter: the path is /admin, not /, and the scheme is http, not
+			 * location.protocol — the FCC server speaks plain HTTP, so an
+			 * https:// link would simply fail to connect. */
+			link.href = 'http://' + location.hostname + ':' + port + '/admin';
 			link.removeAttribute('aria-disabled');
 			link.classList.remove('fcc-disabled');
 			link.title = FCC._('Opens the FCC Admin page in a new tab.');
@@ -110,16 +114,39 @@
 		});
 	}
 
+	/* Section 12: stopping the server has to say so before it happens, because
+	 * the agent sessions are separate processes that the stop does not kill —
+	 * they keep running, cut off from the server they were talking to. The
+	 * warning is mandated; the count is what makes it more than a platitude,
+	 * so it is fetched first and folded into the same dialog. */
 	function serverOp(op) {
-		FCC.notice(FCC.$('#fcc-server-status'), '', '');
-		FCC.api('server', { op: op }, { method: 'POST' }).then(function (r) {
-			if (!r.ok) {
-				FCC.notice(FCC.$('#fcc-server-status'), 'fail',
-					r.output || FCC._('The operation failed.'));
-			} else {
-				FCC.notice(FCC.$('#fcc-server-status'), 'ok', FCC._('Done.'));
+		var confirmText = (op === 'stop' || op === 'restart')
+			? FCC._('Stopping FCC Server may affect active Coding Agent sessions.')
+			: null;
+
+		var pre = confirmText
+			? FCC.api('status', {}, { method: 'GET' }).catch(function () { return {}; })
+			: Promise.resolve({});
+
+		pre.then(function (d) {
+			if (confirmText) {
+				var n = (d.sessions && d.sessions.active) || 0;
+				var msg = confirmText + '\n\n'
+					+ (n ? FCC._('%d agent session(s) are running and will be left as they are.').replace('%d', n)
+					     : FCC._('No agent sessions are running.'));
+				if (!window.confirm(msg)) { return; }
 			}
-			setTimeout(function () { loadServer(); refreshRuntime(); }, 1500);
+
+			FCC.notice(FCC.$('#fcc-server-status'), '', '');
+			return FCC.api('server', { op: op }, { method: 'POST' }).then(function (r) {
+				if (!r.ok) {
+					FCC.notice(FCC.$('#fcc-server-status'), 'fail',
+						r.output || FCC._('The operation failed.'));
+				} else {
+					FCC.notice(FCC.$('#fcc-server-status'), 'ok', FCC._('Done.'));
+				}
+				setTimeout(function () { loadServer(); refreshRuntime(); }, 1500);
+			});
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-server-status'), 'fail', err.message);
 		});
@@ -156,7 +183,14 @@
 				tbody.appendChild(FCC.el('tr', {}, [
 					FCC.el('td', { text: a.name }),
 					FCC.el('td', { class: 'fcc-mono', text: a.command }),
-					FCC.el('td', { class: 'fcc-mono', text: a.version || '—' }),
+					/* Section 44: an installed agent whose version could not be
+					 * read shows "Unknown", never a guessed number. The reason
+					 * goes in the tooltip so the cell stays one word wide. */
+					FCC.el('td', {
+						class: 'fcc-mono',
+						text: a.version || (a.version_error ? FCC._('Unknown') : '—'),
+						title: a.version_error || ''
+					}),
 					FCC.el('td', {}, [state]),
 					FCC.el('td', { class: 'fcc-right' }, [action])
 				]));

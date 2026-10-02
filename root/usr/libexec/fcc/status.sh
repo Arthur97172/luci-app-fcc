@@ -131,9 +131,15 @@ st_used_b=$(( st_used_k * 1024 ))
 arch="$(uname -m 2>/dev/null)"
 
 # Build the process maps ONCE (no per-agent forks).
+#
+# pane_dead/pane_dead_status ride along on the map we already fetch, which is
+# what lets section 73 report why an agent stopped without a second tmux call
+# and without keeping state between polls. Sessions are created with
+# remain-on-exit on (see session.sh), so a pane that exited is still listed here
+# with its exit status intact.
 TMUX_MAP=""
 command -v tmux >/dev/null 2>&1 && \
-	TMUX_MAP="$(tmux list-panes -a -F '#{session_name} #{pane_pid}' 2>/dev/null)"
+	TMUX_MAP="$(tmux list-panes -a -F '#{session_name} #{pane_pid} #{pane_dead} #{pane_dead_status}' 2>/dev/null)"
 COMM_MAP="$(build_comm_map)"
 
 # ---------------------------------------------------------------------------
@@ -155,6 +161,17 @@ COMM_MAP="$(build_comm_map)"
 		"$server_listening" \
 		"$(fcc_json_num_or_null "${server_http:-}")" \
 		"$server_healthy"
+	# Session count, from the tmux map already built above — no extra fork. It
+	# is what lets the Configuration page say how many agent sessions a server
+	# stop would affect (section 12) instead of warning in the abstract.
+	if [ -n "$TMUX_MAP" ]; then
+		session_count="$(printf '%s\n' "$TMUX_MAP" | grep -c '^fcc-[a-z0-9]\{1,16\}-[0-9]\{3\} ' || true)"
+	else
+		session_count=0
+	fi
+	case "$session_count" in ''|*[!0-9]*) session_count=0 ;; esac
+	printf '  "sessions": {"active": %s},\n' "$session_count"
+
 	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s},\n' \
 		"$(fcc_json_num_or_null "$mem_total")" \
 		"$(fcc_json_num_or_null "$mem_avail")" \
@@ -171,17 +188,48 @@ COMM_MAP="$(build_comm_map)"
 		ag_installed=false
 		command -v "$acmd" >/dev/null 2>&1 && ag_installed=true
 
+		# The agent's tmux session, if it has one. A session outlives its
+		# process (remain-on-exit), so its pane may be dead while the session is
+		# still listed: that is exactly the case section 73 is about.
+		ag_dead=""; ag_exit=""
 		ag_pid=""
 		if [ -n "$TMUX_MAP" ]; then
-			ag_pid="$(printf '%s\n' "$TMUX_MAP" | awk -v p="fcc-$aid-" 'index($1,p)==1{print $2; exit}')"
+			ag_line="$(printf '%s\n' "$TMUX_MAP" | awk -v p="fcc-$aid-" 'index($1,p)==1{print; exit}')"
+			if [ -n "$ag_line" ]; then
+				ag_pid="$(printf '%s' "$ag_line" | cut -d' ' -f2)"
+				ag_dead="$(printf '%s' "$ag_line" | cut -d' ' -f3)"
+				ag_exit="$(printf '%s' "$ag_line" | cut -d' ' -f4)"
+			fi
 		fi
-		if [ -z "$ag_pid" ]; then
-			ag_pid="$(printf '%s\n' "$COMM_MAP" | awk -v c="$acmd" '$1==c{print $2; exit}')"
-		fi
+		# A dead pane keeps its recorded pid, which may since have been reused by
+		# an unrelated process; never measure a process we know has gone.
 		ag_running=false
-		if [ -n "$ag_pid" ] && fcc_proc_alive "$ag_pid"; then
+		if [ "$ag_dead" != "1" ] && [ -n "$ag_pid" ] && fcc_proc_alive "$ag_pid"; then
 			ag_running=true
-		else
+		fi
+		if [ -z "$ag_pid" ] && [ "$ag_dead" != "1" ]; then
+			ag_pid="$(printf '%s\n' "$COMM_MAP" | awk -v c="$acmd" '$1==c{print $2; exit}')"
+			if [ -n "$ag_pid" ] && fcc_proc_alive "$ag_pid"; then
+				ag_running=true
+			else
+				ag_pid=""
+			fi
+		fi
+
+		# Section 73: "Stopped" on its own leaves the user with no idea what
+		# happened. When the pane is dead and tmux recorded a non-zero status,
+		# say so. A zero status is a normal finish, and a tmux too old to report
+		# a status tells us nothing — in both cases we report no error rather
+		# than invent one.
+		ag_error=null
+		if [ "$ag_dead" = "1" ]; then
+			case "$ag_exit" in
+				''|*[!0-9]*) ;;
+				0) ;;
+				*) ag_error="$(printf '{"code": %s, "message": %s}' \
+					"$(fcc_json_str START_FAILED)" \
+					"$(fcc_json_str "$acmd exited with status $ag_exit")")" ;;
+			esac
 			ag_pid=""
 		fi
 
@@ -194,7 +242,7 @@ COMM_MAP="$(build_comm_map)"
 
 		[ "$_ag_first" -eq 1 ] || printf ','
 		_ag_first=0
-		printf '\n    %s: {"name": %s, "command": %s, "installed": %s, "running": %s, "pid": %s, "uptime": %s, "memory_rss_kb": %s, "version": %s, "default": %s, "approx_size_mb": %s, "min_ram_mb": %s}' \
+		printf '\n    %s: {"name": %s, "command": %s, "installed": %s, "running": %s, "pid": %s, "uptime": %s, "memory_rss_kb": %s, "version": %s, "default": %s, "approx_size_mb": %s, "min_ram_mb": %s, "error": %s}' \
 			"$(fcc_json_str "$aid")" \
 			"$(fcc_json_str "$aname")" \
 			"$(fcc_json_str "$acmd")" \
@@ -205,7 +253,8 @@ COMM_MAP="$(build_comm_map)"
 			"$(fcc_json_str_or_null "${ag_ver:-}")" \
 			"$(fcc_json_bool "$adef")" \
 			"$(fcc_json_num_or_null "$asize")" \
-			"$(fcc_json_num_or_null "$aram")"
+			"$(fcc_json_num_or_null "$aram")" \
+			"$ag_error"
 	done <<-EOF
 	$(fcc_agents_each)
 	EOF

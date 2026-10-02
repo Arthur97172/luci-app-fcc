@@ -330,6 +330,148 @@ test_scrollback_trim_advances_the_base() {
 }
 
 # ---------------------------------------------------------------------------
+# Section 74 — what the console learns when a session ends
+#
+# The exit code is the whole answer: 0 means the agent finished, anything else
+# means it died. It survives only because sessions are created with
+# remain-on-exit on — without that tmux destroys the session outright and the
+# status is gone before anyone can ask for it. That is a tmux behaviour, not an
+# arithmetic one, so this drives a real tmux session.
+# ---------------------------------------------------------------------------
+
+# Run a backend script the way the controller does: same environment overrides,
+# same argv.
+sh_script() { # sh_script <script> [args...]
+	_sts_script="$1"; shift
+	FCC_LIBDIR="$LIBEXEC" \
+	FCC_AGENTS_CONF="$AGENTS_CONF" \
+	FCC_VERSION_FILE="$ROOT/VERSION" \
+	FCC_DEFAULT_BASE="$SANDBOX/opt" \
+	sh "$LIBEXEC/$_sts_script" "$@" 2>&1
+}
+
+test_a_dead_session_reports_its_exit_code() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — the exit-code path needs a real pane"
+		return 0
+	fi
+
+	_sts_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_sts_root/sessions"
+	_sts_name="fcc-claude-901"
+	tmux kill-session -t "$_sts_name" 2>/dev/null
+
+	# The same two steps cmd_create takes: start the pane, then make it
+	# survive its own death.
+	tmux new-session -d -s "$_sts_name" 'printf hello; exit 7' 2>/dev/null
+	tmux set-option -t "$_sts_name" remain-on-exit on 2>/dev/null
+	sleep 1
+
+	# The pane is dead, but the session is deliberately still there — that is
+	# what keeps the exit status answerable.
+	_sts_dead="$(tmux display-message -p -t "$_sts_name" '#{pane_dead}' 2>/dev/null)"
+	assert_eq "1" "$_sts_dead" "the pane is dead"
+	assert_ok "the session survives its pane" tmux has-session -t "$_sts_name"
+
+	_sts_hdr="$(sh_script session.sh output "$_sts_name" 0 0 | head -n1)"
+	assert_contains "$_sts_hdr" '"alive": false'    "a dead pane is not alive"
+	assert_contains "$_sts_hdr" '"eof": true'       "a dead pane is at end of file"
+	assert_contains "$_sts_hdr" '"exit_code": 7'    "the exit code reaches the client"
+
+	# Section 74 shows "Exit code: 0" for a clean finish, so zero has to come
+	# through as a number rather than being lost as a falsy value.
+	_sts_ok="fcc-claude-902"
+	tmux kill-session -t "$_sts_ok" 2>/dev/null
+	tmux new-session -d -s "$_sts_ok" 'printf bye; exit 0' 2>/dev/null
+	tmux set-option -t "$_sts_ok" remain-on-exit on 2>/dev/null
+	sleep 1
+	_sts_hdr0="$(sh_script session.sh output "$_sts_ok" 0 0 | head -n1)"
+	assert_contains "$_sts_hdr0" '"exit_code": 0' "a clean exit reports zero"
+
+	# And the session list carries it too, so a tab can show a finished session
+	# without polling its output.
+	_sts_list="$(sh_script session.sh list)"
+	assert_contains "$_sts_list" '"dead": true'   "the list marks a dead session"
+	assert_contains "$_sts_list" '"exit_code": 7' "the list carries the exit code"
+
+	# Input into a dead pane is refused rather than silently dropped.
+	assert_no "a dead session takes no input" \
+		sh_script session.sh input "$_sts_name" 68
+
+	tmux kill-session -t "$_sts_name" 2>/dev/null
+	tmux kill-session -t "$_sts_ok" 2>/dev/null
+}
+
+test_old_backups_are_pruned_to_the_most_recent_n() {
+	setup_sandbox
+	_bt_root="$SANDBOX/opt/fcc/backup"
+	mkdir -p "$_bt_root"
+	for _bt_s in 20200101T000000Z 20210101T000000Z 20220101T000000Z \
+	             20230101T000000Z 20240101T000000Z; do
+		mkdir -p "$_bt_root/$_bt_s"
+		printf 'x' > "$_bt_root/$_bt_s/runtime.json"
+	done
+	# Section 25's retention counts only the stamps this code writes. Anything
+	# else in backup/ may be the only copy of a user's data, and there is no way
+	# to tell from the name — so it is left exactly where it is.
+	mkdir -p "$_bt_root/manual-keep"
+	printf 'x' > "$_bt_root/manual-keep/runtime.json"
+
+	sh_install 'prune_backups' >/dev/null
+
+	assert_ok "the newest backup survives"        test -d "$_bt_root/20240101T000000Z"
+	assert_ok "the second newest survives"        test -d "$_bt_root/20230101T000000Z"
+	assert_ok "the third newest survives"         test -d "$_bt_root/20220101T000000Z"
+	assert_no "the fourth newest is pruned"       test -d "$_bt_root/20210101T000000Z"
+	assert_no "the oldest is pruned"              test -d "$_bt_root/20200101T000000Z"
+	assert_ok "a directory we did not write survives" test -d "$_bt_root/manual-keep"
+}
+
+test_status_explains_why_an_agent_stopped() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — section 73 reads the pane's exit status"
+		return 0
+	fi
+
+	# Section 73: "Stopped" on its own leaves the user with no idea what
+	# happened. The status collector already fetches the tmux pane map, so the
+	# exit status rides along on it and no state has to be kept between polls.
+	_er_bad="fcc-codex-911"
+	_er_ok="fcc-claude-912"
+	tmux kill-session -t "$_er_bad" 2>/dev/null
+	tmux kill-session -t "$_er_ok" 2>/dev/null
+	tmux new-session -d -s "$_er_bad" 'printf boom; exit 1' 2>/dev/null
+	tmux set-option -t "$_er_bad" remain-on-exit on 2>/dev/null
+	tmux new-session -d -s "$_er_ok" 'printf fine; exit 0' 2>/dev/null
+	tmux set-option -t "$_er_ok" remain-on-exit on 2>/dev/null
+	sleep 1
+
+	_er_json="$(sh_script status.sh)"
+	_er_codex="$(printf '%s\n' "$_er_json" | grep '"codex":')"
+	_er_claude="$(printf '%s\n' "$_er_json" | grep '"claude":')"
+
+	assert_contains "$_er_codex" '"running": false' "an agent whose pane died is not running"
+	assert_contains "$_er_codex" '"error": {"code": "START_FAILED"' \
+		"a non-zero exit produces an error object"
+	assert_contains "$_er_codex" 'fcc-codex exited with status 1' \
+		"the message names the command and the status"
+
+	# A zero exit is a normal finish. Inventing a failure for it would be worse
+	# than saying nothing, so it has to come through as an explicit null.
+	assert_contains "$_er_claude" '"error": null' "a clean exit reports no error"
+
+	# The whole point of section 73 is that Basic Information explains the state
+	# without the console being open, so the error has to be in this document
+	# rather than in a per-session call.
+	assert_contains "$_er_json" '"agents": {' "the error travels in the status document"
+
+	tmux kill-session -t "$_er_bad" 2>/dev/null
+	tmux kill-session -t "$_er_ok" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
 # Degradation
 # ---------------------------------------------------------------------------
 
