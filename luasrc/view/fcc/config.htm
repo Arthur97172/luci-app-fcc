@@ -114,10 +114,15 @@
 				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
 				<div class="spacer"></div>
 				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
+				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall and remove all data%></button>
 			</div>
 
 			<p class="fcc-muted">
 				<%:Installing downloads the FCC runtime and the selected agents. This can take several minutes on a router; progress is shown below.%>
+			</p>
+
+			<p class="fcc-muted">
+				<%:Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo.%>
 			</p>
 
 			<div id="fcc-job" style="display:none">

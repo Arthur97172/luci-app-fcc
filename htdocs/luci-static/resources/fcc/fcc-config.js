@@ -308,11 +308,21 @@
 		FCC.$('#fcc-runtime-update').addEventListener('click', function () {
 			runJobAction('update_runtime', {}, 'install', 'fcc-update.log');
 		});
+		/* Uninstall comes in two strengths, and the confirmation says which one
+		 * you are getting rather than mentioning a purge the button does not
+		 * perform. The destructive one names what is lost — the dialog is the
+		 * only place that can still change the user's mind. */
 		FCC.$('#fcc-runtime-uninstall').addEventListener('click', function () {
-			if (!window.confirm(FCC._('Remove the FCC runtime? Your data under the install path is kept unless you purge it.'))) {
+			if (!window.confirm(FCC._('Remove the FCC runtime? Your configuration and data under the install path are kept.'))) {
 				return;
 			}
 			runJobAction('uninstall_runtime', {}, 'install', 'fcc-runtime.log');
+		});
+		FCC.$('#fcc-runtime-purge').addEventListener('click', function () {
+			if (!window.confirm(FCC._('Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone.'))) {
+				return;
+			}
+			runJobAction('uninstall_runtime', { purge: 1 }, 'install', 'fcc-runtime.log');
 		});
 
 		FCC.$('#fcc-agent-refresh').addEventListener('click', refreshVersions);

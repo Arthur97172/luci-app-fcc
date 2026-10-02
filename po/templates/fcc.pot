@@ -183,7 +183,10 @@ msgstr ""
 msgid "Remove"
 msgstr ""
 
-msgid "Remove the FCC runtime? Your data under the install path is kept unless you purge it."
+msgid "Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone."
+msgstr ""
+
+msgid "Remove the FCC runtime? Your configuration and data under the install path are kept."
 msgstr ""
 
 msgid "Restart"
@@ -253,6 +256,12 @@ msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr ""
 
 msgid "Uninstall"
+msgstr ""
+
+msgid "Uninstall and remove all data"
+msgstr ""
+
+msgid "Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo."
 msgstr ""
 
 msgid "Update"

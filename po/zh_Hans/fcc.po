@@ -181,8 +181,11 @@ msgstr "刷新"
 msgid "Remove"
 msgstr "移除"
 
-msgid "Remove the FCC runtime? Your data under the install path is kept unless you purge it."
-msgstr "移除 FCC 运行时？除非执行清除，否则安装路径下的数据将被保留。"
+msgid "Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone."
+msgstr "移除 FCC 运行时及其全部数据？这将删除运行时、智能体、你的配置以及所有备份。此操作无法撤销。"
+
+msgid "Remove the FCC runtime? Your configuration and data under the install path are kept."
+msgstr "移除 FCC 运行时？安装路径下的配置和数据将被保留。"
 
 msgid "Restart"
 msgstr "重启"
@@ -252,6 +255,12 @@ msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
 
 msgid "Uninstall"
 msgstr "卸载"
+
+msgid "Uninstall and remove all data"
+msgstr "卸载并清除所有数据"
+
+msgid "Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo."
+msgstr "卸载会移除运行时和智能体，但保留安装路径下的配置，以便日后重新安装时自动沿用。卸载并清除所有数据还会删除该配置及所有已保存的备份，且无法撤销。"
 
 msgid "Update"
 msgstr "更新"
