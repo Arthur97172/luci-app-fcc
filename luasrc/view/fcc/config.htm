@@ -1,0 +1,164 @@
+<%#
+ luci-app-fcc — Configuration.
+
+ Settings, the FCC runtime lifecycle (install / update / uninstall), the agent
+ set, and the FCC server service controls. Long-running work is started in the
+ background and polled, so nothing here blocks on a multi-minute install.
+-%>
+
+<%+header%>
+
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+
+<script>
+	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
+</script>
+
+<div class="cbi-map fcc-page">
+	<h2 name="content"><%:Configuration%></h2>
+
+	<!-- ------------------------------------------------------- settings -->
+	<div class="cbi-section">
+		<h3><%:Settings%></h3>
+		<div class="cbi-section-node">
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-enabled"><%:Enable FCC%></label>
+				<div class="cbi-value-field">
+					<input type="checkbox" id="fcc-enabled" class="cbi-input-checkbox">
+					<div class="cbi-value-description">
+						<%:Start the FCC server automatically and keep it supervised by procd.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-install-path"><%:Install path%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-install-path" class="cbi-input-text" spellcheck="false">
+					<div class="cbi-value-description">
+						<%:Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-bind"><%:Bind address%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-bind" class="cbi-input-text" spellcheck="false">
+					<div class="cbi-value-description">
+						<%:Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN — never expose this port to the internet.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-port"><%:Port%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-port" class="cbi-input-text" size="6" spellcheck="false">
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-log-level"><%:Log level%></label>
+				<div class="cbi-value-field">
+					<select id="fcc-log-level" class="cbi-input-select">
+						<option value="debug">debug</option>
+						<option value="info">info</option>
+						<option value="warning">warning</option>
+						<option value="error">error</option>
+						<option value="critical">critical</option>
+					</select>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-auto-start"><%:Start on boot%></label>
+				<div class="cbi-value-field">
+					<input type="checkbox" id="fcc-auto-start" class="cbi-input-checkbox">
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<div class="cbi-value-field">
+					<button id="fcc-save" class="cbi-button cbi-button-apply"><%:Save &amp; Apply%></button>
+				</div>
+			</div>
+		</div>
+		<div id="fcc-config-status"></div>
+	</div>
+
+	<!-- --------------------------------------------------- server control -->
+	<div class="cbi-section">
+		<h3><%:FCC Server%></h3>
+		<div class="cbi-section-node">
+			<div id="fcc-server-state" class="fcc-card"><%:Loading…%></div>
+			<div class="fcc-toolbar">
+				<button class="cbi-button cbi-button-apply" data-op="start"><%:Start%></button>
+				<button class="cbi-button cbi-button-reset" data-op="stop"><%:Stop%></button>
+				<button class="cbi-button" data-op="restart"><%:Restart%></button>
+				<div class="spacer"></div>
+				<a id="fcc-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"><%:Open FCC Admin%></a>
+			</div>
+			<div id="fcc-server-status"></div>
+		</div>
+	</div>
+
+	<!-- --------------------------------------------------- runtime + agents -->
+	<div class="cbi-section">
+		<h3><%:FCC Runtime%></h3>
+		<div class="cbi-section-node">
+			<div id="fcc-runtime-state" class="fcc-card"><%:Loading…%></div>
+
+			<div class="fcc-toolbar">
+				<button id="fcc-runtime-install" class="cbi-button cbi-button-apply"><%:Install / reinstall%></button>
+				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
+				<div class="spacer"></div>
+				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
+			</div>
+
+			<p class="fcc-muted">
+				<%:Installing downloads the FCC runtime and the selected agents. This can take several minutes on a router; progress is shown below.%>
+			</p>
+
+			<div id="fcc-job" style="display:none">
+				<div class="fcc-progress"><span id="fcc-job-bar" style="width:0"></span></div>
+				<pre class="fcc-log" id="fcc-job-log"></pre>
+			</div>
+
+			<h4><%:Agents%></h4>
+			<table class="fcc-table" id="fcc-agent-table">
+				<thead>
+					<tr>
+						<th><%:Agent%></th>
+						<th><%:Launcher%></th>
+						<th><%:Version%></th>
+						<th><%:State%></th>
+						<th class="fcc-right"><%:Actions%></th>
+					</tr>
+				</thead>
+				<tbody></tbody>
+			</table>
+
+			<div class="fcc-toolbar">
+				<button id="fcc-agent-refresh" class="cbi-button"><%:Re-detect versions%></button>
+			</div>
+			<div id="fcc-agent-status"></div>
+		</div>
+	</div>
+
+	<!-- ------------------------------------------------------------ doctor -->
+	<div class="cbi-section">
+		<h3><%:Diagnostics%></h3>
+		<div class="cbi-section-node">
+			<div class="fcc-toolbar">
+				<button id="fcc-doctor-run" class="cbi-button"><%:Run checks%></button>
+			</div>
+			<div id="fcc-doctor"></div>
+		</div>
+	</div>
+</div>
+
+<script src="<%=resource%>/fcc/fcc-common.js"></script>
+<script src="<%=resource%>/fcc/fcc-config.js"></script>
+
+<%+footer%>

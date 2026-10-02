@@ -1,0 +1,31 @@
+#!/bin/sh
+# luci-app-fcc — first-install defaults.
+#
+# This script runs once, on package install. It is intentionally tiny: it only
+# creates the UCI config if missing and clears the LuCI caches. It MUST NOT
+# download the FCC runtime — that is an explicit, user-initiated action from the
+# LuCI UI (see DESIGN_SPEC.md section 82).
+
+[ -n "$IPKG_INSTROOT" ] && exit 0
+
+# Seed default config (idempotent — uci-defaults runs before /etc/config exists
+# only if the conffile was not preserved).
+if [ ! -f /etc/config/fcc ]; then
+	cat > /etc/config/fcc <<-'EOF'
+		config fcc 'main'
+			option enabled '1'
+			option install_path '/opt/fcc'
+			option port '8082'
+			option bind '127.0.0.1'
+			option auto_start '1'
+			option session_backend 'tmux'
+			option agent_backend 'python'
+			option log_level 'info'
+	EOF
+fi
+
+# Clear LuCI index/module caches so the new menu entry appears immediately.
+rm -f /tmp/luci-indexcache 2>/dev/null
+rm -rf /tmp/luci-modulecache 2>/dev/null
+
+exit 0

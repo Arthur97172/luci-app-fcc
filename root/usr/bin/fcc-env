@@ -1,0 +1,87 @@
+#!/bin/sh
+# luci-app-fcc — run a command inside the FCC runtime environment.
+#
+# The FCC runtime keeps its Python, its tools and its data under the install
+# root (default /opt/fcc) instead of the usual $HOME/.local. Anything that
+# wants to talk to it — `fcc-server`, `fcc-claude`, `uv`, `python` — must
+# therefore run with the same environment the init script and the Web Console
+# give it. This is that wrapper, for use over SSH.
+#
+# Usage:
+#   fcc-env                 print the environment as `export` lines (eval-able)
+#   fcc-env <cmd> [args...] run <cmd> with the FCC environment
+#   fcc-env shell           interactive shell with the FCC environment
+#   fcc-env status|doctor|agents|sessions|install|uninstall|update ...
+#                           convenience passthrough to the backend scripts
+#
+# Examples:
+#   fcc-env fcc-server --version
+#   fcc-env uv tool list
+#   eval "$(fcc-env)"; fcc-claude
+
+set -u
+. "${FCC_LIBDIR:-/usr/libexec/fcc}/common.sh"
+
+ROOT="$(fcc_root)"
+
+# Export the runtime environment. Mirrors install.sh apply_runtime_env().
+apply_env() {
+	HOME="$ROOT/data"
+	UV_INSTALL_DIR="$ROOT/bin"
+	UV_TOOL_DIR="$ROOT/runtime/uv-tools"
+	UV_TOOL_BIN_DIR="$ROOT/bin"
+	UV_CACHE_DIR="$ROOT/cache/uv"
+	UV_PYTHON_INSTALL_DIR="$ROOT/runtime/python"
+	XDG_DATA_HOME="$ROOT/data/.local/share"
+	XDG_CACHE_HOME="$ROOT/cache"
+	XDG_BIN_HOME="$ROOT/bin"
+	XDG_CONFIG_HOME="$ROOT/data/.config"
+	PATH="$ROOT/bin:$PATH"
+	export HOME UV_INSTALL_DIR UV_TOOL_DIR UV_TOOL_BIN_DIR UV_CACHE_DIR \
+	       UV_PYTHON_INSTALL_DIR XDG_DATA_HOME XDG_CACHE_HOME XDG_BIN_HOME \
+	       XDG_CONFIG_HOME PATH
+}
+
+print_env() {
+	# Shell-quote a value so `eval "$(fcc-env)"` is safe even if the install
+	# path contains characters a naive echo would mangle.
+	q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+	printf 'export HOME=%s\n' "$(q "$ROOT/data")"
+	printf 'export UV_INSTALL_DIR=%s\n' "$(q "$ROOT/bin")"
+	printf 'export UV_TOOL_DIR=%s\n' "$(q "$ROOT/runtime/uv-tools")"
+	printf 'export UV_TOOL_BIN_DIR=%s\n' "$(q "$ROOT/bin")"
+	printf 'export UV_CACHE_DIR=%s\n' "$(q "$ROOT/cache/uv")"
+	printf 'export UV_PYTHON_INSTALL_DIR=%s\n' "$(q "$ROOT/runtime/python")"
+	printf 'export XDG_DATA_HOME=%s\n' "$(q "$ROOT/data/.local/share")"
+	printf 'export XDG_CACHE_HOME=%s\n' "$(q "$ROOT/cache")"
+	printf 'export XDG_BIN_HOME=%s\n' "$(q "$ROOT/bin")"
+	printf 'export XDG_CONFIG_HOME=%s\n' "$(q "$ROOT/data/.config")"
+	printf 'export PATH=%s:"$PATH"\n' "$(q "$ROOT/bin")"
+}
+
+LIBDIR="${FCC_LIBDIR:-/usr/libexec/fcc}"
+
+case "${1:-}" in
+	'')
+		print_env
+		;;
+	shell)
+		shift
+		apply_env
+		exec "${SHELL:-/bin/sh}" "$@"
+		;;
+	status)    shift; exec "$LIBDIR/status.sh" "$@" ;;
+	doctor)    shift; exec "$LIBDIR/doctor.sh" "$@" ;;
+	agents)    shift; exec "$LIBDIR/agent.sh" "$@" ;;
+	sessions)  shift; exec "$LIBDIR/session.sh" "$@" ;;
+	install)   shift; exec "$LIBDIR/install.sh" "$@" ;;
+	uninstall) shift; exec "$LIBDIR/install.sh" uninstall "$@" ;;
+	update)    shift; exec "$LIBDIR/update.sh" "$@" ;;
+	help|-h|--help)
+		sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+		;;
+	*)
+		apply_env
+		exec "$@"
+		;;
+esac

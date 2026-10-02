@@ -1,0 +1,51 @@
+<%#
+ luci-app-fcc — Web Console.
+
+ A real interactive terminal backed by a tmux session on the router. The
+ session keeps running when this page is closed; reopening the page reattaches
+ to it. See htdocs/.../fcc-terminal.js for the transport.
+-%>
+
+<%+header%>
+
+<link rel="stylesheet" href="<%=resource%>/fcc/xterm.min.css">
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+
+<script>
+	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
+</script>
+
+<div class="cbi-map fcc-page">
+	<h2 name="content"><%:Web Console%></h2>
+
+	<div class="cbi-map-descr">
+		<%:An interactive terminal running a coding agent on this router. Sessions keep running after you close this page, and reattaching to one restores its screen.%>
+	</div>
+
+	<div class="fcc-toolbar">
+		<label for="fcc-agent-select" class="fcc-muted"><%:Agent%></label>
+		<select id="fcc-agent-select" class="cbi-input-select"></select>
+		<button id="fcc-term-create" class="cbi-button cbi-button-apply"><%:New session%></button>
+		<div class="spacer"></div>
+		<button id="fcc-term-cleanup" class="cbi-button cbi-button-reset"><%:Clean up finished sessions%></button>
+	</div>
+
+	<div id="fcc-term-tabs" class="fcc-term-tabs"></div>
+
+	<div class="fcc-term-wrap">
+		<div id="fcc-term"></div>
+	</div>
+
+	<div id="fcc-term-status"></div>
+
+	<div class="fcc-note">
+		<%:Sessions are hosted by tmux on the router, so they survive a page reload or a browser restart. Closing a session from its tab ends the agent process.%>
+	</div>
+</div>
+
+<script src="<%=resource%>/fcc/fcc-common.js"></script>
+<script src="<%=resource%>/fcc/xterm.min.js"></script>
+<script src="<%=resource%>/fcc/addon-fit.min.js"></script>
+<script src="<%=resource%>/fcc/fcc-terminal.js"></script>
+
+<%+footer%>

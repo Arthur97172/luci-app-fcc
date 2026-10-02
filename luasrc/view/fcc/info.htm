@@ -1,0 +1,82 @@
+<%#
+ luci-app-fcc — Basic Information.
+
+ The runtime monitor: versions, process state, resource use and update status.
+ Everything on this page is read-only and comes from one batched status call.
+-%>
+
+<%+header%>
+
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+
+<script>
+	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
+</script>
+
+<div class="cbi-map fcc-page">
+	<h2 name="content"><%:Basic Information%></h2>
+
+	<div class="cbi-section">
+		<h3><%:System%></h3>
+		<div class="cbi-section-node">
+			<div id="fcc-info-system" class="fcc-grid"><%:Loading…%></div>
+		</div>
+	</div>
+
+	<div class="cbi-section">
+		<h3><%:FCC%></h3>
+		<div class="cbi-section-node">
+			<div id="fcc-info-fcc" class="fcc-grid"><%:Loading…%></div>
+		</div>
+	</div>
+
+	<div class="cbi-section">
+		<h3><%:Agents%></h3>
+		<div class="cbi-section-node">
+			<table class="fcc-table" id="fcc-info-agents">
+				<thead>
+					<tr>
+						<th><%:Agent%></th>
+						<th><%:Version%></th>
+						<th><%:State%></th>
+						<th><%:PID%></th>
+						<th><%:Uptime%></th>
+						<th><%:Memory (RSS)%></th>
+					</tr>
+				</thead>
+				<tbody></tbody>
+			</table>
+		</div>
+	</div>
+
+	<div class="cbi-section">
+		<h3><%:Updates%></h3>
+		<div class="cbi-section-node">
+			<div id="fcc-info-updates"><%:Loading…%></div>
+			<div class="fcc-toolbar">
+				<button id="fcc-info-check" class="cbi-button"><%:Check for updates%></button>
+				<button id="fcc-info-refresh" class="cbi-button cbi-button-apply"><%:Refresh%></button>
+			</div>
+		</div>
+	</div>
+
+	<div class="cbi-section">
+		<h3><%:Logs%></h3>
+		<div class="cbi-section-node">
+			<div class="fcc-toolbar">
+				<select id="fcc-info-log-select" class="cbi-input-select">
+					<option value="fcc-runtime.log">fcc-runtime.log</option>
+					<option value="fcc-update.log">fcc-update.log</option>
+					<option value="fcc-terminal.log">fcc-terminal.log</option>
+				</select>
+				<button id="fcc-info-log-load" class="cbi-button"><%:Load%></button>
+			</div>
+			<pre class="fcc-log" id="fcc-info-log"></pre>
+		</div>
+	</div>
+</div>
+
+<script src="<%=resource%>/fcc/fcc-common.js"></script>
+<script src="<%=resource%>/fcc/fcc-info.js"></script>
+
+<%+footer%>

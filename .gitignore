@@ -1,0 +1,31 @@
+# Build artifacts
+*.ipk
+*.apk
+*.tar.gz
+/build/
+/dist/
+/bin/
+
+# Editor / OS
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Local test scratch
+/tmp-test/
+*.log
+
+# Node build environment (dev/CI only — never a runtime dependency)
+node_modules/
+package-lock.json
+
+# Local working notes — deliberately not published.
+#
+# DESIGN_SPEC.md is the development specification and CLAUDE.md holds the
+# project's working instructions. Both are local-only, and both can contain
+# material that must not reach a public repository. Keeping them here means a
+# `git add .` cannot publish them by accident.
+DESIGN_SPEC.md
+CLAUDE.md

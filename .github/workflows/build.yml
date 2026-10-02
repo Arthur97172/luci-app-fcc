@@ -1,0 +1,167 @@
+# luci-app-fcc — CI build.
+#
+# DESIGN_SPEC.md section 15 requires CI to produce both an OpenWrt 24.10 .ipk
+# and an OpenWrt 25.12 .apk; section 61 gives the matrix (each release, on
+# x86_64 and aarch64). That matrix is reproduced here rather than split across
+# two near-identical files, so there is one place to change the supported
+# releases and no way for the two to drift apart.
+#
+# The package is PKGARCH:=all — it ships only Lua, JavaScript and ash — so the
+# per-architecture builds are not producing different binaries. They are here
+# because section 61 asks for them, and because they are what proves the
+# manifest and the Lua module paths are right in a real buildroot rather than
+# only in the static checks.
+#
+# On a v* tag the same run also publishes a GitHub release (section 62).
+
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The gate. Nothing is built until the package is known to be well-formed and
+  # to still obey the specification.
+  # ---------------------------------------------------------------------------
+  check:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test tooling
+        # luac for the Lua syntax check; python3 and jq are already present on
+        # the runner and cover the JSON check. po2lmo is deliberately absent —
+        # it comes from luci-base/host and the i18n suite falls back to
+        # structural checks when it is missing.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
+
+      - name: Run the check suite
+        run: sh scripts/test.sh
+
+  # ---------------------------------------------------------------------------
+  # Build matrix (section 61).
+  #
+  # CONTAINER is pinned to Docker Hub's openwrt/sdk, whose tags name the
+  # architecture, the target and the release branch directly. The tags used
+  # below were verified to exist and resolve. They track the maintenance branch
+  # rather than a point release, so this job answers "does it still build
+  # against the maintained 24.10 / 25.12?", which is the question worth asking
+  # on every push.
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.release }} / ${{ matrix.arch }}
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: openwrt-24.10
+            arch: x86_64
+            container: x86_64-openwrt-24.10
+            ext: ipk
+          - release: openwrt-24.10
+            arch: aarch64
+            container: aarch64_cortex-a53-openwrt-24.10
+            ext: ipk
+          - release: openwrt-25.12
+            arch: x86_64
+            container: x86_64-openwrt-25.12
+            ext: apk
+          - release: openwrt-25.12
+            arch: aarch64
+            container: aarch64_cortex-a53-openwrt-25.12
+            ext: apk
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build the package
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.container }}
+          CONTAINER: openwrt/sdk
+          FEEDNAME: fcc
+          INDEX: 1
+          BUILD_LOG: 1
+
+      - name: Collect artifacts
+        run: |
+          set -eu
+          mkdir -p dist
+          # The feed name is the directory the SDK writes into, so glob the
+          # extension across bin/packages rather than guessing the arch path.
+          find bin/packages -name "*.${{ matrix.ext }}" -exec cp -v {} dist/ \;
+          test -n "$(ls -A dist)" || {
+            echo "::error::the build produced no .${{ matrix.ext }}"
+            find bin -maxdepth 4 -type d | head -50
+            exit 1
+          }
+          ls -l dist
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-fcc-${{ matrix.release }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.release }}-${{ matrix.arch }}
+          path: logs/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Release (section 62). Only on a v* tag, and only after every architecture
+  # has built, so a tag can never publish a partial set.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download every artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: luci-app-fcc-*
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -eu
+          ls -l artifacts
+          cd artifacts && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release create "$GITHUB_REF_NAME" \
+            --title "luci-app-fcc $GITHUB_REF_NAME" \
+            --generate-notes \
+            artifacts/*

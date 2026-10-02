@@ -1,0 +1,13 @@
+config fcc 'main'
+	option enabled '1'
+	option install_path '/opt/fcc'
+	option port '8082'
+	option bind '127.0.0.1'
+	option auto_start '1'
+	option session_backend 'tmux'
+	option agent_backend 'python'
+	option log_level 'info'
+
+# NOTE: API keys / provider credentials are NEVER stored here.
+# They live in the FCC Admin UI (FCC's own configuration) and are managed by
+# FCC itself. luci-app-fcc only links to /admin. See DESIGN_SPEC.md section 29.

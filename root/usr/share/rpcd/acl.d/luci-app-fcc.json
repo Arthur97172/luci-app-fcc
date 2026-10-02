@@ -1,0 +1,31 @@
+{
+	"luci-app-fcc": {
+		"description": "Grant access to the FCC LuCI application (Web Console, FCC Server Manager, Runtime Monitor)",
+		"read": {
+			"uci": [ "fcc" ],
+			"ubus": {
+				"service": [ "list" ]
+			},
+			"file": {
+				"/usr/libexec/fcc/status.sh": [ "exec" ],
+				"/usr/libexec/fcc/doctor.sh": [ "exec" ],
+				"/usr/bin/fcc-env": [ "exec" ]
+			}
+		},
+		"write": {
+			"uci": [ "fcc" ],
+			"ubus": {
+				"service": [ "list", "set", "delete" ]
+			},
+			"file": {
+				"/usr/libexec/fcc/status.sh": [ "exec" ],
+				"/usr/libexec/fcc/doctor.sh": [ "exec" ],
+				"/usr/libexec/fcc/agent.sh": [ "exec" ],
+				"/usr/libexec/fcc/session.sh": [ "exec" ],
+				"/usr/libexec/fcc/install.sh": [ "exec" ],
+				"/usr/libexec/fcc/update.sh": [ "exec" ],
+				"/usr/bin/fcc-env": [ "exec" ]
+			}
+		}
+	}
+}

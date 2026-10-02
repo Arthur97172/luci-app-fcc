@@ -1,0 +1,147 @@
+#!/bin/sh /etc/rc.common
+# luci-app-fcc — procd service for the FCC server.
+#
+# The FCC server is a long-lived Python process installed on demand under
+# /opt/fcc (DESIGN_SPEC.md sections 3 and 55). This init script:
+#
+#   * never fails when the runtime is absent — it logs and returns success, so
+#     enabling the service before installing the runtime is harmless
+#     (DESIGN_SPEC.md section 87: "must not error when the runtime is absent")
+#   * forces HOST/PORT from UCI. Upstream defaults HOST to 0.0.0.0; binding the
+#     admin/proxy port to the WAN is explicitly forbidden, so the shipped
+#     default 127.0.0.1 is enforced here rather than trusted to upstream.
+#   * disables upstream's browser auto-open (there is no browser on a router)
+#   * lets procd supervise/respawn the process and capture its output
+
+START=95
+STOP=10
+USE_PROCD=1
+
+PROG=fcc-server
+LOG_TAG=fcc
+
+# common.sh is installed by the same package; guard the source so a partial
+# install cannot wedge boot.
+[ -r /usr/libexec/fcc/common.sh ] && . /usr/libexec/fcc/common.sh
+
+# Locals are per-function prefixed (`_ig_`, `_fr_`, `_fs_`, `_ss_`) because this
+# script sources common.sh: POSIX sh has one global scope shared by every
+# function, so a bare `_v` here would collide with a helper's variable.
+
+uci_get() {
+	# uci_get <option> <default>
+	_ig_v="$(uci -q get "fcc.main.$1" 2>/dev/null)"
+	if [ -n "$_ig_v" ]; then printf '%s' "$_ig_v"; else printf '%s' "$2"; fi
+}
+
+fcc_root_dir() {
+	if command -v fcc_root >/dev/null 2>&1; then
+		fcc_root
+		return 0
+	fi
+	# Fallback: minimal, same rules as fcc_canon_base.
+	_fr_b="$(uci_get install_path /opt)"
+	case "$_fr_b" in
+		/*) : ;;
+		*) _fr_b=/opt ;;
+	esac
+	case "$_fr_b" in
+		*[\ \'\"\`\$\;\&\|\<\>\(\)\{\}\*\!\?\~]*) _fr_b=/opt ;;
+		*/../*|*/..|../*|..) _fr_b=/opt ;;
+	esac
+	case "$_fr_b" in
+		*/fcc) printf '%s' "$_fr_b" ;;
+		*)     printf '%s/fcc' "$_fr_b" ;;
+	esac
+}
+
+# Resolve the fcc-server executable, or print nothing.
+find_server() {
+	_fs_r="$(fcc_root_dir)"
+	for _fs_c in "$_fs_r/bin/$PROG" "$_fs_r/runtime/bin/$PROG" "$_fs_r/venv/bin/$PROG"; do
+		[ -x "$_fs_c" ] && { printf '%s' "$_fs_c"; return 0; }
+	done
+	_fs_c="$(command -v $PROG 2>/dev/null)"
+	[ -n "$_fs_c" ] && { printf '%s' "$_fs_c"; return 0; }
+	return 1
+}
+
+# Validate a bind address: IPv4/IPv6 literal or hostname-ish. Never empty.
+valid_bind() {
+	case "$1" in
+		''|*[!0-9a-fA-F:.]*) return 1 ;;
+	esac
+	return 0
+}
+
+valid_port() {
+	case "$1" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+start_service() {
+	_ss_r="$(fcc_root_dir)"
+	_ss_bin="$(find_server)" || {
+		logger -t "$LOG_TAG" "FCC runtime not installed (looked under $_ss_r); not starting"
+		return 0
+	}
+
+	_ss_bind="$(uci_get bind 127.0.0.1)"
+	valid_bind "$_ss_bind" || _ss_bind=127.0.0.1
+	_ss_port="$(uci_get port 8082)"
+	valid_port "$_ss_port" || _ss_port=8082
+	_ss_lvl="$(uci_get log_level info)"
+	case "$_ss_lvl" in
+		debug|info|warning|error|critical) : ;;
+		*) _ss_lvl=info ;;
+	esac
+
+	# Runtime layout: everything the server writes stays under the install root.
+	mkdir -p "$_ss_r/data" "$_ss_r/logs" "$_ss_r/cache" "$_ss_r/bin" 2>/dev/null
+
+	procd_open_instance fcc
+	procd_set_param command "$_ss_bin"
+	procd_set_param respawn 3600 5 5
+	procd_set_param term_timeout 10
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+
+	# Redirect every upstream artefact under the runtime root (see install.sh
+	# apply_runtime_env) so the server does not scatter into $HOME/.local.
+	procd_set_param env \
+		HOME="$_ss_r/data" \
+		PATH="$_ss_r/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+		UV_INSTALL_DIR="$_ss_r/bin" \
+		UV_TOOL_DIR="$_ss_r/runtime/uv-tools" \
+		UV_TOOL_BIN_DIR="$_ss_r/bin" \
+		UV_CACHE_DIR="$_ss_r/cache/uv" \
+		UV_PYTHON_INSTALL_DIR="$_ss_r/runtime/python" \
+		XDG_DATA_HOME="$_ss_r/data/.local/share" \
+		XDG_CACHE_HOME="$_ss_r/cache" \
+		XDG_CONFIG_HOME="$_ss_r/data/.config" \
+		HOST="$_ss_bind" \
+		PORT="$_ss_port" \
+		LOG_LEVEL="$_ss_lvl" \
+		FCC_OPEN_BROWSER=0
+	procd_close_instance
+
+	logger -t "$LOG_TAG" "starting $PROG on $_ss_bind:$_ss_port (root=$_ss_r)"
+}
+
+stop_service() {
+	logger -t "$LOG_TAG" "stopping $PROG"
+	# procd stops the instance; give the server a moment to release the port so
+	# an immediate restart (and the installer's "no FCC processes" check) works.
+	sleep 1
+}
+
+reload_service() {
+	stop
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger "fcc"
+}
