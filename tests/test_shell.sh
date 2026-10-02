@@ -281,9 +281,15 @@ test_no_wan_bind_default() {
 	# loopback, and the init script pins it.
 	assert_contains "$(cat "$ROOT/root/etc/config/fcc")" "option bind '127.0.0.1'" \
 		"the shipped bind default is loopback"
-	_ts_hits="$(grep -rn "0\.0\.0\.0" "$ROOT/root" "$ROOT/luasrc" "$ROOT/htdocs" 2>/dev/null \
-		| grep -v '127\.0\.0\.1' | grep -v ':[[:space:]]*#' | grep -v '^[^:]*:[0-9]*:[[:space:]]*#')"
-	assert_eq "" "$_ts_hits" "0.0.0.0 appears in no bind address and no code"
+	# The literal is allowed where it is *compared*: section 50's rule has to
+	# recognise a wildcard bind to decide whether the LAN-only firewall rule is
+	# needed, and that is code keeping the WAN out rather than letting it in.
+	# What must not exist is a default — an assignment that would make the
+	# server listen on every interface.
+	_ts_hits="$(grep -rnE "(option[[:space:]]+bind[[:space:]]+['\"]?0\.0\.0\.0|(bind|host|HOST)[[:space:]]*[=:][[:space:]]*['\"]?0\.0\.0\.0)" \
+		"$ROOT/root" "$ROOT/luasrc" "$ROOT/htdocs" 2>/dev/null \
+		| grep -v '==' | grep -v ':[[:space:]]*#' | grep -v '^[^:]*:[0-9]*:[[:space:]]*#')"
+	assert_eq "" "$_ts_hits" "no bind default is a wildcard address"
 }
 
 tests_main

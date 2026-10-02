@@ -964,6 +964,89 @@ test_insufficient_space_reports_section_54s_message() {
 		"nothing was installed"
 }
 
+# Section 50 lets the FCC Admin port be reachable from the LAN and never from
+# the WAN. Adding the rule edits a system config file, so the test watches what
+# is actually issued to uci rather than trusting the script's own summary —
+# and, more to the point, proves the wan zone is never named at all.
+test_firewall_rule_is_lan_only() {
+	setup_sandbox
+
+	_fw_log="$SANDBOX/uci.log"
+	_fw_rules="$SANDBOX/uci.rules"
+	: > "$_fw_log"
+	mkdir -p "$_fw_rules" "$SANDBOX/bin"
+
+	# A recording stand-in for uci: answers `get` from one file per rule
+	# section, and appends every call to a log. Everything else is recorded and
+	# succeeds, which is all the script under test needs to be exercised.
+	cat > "$SANDBOX/bin/uci" <<'SHIM'
+#!/bin/sh
+[ "${1:-}" = "-q" ] && shift
+printf '%s\n' "$*" >> "$UCI_LOG"
+[ "${1:-}" = "get" ] || exit 0
+_key="${2:-}"
+_idx="$(printf '%s' "$_key" | sed -n 's/^firewall\.@rule\[//p' | sed -n 's/\].*$//p')"
+_fld="$(printf '%s' "$_key" | sed -n 's/^.*\]\.//p')"
+[ -n "$_idx" ] && [ -n "$_fld" ] || exit 1
+[ -r "$UCI_RULES/$_idx" ] || exit 1
+_val="$(sed -n "s/^${_fld}=//p" "$UCI_RULES/$_idx" | head -n 1)"
+[ -n "$_val" ] || exit 1
+printf '%s\n' "$_val"
+SHIM
+	chmod +x "$SANDBOX/bin/uci"
+
+	_fw_run() {
+		UCI_LOG="$_fw_log" UCI_RULES="$_fw_rules" PATH="$SANDBOX/bin:$PATH" \
+		FCC_LIBDIR="$LIBEXEC" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+			sh "$LIBEXEC/firewall.sh" "$@" 2>&1
+	}
+
+	# Nothing configured yet: the rule is added, scoped to lan and nothing else.
+	_fw_run ensure 8082 >/dev/null
+	_fw_out="$(cat "$_fw_log")"
+	assert_contains "$_fw_out" "add firewall rule" "a rule is added when none exists"
+	assert_contains "$_fw_out" "firewall.@rule[-1].src=lan" "the rule is scoped to the lan zone"
+	assert_contains "$_fw_out" "firewall.@rule[-1].proto=tcp" "the rule is TCP only"
+	assert_contains "$_fw_out" "firewall.@rule[-1].target=ACCEPT" "the rule accepts"
+	assert_contains "$_fw_out" "firewall.@rule[-1].dest_port=8082" "the rule names the port"
+	assert_not_contains "$_fw_out" "wan" "the wan zone is never named"
+	assert_contains "$_fw_out" "commit firewall" "the change is committed"
+
+	# Already present: the port is updated in place, not a second rule added.
+	: > "$_fw_log"
+	printf 'name=Allow-FCC-Admin\nsrc=lan\ndest_port=8082\n' > "$_fw_rules/0"
+	_fw_run ensure 9999 >/dev/null
+	_fw_out="$(cat "$_fw_log")"
+	assert_contains "$_fw_out" "firewall.@rule[0].dest_port=9999" \
+		"an existing rule is updated in place"
+	assert_not_contains "$_fw_out" "add firewall rule" "no duplicate rule is added"
+	assert_not_contains "$_fw_out" "wan" "the wan zone is still never named"
+
+	# A rule someone else owns is left alone.
+	: > "$_fw_log"
+	printf 'name=Some-Other-Rule\n' > "$_fw_rules/0"
+	printf 'name=Allow-FCC-Admin\nsrc=lan\ndest_port=8082\n' > "$_fw_rules/1"
+	_fw_run ensure 8082 >/dev/null
+	assert_contains "$(cat "$_fw_log")" "set firewall.@rule[1].dest_port=8082" \
+		"the rule is found by name, not by position"
+	assert_not_contains "$(cat "$_fw_log")" "add firewall rule" \
+		"a rule someone else owns is not duplicated"
+
+	# Removal.
+	: > "$_fw_log"
+	_fw_run remove >/dev/null
+	_fw_out="$(cat "$_fw_log")"
+	assert_contains "$_fw_out" "delete firewall.@rule[1]" "remove deletes the rule"
+	assert_contains "$_fw_out" "commit firewall" "the removal is committed"
+
+	# Status reflects what is actually there.
+	assert_contains "$(_fw_run status)" "LAN access rule present" \
+		"status reports a present rule"
+	rm -rf "$_fw_rules/1"
+	assert_contains "$(_fw_run status)" "No LAN access rule" \
+		"status reports an absent rule"
+}
+
 # Section 22 gives the Runtime Manager a fixed verb set and says the LuCI
 # controller must not reimplement install logic — so a verb missing here is a
 # feature the web UI cannot reach either. The stubs stand in for the backend

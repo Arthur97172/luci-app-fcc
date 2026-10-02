@@ -22,8 +22,8 @@ msgstr "%d 个智能体会话正在运行，将保持原状。"
 msgid "Actions"
 msgstr "操作"
 
-msgid "Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN — never expose this port to the internet."
-msgstr "FCC 服务器监听的地址。除非你需要从局域网内的其他设备访问 FCC 管理页面，否则请保持 127.0.0.1 —— 切勿将此端口暴露到互联网。"
+msgid "Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN. This router's own LAN address is the safest choice — binding to a specific address needs no firewall change. Binding to 0.0.0.0 adds a LAN-only firewall rule, and the port is never opened to the WAN."
+msgstr "FCC 服务器监听的地址。除非需要从局域网内的其他设备访问 FCC Admin 页面，否则请保持 127.0.0.1。最安全的选择是本机自己的局域网地址——绑定到具体地址无需修改防火墙。绑定到 0.0.0.0 会添加一条仅限局域网的防火墙规则，该端口绝不会对 WAN 开放。"
 
 msgid "Agent"
 msgstr "智能体"
@@ -132,6 +132,9 @@ msgstr "已安装"
 
 msgid "Installing downloads the FCC runtime and the selected agents. This can take several minutes on a router; progress is shown below."
 msgstr "安装过程会下载 FCC 运行时和选定的智能体。在路由器上这可能需要数分钟；进度显示在下方。"
+
+msgid "LAN access was opened in the firewall. The WAN is unaffected."
+msgstr "已在防火墙中开放局域网访问。WAN 不受影响。"
 
 msgid "Latest"
 msgstr "最新"
@@ -289,8 +292,14 @@ msgstr "系统"
 msgid "Terminal connection lost."
 msgstr "终端连接已断开。"
 
+msgid "The LAN access rule was removed; the port is no longer opened by this app."
+msgstr "局域网访问规则已移除；本应用不再开放该端口。"
+
 msgid "The LuCI app version could not be checked — the router could not reach the version source."
 msgstr "无法检查 LuCI 应用版本 —— 路由器无法访问版本源。"
+
+msgid "The firewall rule could not be added — the server is bound to every interface without one."
+msgstr "无法添加防火墙规则——服务器已绑定到所有网络接口，但没有相应规则。"
 
 msgid "The install path changed — install the runtime at the new location to use it."
 msgstr "安装路径已更改 —— 请在新位置安装运行时后再使用。"

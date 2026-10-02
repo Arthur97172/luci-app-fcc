@@ -24,7 +24,7 @@ msgstr ""
 msgid "Actions"
 msgstr ""
 
-msgid "Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN — never expose this port to the internet."
+msgid "Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN. This router's own LAN address is the safest choice — binding to a specific address needs no firewall change. Binding to 0.0.0.0 adds a LAN-only firewall rule, and the port is never opened to the WAN."
 msgstr ""
 
 msgid "Agent"
@@ -133,6 +133,9 @@ msgid "Installed"
 msgstr ""
 
 msgid "Installing downloads the FCC runtime and the selected agents. This can take several minutes on a router; progress is shown below."
+msgstr ""
+
+msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr ""
 
 msgid "Latest"
@@ -291,7 +294,13 @@ msgstr ""
 msgid "Terminal connection lost."
 msgstr ""
 
+msgid "The LAN access rule was removed; the port is no longer opened by this app."
+msgstr ""
+
 msgid "The LuCI app version could not be checked — the router could not reach the version source."
+msgstr ""
+
+msgid "The firewall rule could not be added — the server is bound to every interface without one."
 msgstr ""
 
 msgid "The install path changed — install the runtime at the new location to use it."

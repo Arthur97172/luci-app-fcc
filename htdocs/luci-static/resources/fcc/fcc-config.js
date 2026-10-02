@@ -52,6 +52,15 @@
 			if (r.path_changed) {
 				msg += ' ' + FCC._('The install path changed — install the runtime at the new location to use it.');
 			}
+			/* Section 50: say what happened to the firewall, so a wildcard bind
+			 * does not silently change a system setting the user never sees. */
+			if (r.firewall === 'lan-allow') {
+				msg += ' ' + FCC._('LAN access was opened in the firewall. The WAN is unaffected.');
+			} else if (r.firewall === 'removed') {
+				msg += ' ' + FCC._('The LAN access rule was removed; the port is no longer opened by this app.');
+			} else if (r.firewall === 'failed') {
+				msg += ' ' + FCC._('The firewall rule could not be added — the server is bound to every interface without one.');
+			}
 			FCC.notice(FCC.$('#fcc-config-status'), r.path_changed ? 'warn' : 'ok', msg);
 			updateAdminLink(body.bind, body.port);
 			refreshAll();

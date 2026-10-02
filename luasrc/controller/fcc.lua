@@ -498,7 +498,32 @@ function act_config_set()
 		util.exec_argv("/etc/init.d/fcc", { "disable" })
 	end
 
+	-- Section 50: a wildcard bind is the one case that needs an explicit
+	-- LAN-only rule, because the server then answers on every interface. A bind
+	-- to a specific address needs none — the server listens on that interface
+	-- only — so a rule left over from a previous wildcard bind is removed
+	-- rather than allowed to sit there granting access nothing asked for.
+	-- Nothing here ever writes a wan-zone rule.
+	local wildcard = (bind == "0.0.0.0" or bind == "::")
+	local fw = "unchanged"
+	local fwscript = paths.script("firewall")
+	if fwscript and util.file_exists(fwscript) then
+		local args
+		if wildcard then
+			args = { "ensure", tostring(port) }
+		else
+			args = { "remove" }
+		end
+		local _, code = util.exec_argv(fwscript, args)
+		if wildcard then
+			fw = (code == 0) and "lan-allow" or "failed"
+		else
+			fw = "removed"
+		end
+	end
+
 	json_out('{"ok":true,"restarted":true,"path_changed":' ..
 		(path_changed and "true" or "false") ..
+		',"firewall":' .. util.json_encode(fw) ..
 		',"fcc_root":' .. util.json_encode(paths.fcc_root()) .. '}')
 end

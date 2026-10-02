@@ -46,7 +46,7 @@
 				<div class="cbi-value-field">
 					<input type="text" id="fcc-bind" class="cbi-input-text" spellcheck="false">
 					<div class="cbi-value-description">
-						<%:Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN — never expose this port to the internet.%>
+						<%:Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN. This router's own LAN address is the safest choice — binding to a specific address needs no firewall change. Binding to 0.0.0.0 adds a LAN-only firewall rule, and the port is never opened to the WAN.%>
 					</div>
 				</div>
 			</div>

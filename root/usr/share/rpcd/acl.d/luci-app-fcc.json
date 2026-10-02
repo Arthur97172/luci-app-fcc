@@ -24,6 +24,7 @@
 				"/usr/libexec/fcc/session.sh": [ "exec" ],
 				"/usr/libexec/fcc/install.sh": [ "exec" ],
 				"/usr/libexec/fcc/update.sh": [ "exec" ],
+				"/usr/libexec/fcc/firewall.sh": [ "exec" ],
 				"/usr/bin/fcc-env": [ "exec" ]
 			}
 		}
