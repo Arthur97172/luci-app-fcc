@@ -151,16 +151,53 @@ write_runtime_metadata() {
 	_wm_ver="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
 	_wm_py="$(fcc_detect_version "$ROOT/runtime/python/bin/python3" --version 2>/dev/null || true)"
 	[ -n "$_wm_py" ] || _wm_py="$(fcc_detect_version python3 --version 2>/dev/null || true)"
+
+	# Section 42: the runtime manager reports what Node is present. This package
+	# never installs Node — the upstream installer decides whether the system one
+	# will do — but recording it means the page can say "system node 22.x"
+	# instead of leaving the question open when an agent needs it.
+	_wm_node="$(fcc_detect_version node --version 2>/dev/null || true)"
+	_wm_npm="$(fcc_detect_version npm --version 2>/dev/null || true)"
+
+	# installed_at is when this runtime was first put down; updated_at moves on
+	# every write. Overwriting installed_at each update would throw away the one
+	# piece of history the file exists to keep.
+	_wm_first="$_wm_now"
+	if [ -r "$ROOT/runtime.json" ]; then
+		_wm_prev="$(sed -n 's/.*"installed_at"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+			"$ROOT/runtime.json" | head -n 1)"
+		[ -n "$_wm_prev" ] && _wm_first="$_wm_prev"
+	fi
+
 	{
 		printf '{\n'
 		printf '  "fcc_version": %s,\n' "$(fcc_json_str_or_null "${_wm_ver:-}")"
 		printf '  "python_version": %s,\n' "$(fcc_json_str_or_null "${_wm_py:-}")"
-		printf '  "installed_at": %s,\n' "$(fcc_json_str_or_null "$_wm_now")"
+		printf '  "node_version": %s,\n' "$(fcc_json_str_or_null "${_wm_node:-}")"
+		printf '  "npm_version": %s,\n' "$(fcc_json_str_or_null "${_wm_npm:-}")"
+		printf '  "installed_at": %s,\n' "$(fcc_json_str_or_null "$_wm_first")"
+		printf '  "updated_at": %s,\n' "$(fcc_json_str_or_null "$_wm_now")"
 		printf '  "install_path": %s' "$(fcc_json_str "$ROOT")"
+
+		# Section 81's agents map: which agents are installed, keyed by id. The
+		# executable check is what decides membership — this file is a record of
+		# what was seen, never the source of truth for what exists.
+		printf ',\n  "agents": {'
+		_wm_sep=""
+		while IFS='|' read -r _wm_id _wm_rest; do
+			case "$_wm_id" in ''|\#*) continue ;; esac
+			command -v "$(fcc_agent_command "$_wm_id")" >/dev/null 2>&1 || continue
+			printf '%s"%s": true' "$_wm_sep" "$_wm_id"
+			_wm_sep=", "
+		done <<-EOF
+		$(fcc_agents_each)
+		EOF
+		printf '}'
+
 		# Per-agent versions, so a later status refresh has a fallback when the
 		# underlying CLI cannot be probed (see agent.sh detect_agent_version).
 		# The comma leads each entry rather than trailing the one before it:
-		# install_path is always emitted, but the agent list can be empty, and a
+		# the agents map is always emitted, but this list can be empty, and a
 		# trailing comma would make the whole document unparseable.
 		while IFS='|' read -r _wm_id _wm_rest; do
 			case "$_wm_id" in ''|\#*) continue ;; esac
@@ -324,6 +361,10 @@ cmd_runtime() {
 	if [ "$_cr_free" -gt 0 ] && [ "$_cr_free" -lt $(( FCC_MIN_FREE_MB * 1024 )) ]; then
 		fcc_lock_release "$_cr_lock"
 		fcc_log "$LOG" "aborted: $(( _cr_free / 1024 ))MB free under $ROOT, need ${FCC_MIN_FREE_MB}MB"
+		# Section 54's wording. How short the box is matters more than the fact
+		# that it failed: it is the number the user has to act on.
+		printf 'Not enough storage space.\nRequired: %s MB\nAvailable: %s MB\n' \
+			"$FCC_MIN_FREE_MB" "$(( _cr_free / 1024 ))"
 		printf 'NO_SPACE\n'
 		return 1
 	fi

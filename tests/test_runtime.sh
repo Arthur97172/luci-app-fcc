@@ -721,4 +721,129 @@ test_rollback_reports_when_the_server_cannot_be_restarted() {
 		"the files are restored even though the server will not start"
 }
 
+# ---------------------------------------------------------------------------
+# Runtime metadata (DESIGN_SPEC.md sections 42 and 81).
+#
+# Section 81 names the fields; section 42 is why node_version is one of them.
+# The subtle requirement is the pair of timestamps: installed_at is when the
+# runtime was first put down and must survive an update, updated_at is when the
+# file was last written. A single timestamp would satisfy the field list and
+# still lose the history the file exists to keep.
+# ---------------------------------------------------------------------------
+
+test_runtime_metadata_records_what_section_81_asks_for() {
+	setup_sandbox
+	_md_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_md_root/bin"
+	printf '#!/bin/sh\necho "fcc-server 9.9.9"\n' > "$_md_root/bin/fcc-server"
+	chmod +x "$_md_root/bin/fcc-server"
+	make_uci_shim
+
+	sh_install 'write_runtime_metadata' >/dev/null
+
+	assert_file "$_md_root/runtime.json"
+	_md_json="$(cat "$_md_root/runtime.json")"
+	for _md_key in fcc_version python_version node_version installed_at \
+	               updated_at install_path agents; do
+		assert_contains "$_md_json" "\"$_md_key\"" "runtime.json carries $_md_key"
+	done
+	# The agents map is always an object, never omitted — a caller can read it
+	# without a nil check. Whether it is empty depends on what is on PATH, which
+	# is the machine's business, not this test's: a developer box with every
+	# agent installed must not make the suite fail.
+	assert_contains "$_md_json" '"agents": {' \
+		"the agents map is emitted as an object"
+
+	# What *is* an invariant: every agent whose version was recorded is also
+	# marked installed. The two are written from the same predicate, so a
+	# disagreement means one of the loops has drifted.
+	_md_ids="$(sed -n 's/.*"agent_version_\([a-z0-9]*\)":.*/\1/p' "$_md_root/runtime.json")"
+	if [ -n "$_md_ids" ]; then
+		for _md_id in $_md_ids; do
+			assert_contains "$_md_json" "\"$_md_id\": true" \
+				"$_md_id has a recorded version and is marked installed"
+		done
+	else
+		# No agent CLI on PATH: the map must then be genuinely empty, which is
+		# the branch a clean router takes.
+		assert_contains "$_md_json" '"agents": {}' \
+			"no agents on PATH leaves the map empty"
+	fi
+
+	# The version actually came from the binary, not from a placeholder.
+	assert_contains "$_md_json" '"fcc_version": "9.9.9"' \
+		"fcc_version is read from the installed binary"
+
+	if command -v python3 >/dev/null 2>&1; then
+		assert_ok "the document is valid JSON" \
+			python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$_md_root/runtime.json"
+	else
+		skip "no python3 — runtime.json left unparsed"
+	fi
+}
+
+# Section 54 names the message, and the numbers are the point of it: "not
+# enough space" without saying how much short is not actionable.
+test_insufficient_space_reports_section_54s_message() {
+	setup_sandbox
+	make_uci_shim
+
+	# Reach the disk preflight by demanding more space than any machine has,
+	# rather than by filling a filesystem — a full disk is not something a test
+	# can arrange portably. The preflight runs after the compatibility check, so
+	# on a machine where that fails there is no way in; say so instead of failing.
+	case "$(sh_install 'precheck_ok >/dev/null 2>&1 && echo yes || echo no')" in
+		yes) ;;
+		*) skip "precheck does not pass here — cannot reach the disk preflight"; return 0 ;;
+	esac
+
+	FCC_MIN_FREE_MB=999999999
+	export FCC_MIN_FREE_MB
+	_out="$(sh_install 'cmd_runtime')"
+	unset FCC_MIN_FREE_MB
+
+	assert_contains "$_out" "Not enough storage space." \
+		"section 54's wording is used verbatim"
+	assert_contains "$_out" "Required: 999999999 MB" \
+		"the message says how much is needed"
+	assert_contains "$_out" "Available: " \
+		"the message says how much there is"
+	# The available figure has to be a number, not an empty field: the caller
+	# renders this line to the user.
+	_sp_avail="$(printf '%s\n' "$_out" | sed -n 's/^Available: \([0-9]*\) MB$/\1/p')"
+	case "$_sp_avail" in
+		''|*[!0-9]*) fail "Available: line carries a number" "got: $(printf '%s\n' "$_out" | grep Available)" ;;
+		*) pass "Available: line carries a number ($_sp_avail MB)" ;;
+	esac
+	assert_contains "$_out" "NO_SPACE" \
+		"the machine-readable token still follows the message"
+	# Installation is *blocked*, not merely warned about.
+	assert_not_contains "$(cat "$SANDBOX/opt/fcc/runtime.json" 2>/dev/null)" "fcc_version" \
+		"nothing was installed"
+}
+
+test_runtime_metadata_keeps_installed_at_and_moves_updated_at() {
+	setup_sandbox
+	_mu_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_mu_root/bin"
+	printf '#!/bin/sh\necho "fcc-server 9.9.9"\n' > "$_mu_root/bin/fcc-server"
+	chmod +x "$_mu_root/bin/fcc-server"
+	make_uci_shim
+
+	sh_install 'write_runtime_metadata' >/dev/null
+	# Stand in for a runtime that was installed last year and is being updated
+	# now: the previous installed_at must be carried forward verbatim.
+	sed 's/"installed_at": "[^"]*"/"installed_at": "2020-01-02T03:04:05Z"/' \
+		"$_mu_root/runtime.json" > "$_mu_root/runtime.json.new"
+	mv "$_mu_root/runtime.json.new" "$_mu_root/runtime.json"
+
+	sh_install 'write_runtime_metadata' >/dev/null
+	_mu_json="$(cat "$_mu_root/runtime.json")"
+
+	assert_contains "$_mu_json" '"installed_at": "2020-01-02T03:04:05Z"' \
+		"installed_at survives an update"
+	assert_not_contains "$_mu_json" '"updated_at": "2020-01-02T03:04:05Z"' \
+		"updated_at is the time of this write, not a copy of installed_at"
+}
+
 tests_main
