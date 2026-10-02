@@ -1,18 +1,46 @@
 #!/bin/sh
-# luci-app-fcc — run a command inside the FCC runtime environment.
+# luci-app-fcc — the FCC Runtime Manager (DESIGN_SPEC.md section 22).
 #
-# The FCC runtime keeps its Python, its tools and its data under the install
-# root (default /opt/fcc) instead of the usual $HOME/.local. Anything that
-# wants to talk to it — `fcc-server`, `fcc-claude`, `uv`, `python` — must
-# therefore run with the same environment the init script and the Web Console
-# give it. This is that wrapper, for use over SSH.
+# Two jobs, because they are the same job seen from two sides:
+#
+#   1. Run a command inside the FCC runtime environment. The runtime keeps its
+#      Python, its tools and its data under the install root (default /opt/fcc)
+#      instead of the usual $HOME/.local, so anything that talks to it —
+#      `fcc-server`, `fcc-claude`, `uv`, `python` — must run with the same
+#      environment the init script and the Web Console give it.
+#
+#   2. Drive the runtime's lifecycle and the agent and session sets, so the
+#      LuCI controller never reimplements install logic (section 22) and an
+#      administrator over SSH has the same verbs the web UI has.
 #
 # Usage:
-#   fcc-env                 print the environment as `export` lines (eval-able)
-#   fcc-env <cmd> [args...] run <cmd> with the FCC environment
-#   fcc-env shell           interactive shell with the FCC environment
-#   fcc-env status|doctor|agents|sessions|install|uninstall|update ...
-#                           convenience passthrough to the backend scripts
+#   fcc-env                       print the environment as `export` lines
+#   fcc-env <cmd> [args...]       run <cmd> with the FCC environment
+#   fcc-env shell                 interactive shell with the FCC environment
+#
+# Runtime (section 22):
+#   fcc-env status                runtime and server state, as JSON
+#   fcc-env version               the installed runtime's version
+#   fcc-env doctor [--json]       pre-install / troubleshooting checks
+#   fcc-env install [runtime]     install or reinstall the runtime
+#   fcc-env uninstall [--purge]   remove the runtime (--purge also removes data)
+#   fcc-env update [runtime]      update the runtime in place
+#   fcc-env update check          report whether an update is available
+#   fcc-env start|stop|restart    control the FCC server service
+#
+# Agents (section 22) — `agents` is accepted as a synonym:
+#   fcc-env agent list
+#   fcc-env agent status <agent>
+#   fcc-env agent version <agent>
+#   fcc-env agent install <agent>
+#   fcc-env agent remove <agent>
+#
+# Sessions (section 76) — `sessions` is accepted as a synonym:
+#   fcc-env session list
+#   fcc-env session create <agent> [cols] [rows]
+#   fcc-env session capture <name>
+#   fcc-env session close <name>
+#   fcc-env session cleanup       dead and orphaned fcc-* sessions only
 #
 # Examples:
 #   fcc-env fcc-server --version
@@ -59,6 +87,19 @@ print_env() {
 	printf 'export PATH=%s:"$PATH"\n' "$(q "$ROOT/bin")"
 }
 
+# Section 22 lists `version` as its own verb rather than as a field of status:
+# over SSH the question is usually just "what is installed here?".
+cmd_version() {
+	_cv_v="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
+	[ -n "$_cv_v" ] || _cv_v="$(fcc_cache_get fcc_version 2>/dev/null || true)"
+	if [ -n "$_cv_v" ]; then
+		printf '%s\n' "$_cv_v"
+		return 0
+	fi
+	printf 'FCC runtime is not installed under %s\n' "$ROOT" >&2
+	return 1
+}
+
 LIBDIR="${FCC_LIBDIR:-/usr/libexec/fcc}"
 
 case "${1:-}" in
@@ -71,14 +112,46 @@ case "${1:-}" in
 		exec "${SHELL:-/bin/sh}" "$@"
 		;;
 	status)    shift; exec "$LIBDIR/status.sh" "$@" ;;
+	version)   shift; cmd_version "$@" ;;
 	doctor)    shift; exec "$LIBDIR/doctor.sh" "$@" ;;
-	agents)    shift; exec "$LIBDIR/agent.sh" "$@" ;;
-	sessions)  shift; exec "$LIBDIR/session.sh" "$@" ;;
-	install)   shift; exec "$LIBDIR/install.sh" "$@" ;;
-	uninstall) shift; exec "$LIBDIR/install.sh" uninstall "$@" ;;
-	update)    shift; exec "$LIBDIR/update.sh" "$@" ;;
+	start|stop|restart|reload|enable|disable)
+		# Section 22's service verbs, which are procd's own.
+		_op="$1"
+		shift
+		exec /etc/init.d/fcc "$_op" "$@"
+		;;
+	install)
+		shift
+		# `fcc-env install` on its own means the runtime; the subcommand form
+		# exists so `install check` and `install uninstall` stay reachable.
+		if [ $# -eq 0 ]; then
+			exec "$LIBDIR/install.sh" runtime
+		fi
+		exec "$LIBDIR/install.sh" "$@"
+		;;
+	uninstall)
+		shift
+		exec "$LIBDIR/install.sh" uninstall "$@"
+		;;
+	update)
+		shift
+		if [ $# -eq 0 ]; then
+			exec "$LIBDIR/update.sh" runtime
+		fi
+		exec "$LIBDIR/update.sh" "$@"
+		;;
+	agent|agents)
+		shift
+		exec "$LIBDIR/agent.sh" "$@"
+		;;
+	session|sessions)
+		shift
+		exec "$LIBDIR/session.sh" "$@"
+		;;
 	help|-h|--help)
-		sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+		# Print the leading comment block, whatever its length, so the help
+		# cannot drift out of step with the header.
+		awk 'NR > 1 { if (/^#/) { sub(/^# ?/, ""); print; next } exit }' "$0"
 		;;
 	*)
 		apply_env

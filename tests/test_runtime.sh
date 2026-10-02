@@ -964,6 +964,75 @@ test_insufficient_space_reports_section_54s_message() {
 		"nothing was installed"
 }
 
+# Section 22 gives the Runtime Manager a fixed verb set and says the LuCI
+# controller must not reimplement install logic — so a verb missing here is a
+# feature the web UI cannot reach either. The stubs stand in for the backend
+# scripts, which have their own tests; what is under test is the routing.
+test_runtime_manager_exposes_the_section_22_verbs() {
+	setup_sandbox
+
+	_rm_bin="$SANDBOX/stub"
+	mkdir -p "$_rm_bin"
+	ln -sf "$LIBEXEC/common.sh" "$_rm_bin/common.sh"
+	for _rm_s in status doctor agent session install update; do
+		printf '#!/bin/sh\necho "%s $*"\n' "$_rm_s" > "$_rm_bin/$_rm_s.sh"
+		chmod +x "$_rm_bin/$_rm_s.sh"
+	done
+
+	_rm_run() {
+		FCC_LIBDIR="$_rm_bin" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+			sh "$ROOT/root/usr/bin/fcc-env" "$@" 2>&1
+	}
+
+	assert_contains "$(_rm_run status)" "status" "status reaches status.sh"
+	assert_contains "$(_rm_run doctor --json)" "doctor --json" \
+		"doctor passes its flags through"
+	assert_contains "$(_rm_run install)" "install runtime" \
+		"a bare install means the runtime"
+	assert_contains "$(_rm_run install check)" "install check" \
+		"the install subcommands stay reachable"
+	assert_contains "$(_rm_run uninstall --purge)" "install uninstall --purge" \
+		"uninstall routes to install.sh"
+	assert_contains "$(_rm_run update)" "update runtime" \
+		"a bare update means the runtime"
+	assert_contains "$(_rm_run update check)" "update check" \
+		"update check stays reachable"
+
+	# Section 22 spells the agent verb in the singular and section 76 does the
+	# same for sessions; the plural spellings already shipped, so both work.
+	assert_contains "$(_rm_run agent list)" "agent list" "agent is the verb section 22 names"
+	assert_contains "$(_rm_run agents list)" "agent list" "the plural spelling still works"
+	assert_contains "$(_rm_run agent version claude)" "agent version claude" \
+		"the agent subcommands pass their arguments through"
+	assert_contains "$(_rm_run session cleanup)" "session cleanup" \
+		"section 76's cleanup is reachable"
+	assert_contains "$(_rm_run sessions cleanup)" "session cleanup" \
+		"the plural spelling still works"
+
+	# start/stop/restart are procd's, not a backend script's. The init script
+	# does not exist on the machine running the tests, which is exactly what
+	# makes the failure message proof of the routing.
+	assert_contains "$(_rm_run start)" "/etc/init.d/fcc" \
+		"start routes to the init script rather than the passthrough"
+	assert_contains "$(_rm_run restart)" "/etc/init.d/fcc" \
+		"restart routes to the init script"
+
+	# version answers from the runtime itself, and says so plainly when there
+	# is nothing to answer from.
+	assert_contains "$(_rm_run version)" "not installed" \
+		"version says so when no runtime is installed"
+	mkdir -p "$SANDBOX/opt/fcc/bin"
+	printf '#!/bin/sh\necho "fcc-server 9.9.9"\n' > "$SANDBOX/opt/fcc/bin/fcc-server"
+	chmod +x "$SANDBOX/opt/fcc/bin/fcc-server"
+	assert_contains "$(_rm_run version)" "9.9.9" "version reports the installed runtime"
+
+	# The help text is generated from the header comment, so it cannot drift.
+	_rm_help="$(_rm_run --help)"
+	assert_contains "$_rm_help" "fcc-env start|stop|restart" \
+		"the help lists the service verbs"
+	assert_contains "$_rm_help" "fcc-env agent list" "the help lists the agent verbs"
+}
+
 # Section 39 puts the server's log at <install_path>/logs/fcc-server.log. procd
 # cannot write a service's output to a file, so the server is started through a
 # wrapper — and the wrapper has to exec rather than fork, or procd would be
