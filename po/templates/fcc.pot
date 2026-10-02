@@ -267,7 +267,16 @@ msgstr ""
 msgid "Update"
 msgstr ""
 
+msgid "Update FCC"
+msgstr ""
+
+msgid "Update the FCC runtime now? The server is stopped during the update and your data is kept."
+msgstr ""
+
 msgid "Updates"
+msgstr ""
+
+msgid "Updating reinstalls the FCC runtime from upstream. If a step fails, the previous runtime is put back and your data is left in place."
 msgstr ""
 
 msgid "Uptime"

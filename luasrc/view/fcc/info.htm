@@ -55,8 +55,18 @@
 			<div id="fcc-info-updates"><%:Loading…%></div>
 			<div class="fcc-toolbar">
 				<button id="fcc-info-check" class="cbi-button"><%:Check for updates%></button>
-				<button id="fcc-info-refresh" class="cbi-button cbi-button-apply"><%:Refresh%></button>
+				<button id="fcc-info-update" class="cbi-button cbi-button-apply" disabled><%:Update FCC%></button>
+				<button id="fcc-info-refresh" class="cbi-button"><%:Refresh%></button>
 			</div>
+
+			<div id="fcc-info-job" style="display:none">
+				<div class="fcc-progress"><span id="fcc-info-job-bar" style="width:0"></span></div>
+				<pre class="fcc-log" id="fcc-info-job-log"></pre>
+			</div>
+
+			<p class="fcc-muted">
+				<%:Updating reinstalls the FCC runtime from upstream. If a step fails, the previous runtime is put back and your data is left in place.%>
+			</p>
 		</div>
 	</div>
 

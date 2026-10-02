@@ -10,6 +10,8 @@
 	var FCC = window.FCC;
 	var timer = null;
 	var versionTimer = null;
+	var jobTimer = null;
+	var updateAvailable = false;
 
 	function card(title, value, sub) {
 		return FCC.el('div', { class: 'fcc-card' }, [
@@ -148,6 +150,16 @@
 				text: FCC._('The LuCI app version could not be checked — the router could not reach the version source.')
 			}));
 		}
+
+		/* Section 94's flow is Check Update -> Update FCC, both on this page.
+		 * The button only lights up when the runtime is installed and the check
+		 * says there is something to move to: an enabled "Update FCC" next to
+		 * "up to date" invites a reinstall nobody asked for. */
+		updateAvailable = f.installed === true || f.installed === 'true'
+			? (f.update_available === true || f.update_available === 'true')
+			: false;
+		var btn = FCC.$('#fcc-info-update');
+		if (btn) { btn.disabled = !updateAvailable; }
 	}
 
 	function checkUpdates() {
@@ -157,6 +169,56 @@
 		FCC.api('update_check', {}, { method: 'GET' })
 			.then(renderUpdates)
 			.catch(function (err) { FCC.notice(box, 'fail', err.message); });
+	}
+
+	/* ------------------------------------------------------- update + jobs */
+
+	/* The update runs as a job: it downloads, verifies and reinstalls, which is
+	 * minutes on a router. The page shows the log and follows the lock, the
+	 * same way the Configuration page does — the lock is the authoritative
+	 * "still working" signal, since the log can go quiet while a download runs. */
+	function watchUpdateJob() {
+		var started = Date.now();
+		var panel = FCC.$('#fcc-info-job');
+		if (panel) { panel.style.display = ''; }
+		if (jobTimer) { clearInterval(jobTimer); }
+
+		var tick = function () {
+			FCC.api('job', { lock: 'install', log: 'fcc-update.log', lines: 60 }, { method: 'GET' })
+				.then(function (r) {
+					var pre = FCC.$('#fcc-info-job-log');
+					if (pre) {
+						pre.textContent = (r.lines || []).join('\n');
+						pre.scrollTop = pre.scrollHeight;
+					}
+					var bar = FCC.$('#fcc-info-job-bar');
+					if (bar && r.running) {
+						bar.style.width = Math.min(95, (Date.now() - started) / 300) + '%';
+					}
+					if (!r.running) {
+						clearInterval(jobTimer);
+						jobTimer = null;
+						if (bar) { bar.style.width = '100%'; }
+						checkUpdates();
+						loadStatus(true).catch(function () {});
+					}
+				})
+				.catch(function () { /* a blip is not a failure; keep polling */ });
+		};
+
+		tick();
+		jobTimer = setInterval(tick, 2000);
+	}
+
+	function runUpdate() {
+		var btn = FCC.$('#fcc-info-update');
+		if (btn) { btn.disabled = true; }
+		FCC.api('update_runtime', {}, { method: 'POST' }).then(function () {
+			watchUpdateJob();
+		}).catch(function (err) {
+			if (btn) { btn.disabled = false; }
+			FCC.notice(FCC.$('#fcc-info-updates'), 'fail', err.message);
+		});
 	}
 
 	/* ---------------------------------------------------------------- logs */
@@ -190,6 +252,13 @@
 			});
 		});
 		FCC.$('#fcc-info-check').addEventListener('click', checkUpdates);
+		FCC.$('#fcc-info-update').addEventListener('click', function () {
+			if (!updateAvailable) { return; }
+			if (!window.confirm(FCC._('Update the FCC runtime now? The server is stopped during the update and your data is kept.'))) {
+				return;
+			}
+			runUpdate();
+		});
 		FCC.$('#fcc-info-log-load').addEventListener('click', loadLog);
 
 		loadStatus(false).catch(function (err) {
@@ -214,6 +283,7 @@
 		window.addEventListener('beforeunload', function () {
 			if (timer) { clearInterval(timer); }
 			if (versionTimer) { clearInterval(versionTimer); }
+			if (jobTimer) { clearInterval(jobTimer); }
 		});
 	}
 

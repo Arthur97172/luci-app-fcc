@@ -265,8 +265,17 @@ msgstr "卸载会移除运行时和智能体，但保留安装路径下的配置
 msgid "Update"
 msgstr "更新"
 
+msgid "Update FCC"
+msgstr "更新 FCC"
+
+msgid "Update the FCC runtime now? The server is stopped during the update and your data is kept."
+msgstr "现在更新 FCC 运行时？更新期间服务器将停止，你的数据会被保留。"
+
 msgid "Updates"
 msgstr "更新"
+
+msgid "Updating reinstalls the FCC runtime from upstream. If a step fails, the previous runtime is put back and your data is left in place."
+msgstr "更新会从上游重新安装 FCC 运行时。若某一步失败，将恢复先前的运行时，你的数据保持不变。"
 
 msgid "Uptime"
 msgstr "运行时间"
