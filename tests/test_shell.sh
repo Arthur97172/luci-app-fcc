@@ -197,7 +197,13 @@ test_common_is_sourceable() {
 test_backend_scripts_source_common() {
 	_ts_bad=""
 	for _ts_f in "$ROOT"/root/usr/libexec/fcc/*.sh; do
-		[ "$(basename "$_ts_f")" = "common.sh" ] && continue
+		case "$(basename "$_ts_f")" in
+			common.sh) continue ;;        # sourced, never run on its own
+			# Started by procd with the log path and the server command as
+			# arguments; nothing drives it from the controller, so it has
+			# neither a ${1:-} contract nor any use for the helpers.
+			server-run.sh) continue ;;
+		esac
 		grep -q 'FCC_LIBDIR:-/usr/libexec/fcc}/common.sh' "$_ts_f" \
 			|| _ts_bad="$_ts_bad $(basename "$_ts_f")"
 	done
@@ -211,7 +217,13 @@ test_backend_scripts_read_arguments() {
 	# as ${1:-}, which is what makes them safe under `set -u`.
 	_ts_bad=""
 	for _ts_f in "$ROOT"/root/usr/libexec/fcc/*.sh; do
-		[ "$(basename "$_ts_f")" = "common.sh" ] && continue
+		case "$(basename "$_ts_f")" in
+			common.sh) continue ;;        # sourced, never run on its own
+			# Started by procd with the log path and the server command as
+			# arguments; nothing drives it from the controller, so it has
+			# neither a ${1:-} contract nor any use for the helpers.
+			server-run.sh) continue ;;
+		esac
 		grep -q '\${1:-}' "$_ts_f" || _ts_bad="$_ts_bad $(basename "$_ts_f")"
 	done
 	assert_eq "" "$(printf '%s' "$_ts_bad" | sed 's/^ //')" "every backend script reads \${1:-}"

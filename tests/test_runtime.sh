@@ -964,6 +964,72 @@ test_insufficient_space_reports_section_54s_message() {
 		"nothing was installed"
 }
 
+# Section 39 puts the server's log at <install_path>/logs/fcc-server.log. procd
+# cannot write a service's output to a file, so the server is started through a
+# wrapper — and the wrapper has to exec rather than fork, or procd would be
+# supervising a shell while the server it started runs unsupervised beside it.
+test_server_wrapper_logs_the_server_and_replaces_itself() {
+	setup_sandbox
+	_sr_dir="$SANDBOX/opt/fcc/logs"
+	mkdir -p "$_sr_dir"
+	_sr_log="$_sr_dir/fcc-server.log"
+
+	_sr_cmd="$SANDBOX/opt/fake-server.sh"
+	printf '#!/bin/sh\necho "hello from the server"\necho "and to stderr" >&2\n' > "$_sr_cmd"
+	chmod +x "$_sr_cmd"
+
+	sh "$LIBEXEC/server-run.sh" "$_sr_log" "$_sr_cmd" >/dev/null 2>&1
+	assert_contains "$(cat "$_sr_log" 2>/dev/null)" "hello from the server" \
+		"the server's stdout reaches the log file"
+	assert_contains "$(cat "$_sr_log" 2>/dev/null)" "and to stderr" \
+		"the server's stderr reaches the log file"
+	assert_contains "$(cat "$_sr_log" 2>/dev/null)" "starting" \
+		"a start marker separates one run from the next"
+
+	# exec, not fork: the pid the caller was handed is the server's own, which
+	# is the pid procd would signal. A forked wrapper would report a different
+	# one, and stopping the service would leave the server running.
+	_sr_pidfile="$SANDBOX/opt/server-pid"
+	_sr_self="$SANDBOX/opt/pid-server.sh"
+	printf '#!/bin/sh\necho $$ > "%s"\nsleep 30\n' "$_sr_pidfile" > "$_sr_self"
+	chmod +x "$_sr_self"
+
+	sh "$LIBEXEC/server-run.sh" "$_sr_log" "$_sr_self" &
+	_sr_pid=$!
+	_sr_i=0
+	while [ "$_sr_i" -lt 50 ] && [ ! -s "$_sr_pidfile" ]; do
+		sleep 0.1
+		_sr_i=$(( _sr_i + 1 ))
+	done
+	assert_eq "$_sr_pid" "$(cat "$_sr_pidfile" 2>/dev/null)" \
+		"the wrapper replaces itself instead of forking"
+	kill "$_sr_pid" 2>/dev/null
+	wait "$_sr_pid" 2>/dev/null
+
+	# A log that has grown past the cap is trimmed to its tail: the file exists
+	# to answer "what went wrong just now", and on flash it is a wear problem.
+	_sr_big="$_sr_dir/big.log"
+	_sr_i=0
+	while [ "$_sr_i" -lt 400 ]; do
+		printf 'line %s\n' "$_sr_i"
+		_sr_i=$(( _sr_i + 1 ))
+	done > "$_sr_big"
+	FCC_SERVER_LOG_MAX_KB=1 sh "$LIBEXEC/server-run.sh" "$_sr_big" true >/dev/null 2>&1
+	_sr_after="$(grep -c . "$_sr_big")"
+	if [ "$_sr_after" -lt 300 ]; then
+		pass "an oversized log is trimmed to its tail ($_sr_after lines)"
+	else
+		fail "an oversized log is trimmed to its tail" "still $_sr_after lines"
+	fi
+
+	# An unwritable log must not stop the server from starting: the wrapper
+	# falls back to a plain exec, and procd's own capture carries the output.
+	sh "$LIBEXEC/server-run.sh" "$SANDBOX/no-such-dir/x.log" "$_sr_cmd" \
+		> "$SANDBOX/fallback.out" 2>&1
+	assert_contains "$(cat "$SANDBOX/fallback.out" 2>/dev/null)" "hello from the server" \
+		"an unwritable log falls back to the caller's stdout"
+}
+
 # Section 3.6.5: which agents get installed is decided before the install
 # starts, and the answers file is the only channel that carries that decision
 # to the upstream installer — so what it contains *is* the feature.

@@ -85,6 +85,9 @@ define Package/luci-app-fcc/install
 	$(INSTALL_BIN) ./root/usr/libexec/fcc/install.sh $(1)/usr/libexec/fcc/install.sh
 	$(INSTALL_BIN) ./root/usr/libexec/fcc/update.sh $(1)/usr/libexec/fcc/update.sh
 	$(INSTALL_BIN) ./root/usr/libexec/fcc/doctor.sh $(1)/usr/libexec/fcc/doctor.sh
+	# Section 39: procd cannot write a service's output to a file, so the
+	# server is started through this wrapper, which redirects and execs.
+	$(INSTALL_BIN) ./root/usr/libexec/fcc/server-run.sh $(1)/usr/libexec/fcc/server-run.sh
 
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./luasrc/controller/fcc.lua $(1)/usr/lib/lua/luci/controller/fcc.lua

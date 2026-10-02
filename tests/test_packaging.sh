@@ -218,6 +218,9 @@ test_acl_covers_every_backend_script() {
 	for _ts_f in "$ROOT"/root/usr/libexec/fcc/*.sh; do
 		_ts_b="$(basename "$_ts_f")"
 		[ "$_ts_b" = "common.sh" ] && continue   # sourced, never exec'd
+		# procd execs this one as root to start the server; it is never an
+		# rpcd endpoint, so listing it here would be dead configuration.
+		[ "$_ts_b" = "server-run.sh" ] && continue
 		case "$_ts_acl" in
 			*"/usr/libexec/fcc/$_ts_b"*) : ;;
 			*) _ts_bad="$_ts_bad $_ts_b" ;;

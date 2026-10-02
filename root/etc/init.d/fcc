@@ -101,8 +101,20 @@ start_service() {
 	# Runtime layout: everything the server writes stays under the install root.
 	mkdir -p "$_ss_r/data" "$_ss_r/logs" "$_ss_r/cache" "$_ss_r/bin" 2>/dev/null
 
-	procd_open_instance fcc
-	procd_set_param command "$_ss_bin"
+	# Section 39 puts the server's log at <install_path>/logs/fcc-server.log,
+	# and procd cannot write a service's output to a file — only to syslog. The
+	# wrapper redirects and execs, so procd still supervises the server itself.
+	# stdout/stderr stay set as the fallback for when the wrapper cannot open
+	# the file: the server then logs to syslog as it did before.
+	_ss_log="$_ss_r/logs/fcc-server.log"
+	_ss_run=/usr/libexec/fcc/server-run.sh
+	if [ -x "$_ss_run" ]; then
+		procd_open_instance fcc
+		procd_set_param command "$_ss_run" "$_ss_log" "$_ss_bin"
+	else
+		procd_open_instance fcc
+		procd_set_param command "$_ss_bin"
+	fi
 	procd_set_param respawn 3600 5 5
 	procd_set_param term_timeout 10
 	procd_set_param stdout 1
