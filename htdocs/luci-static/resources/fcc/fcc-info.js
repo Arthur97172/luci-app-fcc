@@ -43,6 +43,15 @@
 		box.appendChild(card(FCC._('FCC Server'),
 			s.running ? FCC._('Running') : FCC._('Stopped'),
 			(s.bind || '—') + ':' + (s.port || '—')));
+		// Section 49's three signals, shown live rather than only being applied
+		// after an update. A server can be up but not listening (a crash loop)
+		// or listening but not answering (hung), and those want different
+		// reactions, so they are not collapsed into one badge.
+		box.appendChild(card(FCC._('Health'),
+			s.healthy ? FCC._('healthy') : FCC._('unhealthy'),
+			s.listening
+				? FCC._('listening') + (s.http_status ? ' · HTTP ' + s.http_status : '')
+				: FCC._('not listening')));
 		box.appendChild(card(FCC._('PID'), s.running ? String(s.pid) : '—',
 			s.running ? FCC.fmtDuration(s.uptime) + ' ' + FCC._('uptime') : ''));
 		box.appendChild(card(FCC._('Memory (RSS)'),

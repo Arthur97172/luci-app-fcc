@@ -88,6 +88,9 @@ msgstr "FCC 运行时"
 msgid "FCC Server"
 msgstr "FCC Server"
 
+msgid "Health"
+msgstr "健康状态"
+
 msgid "Install"
 msgstr "安装"
 
@@ -274,8 +277,14 @@ msgstr "可用"
 msgid "free"
 msgstr "空闲"
 
+msgid "healthy"
+msgstr "正常"
+
 msgid "installed"
 msgstr "已安装"
+
+msgid "listening"
+msgstr "监听中"
 
 msgid "not checked"
 msgstr "未检查"
@@ -283,8 +292,14 @@ msgstr "未检查"
 msgid "not installed"
 msgstr "未安装"
 
+msgid "not listening"
+msgstr "未监听"
+
 msgid "running"
 msgstr "运行中"
+
+msgid "unhealthy"
+msgstr "异常"
 
 msgid "up to date"
 msgstr "已是最新"

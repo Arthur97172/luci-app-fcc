@@ -90,6 +90,9 @@ msgstr ""
 msgid "FCC Server"
 msgstr ""
 
+msgid "Health"
+msgstr ""
+
 msgid "Install"
 msgstr ""
 
@@ -276,7 +279,13 @@ msgstr ""
 msgid "free"
 msgstr ""
 
+msgid "healthy"
+msgstr ""
+
 msgid "installed"
+msgstr ""
+
+msgid "listening"
 msgstr ""
 
 msgid "not checked"
@@ -285,7 +294,13 @@ msgstr ""
 msgid "not installed"
 msgstr ""
 
+msgid "not listening"
+msgstr ""
+
 msgid "running"
+msgstr ""
+
+msgid "unhealthy"
 msgstr ""
 
 msgid "up to date"

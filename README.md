@@ -65,7 +65,12 @@ own admin UI and are never stored in UCI — this package has nowhere to put the
 **3. Use an agent.** On the *Web Console* page, pick an agent and press
 **Start**. Each agent gets its own session, named `fcc-<agent>-NNN`.
 
-**4. Update.** *Basic Information* → **Check Update** → **Update FCC**.
+**4. Update.** *Basic Information* → **Check Update** → **Update FCC**. The
+update is a sequence, not a single call: it checks free space, warns about open
+console sessions, archives `data/` and `runtime.json` under `backup/`, stops the
+server, reinstalls, verifies the binary, restarts, and then confirms the server
+is actually answering before reporting success. If that last check fails the
+update is reported as failed rather than as done.
 
 ---
 
@@ -79,10 +84,11 @@ luci-base  luci-compat  curl  ca-bundle  tar  tmux
 
 `tmux` is not optional: it is the terminal backend the Web Console drives.
 
-The FCC runtime has its own requirements (currently Python ≥ 3.14, FastAPI,
-Uvicorn). Those are the runtime's business, not this package's — installing
-`luci-app-fcc` must not pull a language runtime onto a router that only wanted
-to look at the status page.
+The FCC runtime has its own requirements — currently Python 3.14 (upstream pins
+`requires-python == 3.14.7`), FastAPI and Uvicorn. Those are the runtime's
+business, not this package's: installing `luci-app-fcc` must not pull a language
+runtime onto a router that only wanted to look at the status page. That is also
+why the runtime is installed on demand rather than shipped here.
 
 ---
 
@@ -202,6 +208,14 @@ and `tests/test_shell.sh` enforces it.
   whose CLI changes its output format will show an unfamiliar string.
 * **The console needs `tmux`.** Without it the other two pages still work; the
   console reports the missing dependency instead of failing silently.
+* **An update cannot be rolled back to the previous FCC version.** This is a
+  limitation of upstream's installer, not a choice made here: it takes no
+  version argument and always installs the newest release from PyPI, so there is
+  no older build to return to. What the update *does* do on failure is restart
+  the server and leave the pre-update archive of `data/` and `runtime.json` in
+  `backup/`, which covers the part that cannot be reinstalled — your FCC
+  configuration and agent state. The code itself is not recoverable, and the
+  update log says so rather than claiming a rollback.
 
 ---
 

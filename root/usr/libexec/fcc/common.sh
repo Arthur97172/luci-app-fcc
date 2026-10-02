@@ -358,6 +358,160 @@ fcc_proc_alive() {
 }
 
 # ---------------------------------------------------------------------------
+# FCC server health (DESIGN_SPEC.md section 49)
+#
+# Section 49 asks for a post-update check on three levels: the process exists,
+# the port is listening, and the admin endpoint answers. They are kept as three
+# separate answers rather than one boolean because they fail differently — a
+# process with no listener is a crash loop, a listener that never answers is a
+# hung server — and an update that reports "unhealthy" without saying which of
+# the three broke is not much better than no check at all.
+# ---------------------------------------------------------------------------
+fcc_find_server_exe() {
+	# fcc_find_server_exe -> absolute path of fcc-server, or empty.
+	# Ordered most-specific first: the runtime we manage, then a PATH lookup.
+	for _fx_c in "$(fcc_dir_bin)/fcc-server" \
+	             "$(fcc_dir_runtime)/bin/fcc-server" \
+	             "$(fcc_dir_runtime)/venv/bin/fcc-server" \
+	             "$(fcc_root)/venv/bin/fcc-server"; do
+		[ -x "$_fx_c" ] && { printf '%s' "$_fx_c"; return 0; }
+	done
+	_fx_c="$(command -v fcc-server 2>/dev/null)"
+	[ -n "$_fx_c" ] && { printf '%s' "$_fx_c"; return 0; }
+	return 1
+}
+
+fcc_server_pid() {
+	# fcc_server_pid -> PID of the FCC server, or empty.
+	#
+	# procd is authoritative when it can answer, because it knows which process
+	# it supervises. The /proc scan is the fallback for a server started outside
+	# the init script (a manual run, or a runtime from before this package).
+	_sp_pid=""
+	if command -v ubus >/dev/null 2>&1; then
+		_sp_pid="$(ubus call service list '{"name":"fcc"}' 2>/dev/null \
+			| sed -n 's/.*"pid":[[:space:]]*\([0-9]\{1,\}\).*/\1/p' | head -n1)"
+		if [ -n "$_sp_pid" ] && [ ! -d "/proc/$_sp_pid" ]; then _sp_pid=""; fi
+	fi
+	if [ -z "$_sp_pid" ]; then
+		_sp_exe="$(fcc_find_server_exe 2>/dev/null || true)"
+		[ -n "$_sp_exe" ] || return 1
+		# The pattern is a path we resolved ourselves, never user input, so it
+		# cannot be read as an option or a regex metacharacter.
+		_sp_pid="$(grep -la -- "$_sp_exe" /proc/[0-9]*/cmdline 2>/dev/null \
+			| sed -e 's#^/proc/##' -e 's#/cmdline$##' | head -n1)"
+	fi
+	[ -n "$_sp_pid" ] || return 1
+	printf '%s' "$_sp_pid"
+}
+
+fcc_port_listening() {
+	# fcc_port_listening <port> -> 0 when something holds the TCP port in LISTEN.
+	#
+	# /proc/net/tcp is read directly rather than shelling out to netstat or ss:
+	# neither is guaranteed present on OpenWrt, and this is one file read instead
+	# of a fork. Field 2 is "ADDR:PORT" with the port in uppercase hex; field 4
+	# is the socket state, where 0A is TCP_LISTEN.
+	_pl_p="$1"
+	case "$_pl_p" in ''|*[!0-9]*) return 1 ;; esac
+	_pl_hex="$(printf '%04X' "$_pl_p")"
+	for _pl_f in /proc/net/tcp /proc/net/tcp6; do
+		[ -r "$_pl_f" ] || continue
+		awk -v want="$_pl_hex" '
+			NR > 1 {
+				n = split($2, a, ":")
+				if (toupper(a[n]) == want && $4 == "0A") found = 1
+			}
+			END { exit !found }
+		' "$_pl_f" && return 0
+	done
+	return 1
+}
+
+fcc_http_status() {
+	# fcc_http_status <url> [timeout] -> the HTTP status code, or empty when
+	# nothing answered. Any code at all proves the server is talking; which
+	# codes count as healthy is the caller's decision, not this function's.
+	#
+	# The timeout is a parameter because the two callers want different things:
+	# an update can afford to wait, a status page cannot.
+	command -v curl >/dev/null 2>&1 || return 1
+	_hs_t="${2:-5}"
+	case "$_hs_t" in ''|*[!0-9]*) _hs_t=5 ;; esac
+	_hs_code="$(curl --silent --output /dev/null --max-time "$_hs_t" --proto '=http' \
+		--write-out '%{http_code}' "$1" 2>/dev/null)"
+	case "$_hs_code" in
+		''|000|*[!0-9]*) return 1 ;;
+	esac
+	printf '%s' "$_hs_code"
+}
+
+fcc_server_health() {
+	# fcc_server_health -> JSON describing reachability.
+	#
+	# "healthy" is the documented minimum from section 49: the process exists,
+	# the port is listening, and the admin endpoint answers. When curl is not
+	# installed the HTTP leg cannot be tested at all, so the check degrades to
+	# the process+port pair rather than failing the update on a missing tool.
+	_sh_pid="$(fcc_server_pid 2>/dev/null || true)"
+	_sh_proc=false
+	[ -n "$_sh_pid" ] && _sh_proc=true
+
+	_sh_port="$(fcc_uci_get main port 8082)"
+	case "$_sh_port" in ''|*[!0-9]*) _sh_port=8082 ;; esac
+
+	_sh_listen=false
+	fcc_port_listening "$_sh_port" && _sh_listen=true
+
+	# Probe loopback regardless of the configured bind address: a health check
+	# run on the router should not depend on the server also being reachable
+	# from the LAN.
+	_sh_code="$(fcc_http_status "http://127.0.0.1:$_sh_port/admin" 2>/dev/null || true)"
+
+	_sh_ok=false
+	if [ "$_sh_proc" = true ] && [ "$_sh_listen" = true ]; then
+		if [ -n "$_sh_code" ]; then
+			_sh_ok=true
+		elif ! command -v curl >/dev/null 2>&1; then
+			_sh_ok=true
+		fi
+	fi
+
+	printf '{"process": %s, "pid": %s, "port": %s, "listening": %s, "http_status": %s, "healthy": %s}' \
+		"$_sh_proc" \
+		"$(fcc_json_num_or_null "${_sh_pid:-}")" \
+		"$_sh_port" \
+		"$_sh_listen" \
+		"$(fcc_json_num_or_null "${_sh_code:-}")" \
+		"$_sh_ok"
+}
+
+# ---------------------------------------------------------------------------
+# Preflight measurements (DESIGN_SPEC.md section 23 steps 3-4)
+# ---------------------------------------------------------------------------
+fcc_disk_free_kb() {
+	# fcc_disk_free_kb <path> -> free kB on the filesystem holding <path>.
+	# Walks up to the nearest existing ancestor so a not-yet-created install
+	# path still reports the space that will hold it.
+	_df_p="$1"
+	[ -n "$_df_p" ] || _df_p=/
+	while [ ! -d "$_df_p" ] && [ "$_df_p" != "/" ]; do
+		_df_p="$(dirname "$_df_p")"
+	done
+	df -k -P "$_df_p" 2>/dev/null | awk 'NR==2 { print $4 }'
+}
+
+fcc_active_sessions() {
+	# fcc_active_sessions -> count of live fcc-* tmux sessions.
+	# An update restarts the server; sessions survive it, but the user should be
+	# told they are there (section 23 step 5). Absent tmux means zero, not an
+	# error — the console is the only thing that needs it.
+	command -v tmux >/dev/null 2>&1 || { printf '0'; return 0; }
+	tmux list-panes -a -F '#{session_name}' 2>/dev/null \
+		| grep -c '^fcc-[a-z0-9]\{1,16\}-[0-9]\{3\}$' || true
+}
+
+# ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
 fcc_command_path() {

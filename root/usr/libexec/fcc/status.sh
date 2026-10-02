@@ -40,55 +40,54 @@ build_comm_map() {
 	done
 }
 
-# Find PIDs whose cmdline contains a needle. ONE grep over all cmdline files.
-find_pids_by_cmdline() {
-	grep -la -- "$1" /proc/[0-9]*/cmdline 2>/dev/null \
-		| sed -e 's#^/proc/##' -e 's#/cmdline$##'
-}
-
 # ---------------------------------------------------------------------------
-# Locate the FCC runtime
+# Locate the FCC runtime and its process
+#
+# Both live in common.sh: the update path needs the same two answers for its
+# health check, and two copies of "where is fcc-server / which PID is it" would
+# eventually disagree about a box that has more than one FCC install.
 # ---------------------------------------------------------------------------
-find_fcc_server_exe() {
-	for _fs_c in "$(fcc_dir_bin)/fcc-server" \
-	              "$(fcc_dir_runtime)/bin/fcc-server" \
-	              "$ROOT/venv/bin/fcc-server"; do
-		[ -x "$_fs_c" ] && { printf '%s' "$_fs_c"; return 0; }
-	done
-	_fs_c="$(command -v fcc-server 2>/dev/null)"
-	[ -n "$_fs_c" ] && { printf '%s' "$_fs_c"; return 0; }
-	return 1
-}
-
-FCC_SERVER_EXE=""
+FCC_SERVER_EXE="$(fcc_find_server_exe 2>/dev/null || true)"
 fcc_installed=false
-if FCC_SERVER_EXE="$(find_fcc_server_exe)"; then
-	fcc_installed=true
-fi
+[ -n "$FCC_SERVER_EXE" ] && fcc_installed=true
 
-# ---------------------------------------------------------------------------
-# FCC server process
-# ---------------------------------------------------------------------------
-server_pid=""
+server_pid="$(fcc_server_pid 2>/dev/null || true)"
 server_running=false
-
-# 1) Authoritative source: procd via ubus.
-if command -v ubus >/dev/null 2>&1; then
-	_sv_pid="$(ubus call service list '{"name":"fcc"}' 2>/dev/null \
-		| sed -n 's/.*"pid":[[:space:]]*\([0-9]\{1,\}\).*/\1/p' | head -n1)"
-	[ -n "$_sv_pid" ] && [ -d "/proc/$_sv_pid" ] && server_pid="$_sv_pid"
-fi
-# 2) Fallback: scan /proc cmdline for the fcc-server executable path.
-if [ -z "$server_pid" ] && [ -n "$FCC_SERVER_EXE" ]; then
-	server_pid="$(find_pids_by_cmdline "$FCC_SERVER_EXE" | head -n1)"
-fi
-
 server_uptime=""
 server_rss=""
 if [ -n "$server_pid" ] && fcc_proc_alive "$server_pid"; then
 	server_running=true
 	server_uptime="$(fcc_proc_uptime_secs "$server_pid")"
 	server_rss="$(fcc_proc_rss_kb "$server_pid")"
+fi
+
+# ---------------------------------------------------------------------------
+# Reachability (DESIGN_SPEC.md section 49)
+#
+# The same three signals an update is judged on, reported live so the page can
+# show them without waiting for an update to fail. The HTTP probe only runs
+# when something is actually listening: with nothing there the connection is
+# refused instantly anyway, and with a hung server it would otherwise add its
+# full timeout to every status refresh.
+# ---------------------------------------------------------------------------
+server_port="$(fcc_uci_get main port 8082)"
+case "$server_port" in ''|*[!0-9]*) server_port=8082 ;; esac
+
+server_listening=false
+fcc_port_listening "$server_port" && server_listening=true
+
+server_http=""
+if [ "$server_listening" = true ]; then
+	server_http="$(fcc_http_status "http://127.0.0.1:$server_port/admin" 2 2>/dev/null || true)"
+fi
+
+server_healthy=false
+if [ "$server_running" = true ] && [ "$server_listening" = true ]; then
+	# Without curl the HTTP leg cannot be tested at all, so the documented
+	# minimum (process + port) stands rather than failing on a missing tool.
+	if [ -n "$server_http" ] || ! command -v curl >/dev/null 2>&1; then
+		server_healthy=true
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -145,14 +144,17 @@ COMM_MAP="$(build_comm_map)"
 	printf '  "luci_fcc": {"version": %s},\n' "$(fcc_json_str "$(fcc_luci_version)")"
 	printf '  "fcc": {"installed": %s, "version": %s},\n' \
 		"$fcc_installed" "$(fcc_json_str_or_null "${fcc_version:-}")"
-	printf '  "server": {"running": %s, "pid": %s, "version": %s, "uptime": %s, "memory_rss_kb": %s, "port": %s, "bind": %s},\n' \
+	printf '  "server": {"running": %s, "pid": %s, "version": %s, "uptime": %s, "memory_rss_kb": %s, "port": %s, "bind": %s, "listening": %s, "http_status": %s, "healthy": %s},\n' \
 		"$server_running" \
 		"$(fcc_json_num_or_null "$server_pid")" \
 		"$(fcc_json_str_or_null "${server_version:-}")" \
 		"$(fcc_json_num_or_null "$server_uptime")" \
 		"$(fcc_json_num_or_null "$server_rss")" \
-		"$(fcc_json_num_or_null "$(fcc_uci_get main port 8082)")" \
-		"$(fcc_json_str "$(fcc_uci_get main bind 127.0.0.1)")"
+		"$server_port" \
+		"$(fcc_json_str "$(fcc_uci_get main bind 127.0.0.1)")" \
+		"$server_listening" \
+		"$(fcc_json_num_or_null "${server_http:-}")" \
+		"$server_healthy"
 	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s},\n' \
 		"$(fcc_json_num_or_null "$mem_total")" \
 		"$(fcc_json_num_or_null "$mem_avail")" \

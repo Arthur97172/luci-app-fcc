@@ -353,4 +353,221 @@ test_luci_version_reads_the_version_file() {
 		"a missing version file reports 0.0.0 rather than failing"
 }
 
+# ---------------------------------------------------------------------------
+# Server health (DESIGN_SPEC.md section 49) and the update preflight (23).
+#
+# The health check is the part of an update that is easiest to fake and hardest
+# to notice faking, so it is exercised against a real socket rather than a
+# stubbed one: a listener is opened, seen, closed and seen to be gone.
+# ---------------------------------------------------------------------------
+
+# Open a throwaway HTTP listener on <port> and print its PID. Returns 1 when
+# there is no way to open one, so callers skip instead of asserting against
+# nothing.
+start_listener() {
+	_ls_port="$1"
+	command -v python3 >/dev/null 2>&1 || return 1
+	python3 -m http.server "$_ls_port" --bind 127.0.0.1 >"$SANDBOX/listener.log" 2>&1 &
+	printf '%s' "$!"
+}
+
+# sh_common, but with a sandbox uci shim and the sandbox bin/ ahead on PATH.
+# The health check reads its port from uci, so controlling configuration means
+# standing in for uci rather than for the code under test.
+sh_common_path() {
+	FCC_LIBDIR="$LIBEXEC" \
+	FCC_AGENTS_CONF="$AGENTS_CONF" \
+	FCC_VERSION_FILE="$ROOT/VERSION" \
+	FCC_DEFAULT_BASE="$SANDBOX/opt" \
+	UCI_SHIM_DIR="$SANDBOX/uci" \
+	PATH="$SANDBOX/bin:$PATH" \
+	sh -c '. "$1/common.sh"; eval "$2"' _ "$LIBEXEC" "$1" 2>&1
+}
+
+# A stand-in for uci: only `-q get <section>.<option>` is implemented, reading
+# $UCI_SHIM_DIR/<section>.<option>. None of uci's other surface is used by the
+# code under test, and a developer machine has no uci at all.
+make_uci_shim() {
+	mkdir -p "$SANDBOX/bin" "$SANDBOX/uci"
+	cat > "$SANDBOX/bin/uci" <<'SHIM'
+#!/bin/sh
+[ "${1:-}" = "-q" ] && shift
+[ "${1:-}" = "get" ] || exit 1
+[ -n "${2:-}" ] || exit 1
+_f="$UCI_SHIM_DIR/$2"
+[ -r "$_f" ] || exit 1
+cat "$_f"
+SHIM
+	chmod +x "$SANDBOX/bin/uci"
+}
+
+test_port_listening_rejects_bad_input() {
+	setup_sandbox
+	assert_no "an empty port is rejected"     sh_common 'fcc_port_listening ""'
+	assert_no "a non-numeric port is rejected" sh_common 'fcc_port_listening http'
+	assert_no "a port with trailing junk is rejected" sh_common 'fcc_port_listening 80x'
+}
+
+test_port_listening_tracks_a_real_listener() {
+	setup_sandbox
+	_lp_port=47311
+	_lp_pid="$(start_listener "$_lp_port")" || { skip "no python3 — cannot open a listener"; return 0; }
+
+	# Wait for the socket rather than assuming a fixed startup delay.
+	_lp_up=no
+	_lp_i=0
+	while [ "$_lp_i" -lt 20 ]; do
+		sh_common "fcc_port_listening $_lp_port" >/dev/null 2>&1 && { _lp_up=yes; break; }
+		sleep 1
+		_lp_i=$(( _lp_i + 1 ))
+	done
+	assert_eq "yes" "$_lp_up" "a listening port is detected on $_lp_port"
+
+	kill "$_lp_pid" 2>/dev/null
+	wait "$_lp_pid" 2>/dev/null
+
+	_lp_down=no
+	_lp_i=0
+	while [ "$_lp_i" -lt 20 ]; do
+		sh_common "fcc_port_listening $_lp_port" >/dev/null 2>&1 || { _lp_down=yes; break; }
+		sleep 1
+		_lp_i=$(( _lp_i + 1 ))
+	done
+	assert_eq "yes" "$_lp_down" "the port is no longer reported once the listener exits"
+}
+
+test_http_status_reads_a_real_response() {
+	setup_sandbox
+	if ! command -v curl >/dev/null 2>&1; then skip "no curl — HTTP leg not tested"; return 0; fi
+
+	_hp_port=47312
+	_hp_pid="$(start_listener "$_hp_port")" || { skip "no python3 — cannot open a listener"; return 0; }
+
+	_hp_code=""
+	_hp_i=0
+	while [ "$_hp_i" -lt 20 ]; do
+		_hp_code="$(sh_common "fcc_http_status http://127.0.0.1:$_hp_port/" 2>/dev/null || true)"
+		[ -n "$_hp_code" ] && break
+		sleep 1
+		_hp_i=$(( _hp_i + 1 ))
+	done
+	assert_eq "200" "$_hp_code" "the status code is read from a live server"
+
+	kill "$_hp_pid" 2>/dev/null
+	wait "$_hp_pid" 2>/dev/null
+
+	# Nothing listening must yield no code at all, not a zero or a 000.
+	assert_eq "" "$(sh_common "fcc_http_status http://127.0.0.1:$_hp_port/" 2>/dev/null || true)" \
+		"no code is reported when nothing answers"
+}
+
+test_disk_free_kb_reports_a_number() {
+	setup_sandbox
+	_df_out="$(sh_common "fcc_disk_free_kb $SANDBOX")"
+	case "$_df_out" in
+		''|*[!0-9]*) fail "fcc_disk_free_kb did not return a number: [$_df_out]" ;;
+		*) pass ;;
+	esac
+	# A path that does not exist yet must resolve to its nearest existing
+	# ancestor, or the preflight would silently measure nothing.
+	_df_out="$(sh_common "fcc_disk_free_kb $SANDBOX/opt/fcc/deep/not/created")"
+	case "$_df_out" in
+		''|*[!0-9]*) fail "fcc_disk_free_kb failed on a not-yet-created path: [$_df_out]" ;;
+		*) pass ;;
+	esac
+}
+
+test_active_sessions_reports_a_count() {
+	setup_sandbox
+	_as_out="$(sh_common 'fcc_active_sessions')"
+	case "$_as_out" in
+		''|*[!0-9]*) fail "fcc_active_sessions did not return a count: [$_as_out]" ;;
+		*) pass ;;
+	esac
+}
+
+test_find_server_exe_prefers_the_runtime_tree() {
+	setup_sandbox
+	_fx_bin="$SANDBOX/opt/fcc/bin"
+	mkdir -p "$_fx_bin"
+	printf '#!/bin/sh\nexit 0\n' > "$_fx_bin/fcc-server"
+	chmod +x "$_fx_bin/fcc-server"
+	# The runtime this package manages has to win over whatever else is on PATH.
+	# A developer machine — and a router that had FCC installed by hand before
+	# this package existed — has a second, unrelated fcc-server, and reporting
+	# on that one instead would be silently wrong.
+	assert_eq "$_fx_bin/fcc-server" "$(sh_common 'fcc_find_server_exe')" \
+		"the managed runtime's fcc-server is found first"
+	rm -rf "$SANDBOX/opt"
+}
+
+test_server_health_follows_a_real_server() {
+	setup_sandbox
+	command -v python3 >/dev/null 2>&1 || { skip "no python3 — cannot run a stand-in server"; return 0; }
+
+	_hl_port=47313
+	_hl_dead=47314
+	_hl_bin="$SANDBOX/opt/fcc/bin"
+	mkdir -p "$_hl_bin"
+
+	# A stand-in fcc-server. It deliberately does not exec: the process has to
+	# stay in the process table under its own path so the /proc scan finds it,
+	# while a child holds the port. The trap keeps the child from being orphaned
+	# on the port when this test tears the server down.
+	cat > "$_hl_bin/fcc-server" <<'EOF'
+#!/bin/sh
+# Stand-in fcc-server — see tests/test_runtime.sh.
+python3 -m http.server __PORT__ --bind 127.0.0.1 >/dev/null 2>&1 &
+_child=$!
+trap 'kill "$_child" 2>/dev/null' TERM INT EXIT
+wait "$_child"
+EOF
+	sed "s/__PORT__/$_hl_port/" "$_hl_bin/fcc-server" > "$_hl_bin/fcc-server.new"
+	mv "$_hl_bin/fcc-server.new" "$_hl_bin/fcc-server"
+	chmod +x "$_hl_bin/fcc-server"
+
+	make_uci_shim
+	printf '%s' "$_hl_port" > "$SANDBOX/uci/fcc.main.port"
+
+	"$_hl_bin/fcc-server" >/dev/null 2>&1 &
+	_hl_pid=$!
+
+	_hl_json=""
+	_hl_i=0
+	while [ "$_hl_i" -lt 20 ]; do
+		_hl_json="$(sh_common_path 'fcc_server_health' 2>/dev/null)"
+		case "$_hl_json" in *'"healthy": true'*) break ;; esac
+		sleep 1
+		_hl_i=$(( _hl_i + 1 ))
+	done
+	assert_contains "$_hl_json" '"healthy": true'      "a running server on a listening port is healthy"
+	assert_contains "$_hl_json" '"process": true'      "the process is found through /proc"
+	assert_contains "$_hl_json" "\"port\": $_hl_port"  "the port comes from the configuration"
+	# The stand-in serves no /admin, so it answers 404 — and that is the point.
+	# Any status at all proves something is listening *and* talking, which is
+	# what section 49 asks; requiring 200 would report a healthy server that
+	# merely lacks the page as a failed update.
+	assert_contains "$_hl_json" '"http_status": 404' \
+		"a 404 from the endpoint still counts as an answer"
+
+	# It must be JSON, not merely look like it: the LuCI controller parses it.
+	if printf '%s' "$_hl_json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+		pass
+	else
+		fail "fcc_server_health did not emit valid JSON: $_hl_json"
+	fi
+
+	# Same process, configured onto a port nothing is listening on. This
+	# isolates the port leg: the process is still found, only the socket is not.
+	printf '%s' "$_hl_dead" > "$SANDBOX/uci/fcc.main.port"
+	_hl_json="$(sh_common_path 'fcc_server_health' 2>/dev/null)"
+	assert_contains "$_hl_json" '"process": true'    "the process is still found"
+	assert_contains "$_hl_json" '"listening": false' "the dead port is not reported as listening"
+	assert_contains "$_hl_json" '"healthy": false'   "a server with no listener is unhealthy"
+
+	kill "$_hl_pid" 2>/dev/null
+	wait "$_hl_pid" 2>/dev/null
+	rm -rf "$SANDBOX/opt"
+}
+
 tests_main

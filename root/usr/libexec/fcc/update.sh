@@ -141,15 +141,31 @@ cmd_check() {
 }
 
 cmd_runtime() {
-	# Re-run the installer with the agent set that is currently installed, so an
-	# upgrade does not silently drop agents the user added.
+	# DESIGN_SPEC.md section 23 describes an update as a sequence — preflight,
+	# back up, stop, install, verify, start, health check, recover. That
+	# sequence lives in install.sh, which is also the install path, so both
+	# entry points get it and there is one copy to keep correct.
+	#
+	# What belongs here is the part specific to *updating*: recording what is
+	# being replaced, and preserving the agent set the user actually has so an
+	# upgrade does not silently drop agents they added.
+	_cru_before="$(installed_fcc_version 2>/dev/null || true)"
 	_cru_set="$(installed_agents | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
-	fcc_log "$LOG" "runtime update requested (agents='${_cru_set:-<defaults>}')"
+	fcc_log "$LOG" "runtime update requested (installed=${_cru_before:-unknown}, agents='${_cru_set:-<defaults>}')"
+
 	if [ -n "$_cru_set" ]; then
 		"${FCC_LIBDIR:-/usr/libexec/fcc}/install.sh" runtime --agents "$_cru_set"
 	else
 		"${FCC_LIBDIR:-/usr/libexec/fcc}/install.sh" runtime
 	fi
+	_cru_rc=$?
+
+	# Read the version straight from the binary rather than through
+	# installed_fcc_version(), whose cache entry was invalidated by the install
+	# and would otherwise report the pre-update value.
+	_cru_after="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
+	fcc_log "$LOG" "runtime update finished rc=$_cru_rc (${_cru_before:-unknown} -> ${_cru_after:-unknown})"
+	return "$_cru_rc"
 }
 
 installed_agents() {

@@ -23,6 +23,17 @@ set -u
 FCC_INSTALLER_URL="${FCC_INSTALLER_URL:-https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh}"
 FCC_AGENT_ORDER="claude codex pi opencode cline hermes dsh grok muse aider"
 
+# DESIGN_SPEC.md section 23 step 3: refuse to start an update that cannot
+# finish. A Python toolchain plus the runtime is a few hundred MB; running out
+# of space midway leaves a half-written runtime, which is worse than not
+# starting. Overridable so a test or a deliberately tight box can adjust it.
+FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-300}"
+
+# Section 49: how long to wait for the server to answer after a restart before
+# calling the update unhealthy. Generous, because the first start after an
+# update compiles bytecode and the box may be a slow router.
+FCC_HEALTH_TIMEOUT="${FCC_HEALTH_TIMEOUT:-30}"
+
 ROOT="$(fcc_root)"
 LOG="fcc-runtime.log"
 
@@ -165,6 +176,76 @@ write_runtime_metadata() {
 }
 
 # ---------------------------------------------------------------------------
+# Update safety net (DESIGN_SPEC.md section 23 steps 6, 12 and 13)
+# ---------------------------------------------------------------------------
+backup_runtime() {
+	# backup_runtime -> path to the archive, or empty when there was nothing
+	# worth keeping (which is the normal case on a first install).
+	#
+	# Only data/ and runtime.json are archived. The runtime tree itself is not:
+	# it is large, the installer rebuilds it, and archiving it would double the
+	# disk the preflight just checked for. What cannot be rebuilt is the user's
+	# FCC configuration and agent state, and that is what this keeps.
+	_bk_dir="$(fcc_dir_backup)"
+	mkdir -p "$_bk_dir" 2>/dev/null || return 1
+	[ -d "$ROOT/data" ] || [ -f "$ROOT/runtime.json" ] || return 1
+
+	_bk_stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+	_bk_out="$_bk_dir/runtime-$_bk_stamp.tar"
+	_bk_list=""
+	[ -d "$ROOT/data" ] && _bk_list="$_bk_list data"
+	[ -f "$ROOT/runtime.json" ] && _bk_list="$_bk_list runtime.json"
+	[ -n "$_bk_list" ] || return 1
+
+	# The list is built from fixed names above, never from user input, so the
+	# unquoted expansion is the intended word splitting.
+	# shellcheck disable=SC2086
+	( cd "$ROOT" && tar -cf "$_bk_out" $_bk_list ) >/dev/null 2>&1 || return 1
+	printf '%s' "$_bk_out"
+}
+
+wait_for_health() {
+	# wait_for_health <seconds> -> 0 once fcc_server_health() reports healthy.
+	#
+	# Polls rather than sleeping the full timeout: a server that comes up in two
+	# seconds should not make the user wait thirty.
+	_wh_limit="$1"
+	case "$_wh_limit" in ''|*[!0-9]*) _wh_limit=30 ;; esac
+	_wh_i=0
+	while [ "$_wh_i" -lt "$_wh_limit" ]; do
+		case "$(fcc_server_health 2>/dev/null)" in
+			*'"healthy": true'*) return 0 ;;
+		esac
+		sleep 1
+		_wh_i=$(( _wh_i + 1 ))
+	done
+	return 1
+}
+
+recover_after_failure() {
+	# recover_after_failure <backup-archive> <was-running>
+	#
+	# Section 23 step 13: leave the box in a usable state. If the server was
+	# running before the update, start it again so the user is not left with
+	# nothing; the backup is reported so the data can be restored by hand.
+	#
+	# Section 23 step 14 asks for a rollback to the previous version. That is
+	# NOT done here, and cannot be: upstream's installer takes no version
+	# argument — it always installs the newest release from PyPI — so there is
+	# no older build to return to. Section 103 requires saying so rather than
+	# reporting a rollback that did not happen.
+	_rc_bk="$1"
+	_rc_was="$2"
+	if [ "$_rc_was" = true ]; then
+		/etc/init.d/fcc start >/dev/null 2>&1
+		fcc_log "$LOG" "restarted the FCC server after the failed update"
+	fi
+	[ -n "$_rc_bk" ] && fcc_log "$LOG" "the pre-update backup is at $_rc_bk (restore it by hand if needed)"
+	fcc_log "$LOG" "NOTE: rollback to the previous FCC version is not possible — the upstream installer accepts no version argument and always installs the latest release"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 cmd_runtime() {
@@ -180,6 +261,9 @@ cmd_runtime() {
 	fcc_ensure_dirs
 	_cr_lock="$(fcc_lock_acquire install)" || { fcc_die "another install/update is already running"; return 1; }
 
+	# --- section 23 step 1: what is being replaced ------------------------
+	_cr_before="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
+
 	if ! precheck_ok; then
 		fcc_lock_release "$_cr_lock"
 		fcc_log "$LOG" "install aborted: compatibility precheck failed"
@@ -187,11 +271,40 @@ cmd_runtime() {
 		return 1
 	fi
 
+	# --- section 23 step 3: disk space ------------------------------------
+	_cr_free="$(fcc_disk_free_kb "$ROOT" 2>/dev/null || true)"
+	case "$_cr_free" in ''|*[!0-9]*) _cr_free=0 ;; esac
+	if [ "$_cr_free" -gt 0 ] && [ "$_cr_free" -lt $(( FCC_MIN_FREE_MB * 1024 )) ]; then
+		fcc_lock_release "$_cr_lock"
+		fcc_log "$LOG" "aborted: $(( _cr_free / 1024 ))MB free under $ROOT, need ${FCC_MIN_FREE_MB}MB"
+		printf 'NO_SPACE\n'
+		return 1
+	fi
+	[ "$_cr_free" -gt 0 ] && fcc_log "$LOG" "preflight: $(( _cr_free / 1024 ))MB free under $ROOT"
+
+	# --- sections 23 steps 4-5: open sessions -----------------------------
+	# An update restarts the server; the tmux sessions themselves survive, but
+	# an agent mid-task can be interrupted, so the count is logged. This is a
+	# warning and not a veto — the UI asks for confirmation before calling this.
+	_cr_sessions="$(fcc_active_sessions 2>/dev/null || true)"
+	case "$_cr_sessions" in ''|*[!0-9]*) _cr_sessions=0 ;; esac
+	if [ "$_cr_sessions" -gt 0 ]; then
+		fcc_log "$LOG" "WARN: $_cr_sessions console session(s) are open and may be interrupted"
+	fi
+
+	# --- section 23 step 6: back up ---------------------------------------
+	_cr_was_running=false
+	[ -n "$(fcc_server_pid 2>/dev/null || true)" ] && _cr_was_running=true
+	_cr_backup="$(backup_runtime 2>/dev/null || true)"
+	[ -n "$_cr_backup" ] && fcc_log "$LOG" "backed up data/ and runtime.json to $_cr_backup"
+
+	# --- sections 23 steps 7-8: stop --------------------------------------
 	# The upstream installer refuses to run while FCC processes are alive.
 	/etc/init.d/fcc stop >/dev/null 2>&1
 
 	_cr_script="$ROOT/cache/fcc-install-$$.sh"
 	if ! download_installer "$_cr_script"; then
+		recover_after_failure "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return 1
 	fi
@@ -199,31 +312,56 @@ cmd_runtime() {
 	fcc_log "$LOG" "installer downloaded from $FCC_INSTALLER_URL sha256=$_cr_hash"
 	printf '%s  %s\n' "$_cr_hash" "$FCC_INSTALLER_URL" >> "$ROOT/cache/installer-hashes.log" 2>/dev/null
 
+	# --- section 23 step 9: update ----------------------------------------
 	run_installer "$_cr_script" "$_cr_agents"
 	_cr_rc=$?
 	rm -f "$_cr_script"
 
 	if [ "$_cr_rc" -ne 0 ]; then
 		fcc_log "$LOG" "installer exited with status $_cr_rc; see logs/installer.out"
+		recover_after_failure "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return "$_cr_rc"
 	fi
 
-	# Validate.
+	# --- section 23 step 10: verify ---------------------------------------
 	if ! "$ROOT/bin/fcc-server" --version >/dev/null 2>&1; then
 		fcc_log "$LOG" "validation failed: fcc-server --version did not succeed"
+		recover_after_failure "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return 1
 	fi
 
 	write_runtime_metadata
-	fcc_lock_release "$_cr_lock"
-	fcc_log "$LOG" "FCC runtime installed successfully"
-	# Auto-start if configured.
-	if [ "$(fcc_uci_get main auto_start 1)" = "1" ]; then
+	# The cached version is now stale; drop it so the status page does not show
+	# the pre-update version for the rest of its TTL.
+	fcc_cache_set fcc_version ""
+
+	# --- sections 23 steps 11-12: start, then check -----------------------
+	_cr_autostart="$(fcc_uci_get main auto_start 1)"
+	if [ "$_cr_autostart" = "1" ]; then
 		/etc/init.d/fcc enable >/dev/null 2>&1
 		/etc/init.d/fcc start  >/dev/null 2>&1
 	fi
+
+	# Section 49: the update is not finished until the server answers. Only
+	# checked when something is supposed to be listening, so an install with
+	# auto_start off (and nothing running before) is not reported as a failure.
+	if [ "$_cr_autostart" = "1" ] || [ "$_cr_was_running" = true ]; then
+		if wait_for_health "$FCC_HEALTH_TIMEOUT"; then
+			fcc_log "$LOG" "health check passed: $(fcc_server_health)"
+		else
+			fcc_log "$LOG" "health check FAILED after ${FCC_HEALTH_TIMEOUT}s: $(fcc_server_health)"
+			recover_after_failure "$_cr_backup" "$_cr_was_running"
+			fcc_lock_release "$_cr_lock"
+			printf 'HEALTH_FAILED\n'
+			return 1
+		fi
+	fi
+
+	_cr_after="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
+	fcc_lock_release "$_cr_lock"
+	fcc_log "$LOG" "FCC runtime installed successfully (${_cr_before:-none} -> ${_cr_after:-unknown})"
 	printf 'OK\n'
 	return 0
 }
