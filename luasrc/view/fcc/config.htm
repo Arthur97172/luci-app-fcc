@@ -131,6 +131,15 @@
 			</div>
 
 			<h4><%:Agents%></h4>
+
+			<p class="fcc-muted">
+				<%:Choose which agents to install. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unchecked rather than failing the install.%>
+			</p>
+			<div id="fcc-install-agents" class="fcc-agent-picker"><%:Loading…%></div>
+			<div class="fcc-toolbar">
+				<button id="fcc-install-agents-defaults" class="cbi-button"><%:Reset to recommended%></button>
+			</div>
+
 			<table class="fcc-table" id="fcc-agent-table">
 				<thead>
 					<tr>

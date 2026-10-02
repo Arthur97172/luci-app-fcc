@@ -110,13 +110,16 @@ precheck_ok() {
 run_installer() {
 	_ri_script="$1"
 	_ri_agents="$2"      # space separated, empty => upstream defaults
+	# Section 3.6.5: the user may uncheck every agent. That is a decision,
+	# not the absence of one, and it must not silently become "defaults".
+	_ri_none="${3:-0}"
 	_ri_use_pty=0
 	command -v script >/dev/null 2>&1 && _ri_use_pty=1
 
 	mkdir -p "$ROOT/cache" "$ROOT/logs" 2>/dev/null
 	_ri_ansfile="$ROOT/cache/installer-answers"
 	: > "$_ri_ansfile" 2>/dev/null
-	if [ -n "$_ri_agents" ]; then
+	if [ -n "$_ri_agents" ] || [ "$_ri_none" = 1 ]; then
 		for _ri_a in $FCC_AGENT_ORDER; do
 			case " $_ri_agents " in
 				*" $_ri_a "*) printf 'y\n' >> "$_ri_ansfile" ;;
@@ -127,7 +130,10 @@ run_installer() {
 		printf 'n\nn\nn\n' >> "$_ri_ansfile"
 	fi
 
-	fcc_log "$LOG" "running upstream installer (agents='${_ri_agents:-<defaults>}', pty=$_ri_use_pty)"
+	_ri_label="$_ri_agents"
+	[ "$_ri_none" = 1 ] && _ri_label="<none>"
+	[ -n "$_ri_label" ] || _ri_label="<defaults>"
+	fcc_log "$LOG" "running upstream installer (agents='$_ri_label', pty=$_ri_use_pty)"
 	apply_runtime_env
 
 	if [ "$_ri_use_pty" -eq 1 ]; then
@@ -136,7 +142,8 @@ run_installer() {
 		script -q -c "sh '$_ri_script'" /dev/null < "$_ri_ansfile" >> "$ROOT/logs/installer.out" 2>&1
 		_ri_rc=$?
 	else
-		[ -n "$_ri_agents" ] && fcc_log "$LOG" "WARN: no 'script' helper; installer runs non-interactively with upstream default agents"
+		{ [ -n "$_ri_agents" ] || [ "$_ri_none" = 1 ]; } && \
+			fcc_log "$LOG" "WARN: no 'script' helper; installer runs non-interactively with upstream default agents"
 		sh "$_ri_script" >> "$ROOT/logs/installer.out" 2>&1
 		_ri_rc=$?
 	fi
@@ -377,10 +384,15 @@ rollback_runtime() {
 # ---------------------------------------------------------------------------
 cmd_runtime() {
 	_cr_agents=""
+	_cr_none=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--agents)   _cr_agents="$(printf '%s' "${2:-}" | tr ',' ' ')"; shift 2 ;;
 			--agents=*) _cr_agents="$(printf '%s' "${1#--agents=}" | tr ',' ' ')"; shift ;;
+			# Section 3.6.5 lets the user uncheck every agent. That is a
+			# different request from "no opinion, use the defaults", and an
+			# empty --agents cannot express it, so it gets its own flag.
+			--no-agents) _cr_none=1; shift ;;
 			*) shift ;;
 		esac
 	done
@@ -452,7 +464,7 @@ cmd_runtime() {
 	printf '%s  %s\n' "$_cr_hash" "$FCC_INSTALLER_URL" >> "$ROOT/cache/installer-hashes.log" 2>/dev/null
 
 	# --- section 23 step 9: update ----------------------------------------
-	run_installer "$_cr_script" "$_cr_agents"
+	run_installer "$_cr_script" "$_cr_agents" "$_cr_none"
 	_cr_rc=$?
 	rm -f "$_cr_script"
 

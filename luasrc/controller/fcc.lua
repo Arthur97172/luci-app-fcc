@@ -39,6 +39,7 @@ function index()
 	local actions = {
 		status = "act_status", status_refresh = "act_status_refresh",
 		agents = "act_agents", agent_versions = "act_agent_versions",
+		agent_defaults = "act_agent_defaults",
 		agent_install = "act_agent_install", agent_remove = "act_agent_remove",
 		sessions = "act_sessions", session_create = "act_session_create",
 		session_output = "act_session_output", session_input = "act_session_input",
@@ -181,6 +182,18 @@ function act_agent_versions()
 	relay("agent", { "versions", "--refresh" })
 end
 
+--- Which agents to preselect at install (DESIGN_SPEC.md section 3.6.5).
+--
+-- The caller passes the budgets it already has from the status call rather than
+-- this reading /proc and df again: the page has just fetched both, and two
+-- sources for "how much memory is there" would eventually disagree. The policy
+-- itself lives in luci.fcc.agents so it is testable on its own.
+function act_agent_defaults()
+	local ram  = util.valid_int(http.formvalue("ram_mb") or "", 0, 4194304)
+	local free = util.valid_int(http.formvalue("free_mb") or "", 0, 16777216)
+	json_out('{"ids":' .. util.json_encode(agents.default_ids(ram, free)) .. '}')
+end
+
 function act_agent_install()
 	if not require_post() then return end
 	local id = util.valid_agent(http.formvalue("id"))
@@ -259,17 +272,26 @@ end
 function act_install_runtime()
 	if not require_post() then return end
 	-- `agents` is a comma-separated subset of the registry.
-	local raw = http.formvalue("agents") or ""
-	local list = {}
-	for part in raw:gmatch("[^,]+") do
-		local id = util.valid_agent(util.trim(part))
-		if not id or not agents.exists(id) then return fail("unknown agent: " .. part) end
-		list[#list + 1] = id
-	end
+	--
+	-- The field being absent and the field being empty mean different things
+	-- (section 3.6.5): absent is "no opinion, use the defaults", empty is "the
+	-- user unchecked every agent". Collapsing the two would quietly install
+	-- agents onto a device whose owner asked for none.
+	local raw = http.formvalue("agents")
 	local argv = { "install", "runtime" }
-	if #list > 0 then
-		argv[#argv + 1] = "--agents"
-		argv[#argv + 1] = table.concat(list, ",")
+	if raw ~= nil then
+		local list = {}
+		for part in raw:gmatch("[^,]+") do
+			local id = util.valid_agent(util.trim(part))
+			if not id or not agents.exists(id) then return fail("unknown agent: " .. part) end
+			list[#list + 1] = id
+		end
+		if #list > 0 then
+			argv[#argv + 1] = "--agents"
+			argv[#argv + 1] = table.concat(list, ",")
+		else
+			argv[#argv + 1] = "--no-agents"
+		end
 	end
 	start_job(argv, "fcc-runtime.log", "install")
 end

@@ -964,6 +964,66 @@ test_insufficient_space_reports_section_54s_message() {
 		"nothing was installed"
 }
 
+# Section 3.6.5: which agents get installed is decided before the install
+# starts, and the answers file is the only channel that carries that decision
+# to the upstream installer — so what it contains *is* the feature.
+#
+# The three cases below are the whole point of the flag: a named subset, no
+# opinion at all, and an explicit "none". The last two both arrive as an empty
+# agent list and must not collapse into each other.
+test_installer_answers_carry_the_agent_selection() {
+	setup_sandbox
+
+	_ia_fake="$SANDBOX/opt/fake-installer.sh"
+	mkdir -p "$SANDBOX/opt"
+	printf '#!/bin/sh\nexit 0\n' > "$_ia_fake"
+	chmod +x "$_ia_fake"
+	_ia_ans="$SANDBOX/opt/fcc/cache/installer-answers"
+
+	# run_installer prefers util-linux `script` to give the installer a tty.
+	# The answers file is written before that call, so a stand-in that just runs
+	# the command keeps the test hermetic — no tty, no timing, no hang.
+	mkdir -p "$SANDBOX/ptybin"
+	printf '#!/bin/sh\n# stand-in for `script`: run the command with our stdin\nexec sh -c "$3"\n' \
+		> "$SANDBOX/ptybin/script"
+	chmod +x "$SANDBOX/ptybin/script"
+	_ia_path="$SANDBOX/ptybin:$PATH"
+
+	_ia_order="$(sh_install 'printf "%s\n" $FCC_AGENT_ORDER')"
+	_ia_n="$(printf '%s\n' "$_ia_order" | grep -c .)"
+	if [ "$_ia_n" -lt 2 ]; then
+		fail "the registry lists agents to answer for" "got $_ia_n"
+		return 0
+	fi
+
+	# A named subset: exactly those agents are answered yes.
+	PATH="$_ia_path" sh_install \
+		'run_installer "$FCC_DEFAULT_BASE/fake-installer.sh" "claude aider" 0' >/dev/null 2>&1
+	assert_eq 2 "$(grep -c '^y$' "$_ia_ans" 2>/dev/null)" \
+		"only the two requested agents are answered yes"
+	assert_eq "$_ia_n" "$(head -n "$_ia_n" "$_ia_ans" | grep -c '^[yn]$')" \
+		"one answer per registered agent"
+	# The installer asks about more than agents (RTK, and whatever it grows
+	# next); those answers are appended after the agent block.
+	assert_eq 3 "$(tail -n +$((_ia_n + 1)) "$_ia_ans" | grep -c '^[yn]$')" \
+		"the trailing answers for non-agent prompts are still written"
+
+	# No opinion: the file stays empty, so the installer's own defaults apply.
+	PATH="$_ia_path" sh_install \
+		'run_installer "$FCC_DEFAULT_BASE/fake-installer.sh" "" 0' >/dev/null 2>&1
+	assert_eq 0 "$(wc -c < "$_ia_ans" | tr -d ' ')" \
+		"an absent selection leaves the answers to upstream"
+
+	# An explicit "none": every agent answered no. This is the case that must
+	# not be mistaken for the previous one.
+	PATH="$_ia_path" sh_install \
+		'run_installer "$FCC_DEFAULT_BASE/fake-installer.sh" "" 1' >/dev/null 2>&1
+	assert_eq 0 "$(grep -c '^y$' "$_ia_ans" 2>/dev/null)" \
+		"an explicit empty selection installs no agent"
+	assert_eq "$_ia_n" "$(head -n "$_ia_n" "$_ia_ans" | grep -c '^n$')" \
+		"every agent is answered no"
+}
+
 test_runtime_metadata_keeps_installed_at_and_moves_updated_at() {
 	setup_sandbox
 	_mu_root="$SANDBOX/opt/fcc"
@@ -986,6 +1046,59 @@ test_runtime_metadata_keeps_installed_at_and_moves_updated_at() {
 		"installed_at survives an update"
 	assert_not_contains "$_mu_json" '"updated_at": "2020-01-02T03:04:05Z"' \
 		"updated_at is the time of this write, not a copy of installed_at"
+}
+
+# ---------------------------------------------------------------------------
+# Doctor (section 80)
+# ---------------------------------------------------------------------------
+
+test_doctor_covers_the_section_80_checklist() {
+	setup_sandbox
+	_dc_json="$(sh_script doctor.sh --json)"
+
+	# Named individually rather than counted, so dropping a check fails here
+	# instead of quietly shrinking the report.
+	# The section 80 categories, plus the two section 3.6.4 adds to them: libc
+	# and scratch space in /tmp, which on OpenWrt is a tmpfs sized from RAM
+	# rather than part of the flash the storage check measures.
+	for _dc_want in Architecture Kernel OpenWrt libc Storage "/tmp space" Memory \
+	                 Python Node.js uv "FCC Runtime" "FCC Server" "Port 8082" \
+	                 tmux Permissions DNS HTTPS; do
+		assert_contains "$_dc_json" "\"name\": \"$_dc_want\"" \
+			"doctor reports $_dc_want"
+	done
+
+	# One line per registered agent. That is what makes the report answer
+	# "which of these can I run?" rather than "is something missing?".
+	assert_contains "$_dc_json" '"name": "Claude Code"' "doctor reports the agents"
+	assert_contains "$_dc_json" '"name": "Codex"' "doctor reports every registered agent"
+
+	assert_contains "$_dc_json" '"install_allowed":' "the report can block an install"
+}
+
+test_doctor_warns_about_an_agent_that_is_not_installed() {
+	setup_sandbox
+	# A launcher name that cannot exist, so this exercises the WARN path rather
+	# than whatever happens to be installed on the machine running the tests.
+	_dw_conf="$SANDBOX/agents.conf"
+	cat > "$_dw_conf" <<'EOF'
+claude|Claude Code|fcc-claude|1|150|256|claude
+ghost|Ghost Agent|fcc-does-not-exist-xyz|0|10|64|ghost
+EOF
+	_dw_json="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$_dw_conf" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		sh "$LIBEXEC/doctor.sh" --json 2>&1)"
+
+	_dw_ghost="$(printf '%s\n' "$_dw_json" | grep 'Ghost Agent')"
+	assert_contains "$_dw_ghost" '"status": "WARN"' \
+		"a missing agent is a warning"
+	assert_contains "$_dw_ghost" '"value": "not installed"' \
+		"and the report says so"
+
+	# The runtime installs perfectly well with no agents at all, so a missing
+	# agent must never be what blocks an install.
+	assert_not_contains "$_dw_ghost" '"status": "FAIL"' \
+		"a missing agent never blocks the install"
 }
 
 tests_main

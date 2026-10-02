@@ -15,6 +15,12 @@
 	var jobTimer = null;
 	var jobStart = 0;
 
+	/* The agent picker's last server-rendered state, so "Reset to
+	 * recommended" can redraw without another round trip. */
+	var agentRegistry = {};
+	var agentRecommended = [];
+	var agentPickerReady = false;
+
 	/* ------------------------------------------------------------- settings */
 
 	function loadConfig() {
@@ -237,6 +243,103 @@
 		});
 	}
 
+	/* ------------------------------------------------------ agent selection */
+
+	/* Section 3.6.5: which agents to install is a decision the user makes
+	 * before the install starts. The recommended set comes from the server,
+	 * which knows each agent's size and memory floor, but the boxes stay
+	 * editable — the recommendation is a guess about this device, not a rule.
+	 *
+	 * An empty selection is meaningful and is sent as such: the API takes an
+	 * absent `agents` field to mean "use the defaults" and an empty one to mean
+	 * "install none", so the picker must not fall back to defaults when the
+	 * user has unchecked everything. */
+
+	function selectedAgentIds() {
+		var ids = [];
+		Array.prototype.forEach.call(
+			document.querySelectorAll('#fcc-install-agents input[type="checkbox"]'),
+			function (b) { if (b.checked) { ids.push(b.value); } }
+		);
+		return ids;
+	}
+
+	function renderAgentPicker(agents, recommended) {
+		var box = FCC.$('#fcc-install-agents');
+		if (!box) { return; }
+
+		agentRegistry = agents || {};
+		agentRecommended = recommended || [];
+		agentPickerReady = true;
+
+		var rec = {};
+		agentRecommended.forEach(function (id) { rec[id] = true; });
+
+		box.innerHTML = '';
+		var ids = Object.keys(agentRegistry).sort(function (a, b) {
+			var an = String((agentRegistry[a] || {}).name || a).toLowerCase();
+			var bn = String((agentRegistry[b] || {}).name || b).toLowerCase();
+			return an < bn ? -1 : (an > bn ? 1 : 0);
+		});
+		if (!ids.length) {
+			box.appendChild(FCC.el('div', {
+				class: 'fcc-muted', text: FCC._('No agents are registered.')
+			}));
+			return;
+		}
+
+		ids.forEach(function (id) {
+			var a = agentRegistry[id] || {};
+			var input = FCC.el('input', { type: 'checkbox', value: id, id: 'fcc-pick-' + id });
+			/* Set the property, not the attribute: setAttribute('checked', false)
+			 * still checks the box. */
+			input.checked = !!rec[id];
+
+			var bits = [];
+			if (a.approx_size_mb) {
+				bits.push(FCC._('about %d MB').replace('%d', a.approx_size_mb));
+			}
+			if (a.min_ram_mb) {
+				bits.push(FCC._('needs %d MB RAM').replace('%d', a.min_ram_mb));
+			}
+
+			box.appendChild(FCC.el('label', { class: 'fcc-pick', for: 'fcc-pick-' + id }, [
+				input,
+				FCC.el('span', { class: 'fcc-pick-name', text: a.name || id }),
+				bits.length
+					? FCC.el('span', { class: 'fcc-muted fcc-pick-meta', text: bits.join(' \u00b7 ') })
+					: null
+			]));
+		});
+	}
+
+	function loadAgentPicker() {
+		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
+			var sys = (d && d.system) || {};
+			var reg = (d && d.agents) || {};
+
+			var params = {};
+			if (sys.memory_total_kb) {
+				params.ram_mb = Math.floor(sys.memory_total_kb / 1024);
+			}
+			if (sys.storage_free_bytes) {
+				params.free_mb = Math.floor(sys.storage_free_bytes / 1048576);
+			}
+
+			/* If the policy endpoint is unreachable, fall back to the registry's
+			 * own default flags rather than leaving the panel stuck on
+			 * "Loading…" — an install must not be blocked by a nicety. */
+			var fallback = Object.keys(reg).filter(function (id) {
+				return reg[id] && reg[id].default;
+			});
+
+			return FCC.api('agent_defaults', params, { method: 'GET' })
+				.then(function (r) { return (r && r.ids) || fallback; })
+				.catch(function () { return fallback; })
+				.then(function (ids) { renderAgentPicker(reg, ids); });
+		});
+	}
+
 	function startJobWatch(lock, log) {
 		jobStart = Date.now();
 		var panel = FCC.$('#fcc-job');
@@ -337,7 +440,9 @@
 		);
 
 		FCC.$('#fcc-runtime-install').addEventListener('click', function () {
-			runJobAction('install_runtime', {}, 'install', 'fcc-runtime.log');
+			var params = {};
+			if (agentPickerReady) { params.agents = selectedAgentIds().join(','); }
+			runJobAction('install_runtime', params, 'install', 'fcc-runtime.log');
 		});
 		FCC.$('#fcc-runtime-update').addEventListener('click', function () {
 			runJobAction('update_runtime', {}, 'install', 'fcc-update.log');
@@ -359,6 +464,10 @@
 			runJobAction('uninstall_runtime', { purge: 1 }, 'install', 'fcc-runtime.log');
 		});
 
+		FCC.$('#fcc-install-agents-defaults').addEventListener('click', function () {
+			renderAgentPicker(agentRegistry, agentRecommended);
+		});
+
 		FCC.$('#fcc-agent-refresh').addEventListener('click', refreshVersions);
 		FCC.$('#fcc-doctor-run').addEventListener('click', runDoctor);
 
@@ -366,6 +475,9 @@
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 		refreshAll();
+		loadAgentPicker().catch(function (err) {
+			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
+		});
 	}
 
 	if (document.readyState === 'loading') {

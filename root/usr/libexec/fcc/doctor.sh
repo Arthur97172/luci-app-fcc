@@ -17,6 +17,9 @@ JSON=0
 ROOT="$(fcc_root)"
 REQUIRED_FREE_MB="${FCC_REQUIRED_FREE_MB:-400}"
 MIN_RAM_MB="${FCC_MIN_RAM_MB:-256}"
+# Scratch space in /tmp, which on OpenWrt is a tmpfs carved out of RAM rather
+# than part of the flash the storage check above measures.
+MIN_TMP_MB="${FCC_MIN_TMP_MB:-64}"
 
 # Result accumulators (space separated "status|name|value|requirement|hint").
 RESULTS=""
@@ -57,6 +60,25 @@ else
 		"/etc/openwrt_release not found."
 fi
 
+# libc (section 3.6.4). The runtime's private Python comes from uv, which
+# fetches a build matched to the libc it finds; a musl router and a glibc host
+# therefore get different interpreters. Probing for the loader is what works
+# everywhere — `ldd --version` is not implemented by busybox.
+_libc="unknown"
+for _lc_p in /lib/ld-musl-*.so.1 /lib/ld-musl-*.so; do
+	[ -e "$_lc_p" ] && { _libc="musl"; break; }
+done
+if [ "$_libc" = unknown ]; then
+	for _lc_p in /lib/ld-linux*.so.* /lib64/ld-linux*.so.*; do
+		[ -e "$_lc_p" ] && { _libc="glibc"; break; }
+	done
+fi
+case "$_libc" in
+	musl) add_result OK "libc" "musl" "musl" "" ;;
+	*)    add_result WARN "libc" "$_libc" "musl" \
+		"OpenWrt ships musl; the runtime is fetched for the libc found here." ;;
+esac
+
 # Storage at the install path's filesystem.
 _stpath="$ROOT"
 [ -d "$_stpath" ] || _stpath="$(dirname "$ROOT")"
@@ -67,6 +89,21 @@ if [ -n "$_free_mb" ] && [ "$_free_mb" -ge "$REQUIRED_FREE_MB" ]; then
 else
 	add_result FAIL "Storage" "${_free_mb:-?} MB free" ">= ${REQUIRED_FREE_MB} MB" \
 		"Free space at $_stpath is insufficient for the FCC runtime."
+fi
+
+# /tmp space (section 3.6.4), which is a different filesystem from the install
+# path on OpenWrt: /tmp is a tmpfs sized from RAM, so a router can have plenty
+# of flash and almost no scratch space. The installer unpacks there.
+#
+# A warning rather than a failure: we cannot show that a small /tmp breaks a
+# given install, and refusing to install on a router that would have worked is
+# worse than installing with the risk stated.
+_tmp_mb="$(df -P -k /tmp 2>/dev/null | awk 'NR==2{printf "%d", $4/1024}')"
+if [ -n "$_tmp_mb" ] && [ "$_tmp_mb" -ge "$MIN_TMP_MB" ]; then
+	add_result OK "/tmp space" "${_tmp_mb} MB free" ">= ${MIN_TMP_MB} MB" "/tmp"
+else
+	add_result WARN "/tmp space" "${_tmp_mb:-?} MB free" ">= ${MIN_TMP_MB} MB" \
+		"The installer unpacks into /tmp; a small tmpfs may not be enough."
 fi
 
 # Memory.
@@ -110,6 +147,17 @@ else
 	add_result WARN "FCC Runtime" "not installed" "any" "Use Install FCC Runtime."
 fi
 
+# FCC Server — the running process, which section 80 lists separately from the
+# runtime on disk. The two fail independently: the runtime can be installed with
+# nothing running, and a stale pid file can outlive the process it names.
+_server_pid="$(fcc_server_pid 2>/dev/null || true)"
+if [ -n "$_server_pid" ] && fcc_proc_alive "$_server_pid"; then
+	add_result OK "FCC Server" "running (pid $_server_pid)" "any" ""
+else
+	add_result WARN "FCC Server" "not running" "any" \
+		"Start it from the Configuration page."
+fi
+
 # Port availability.
 _port="$(fcc_uci_get main port 8082)"
 if command -v netstat >/dev/null 2>&1; then
@@ -122,7 +170,41 @@ else
 	add_result OK "Port $_port" "unchecked" "free" "netstat unavailable."
 fi
 
-# DNS + HTTPS reachability to the installer host.
+# Agent executables (section 80).
+#
+# One line per registered agent, so the report answers "which of these can I
+# actually run?" instead of "is something missing?". A missing agent is a WARN
+# and never a FAIL: the runtime installs perfectly well with none of them, and
+# which agents a user wants is their choice. The launcher is what is tested, not
+# the underlying CLI — it is the launcher that the console runs.
+while IFS='|' read -r _ad_id _ad_name _ad_launch _ad_rest; do
+	case "$_ad_id" in ''|\#*) continue ;; esac
+	[ -n "$_ad_launch" ] || continue
+	if command -v "$_ad_launch" >/dev/null 2>&1; then
+		add_result OK "$_ad_name" "installed" "optional" ""
+	else
+		add_result WARN "$_ad_name" "not installed" "optional" \
+			"Install it from the Configuration page to use it."
+	fi
+done <<-EOF
+$(fcc_agents_each)
+EOF
+
+# DNS, checked separately from HTTPS: a resolver that does not answer and a
+# route that does not carry traffic are different faults with different fixes,
+# and "cannot download the installer" is not a useful thing to tell someone.
+if command -v nslookup >/dev/null 2>&1; then
+	if nslookup raw.githubusercontent.com >/dev/null 2>&1; then
+		add_result OK "DNS" "resolves" "raw.githubusercontent.com" ""
+	else
+		add_result FAIL "DNS" "cannot resolve" "raw.githubusercontent.com" \
+			"Check the router's DNS settings."
+	fi
+else
+	add_result OK "DNS" "unchecked" "raw.githubusercontent.com" "nslookup unavailable."
+fi
+
+# HTTPS reachability to the installer host.
 if command -v curl >/dev/null 2>&1; then
 	if timeout 30 curl -fsS -o /dev/null --retry 2 --retry-delay 2 \
 			--proto '=https' --tlsv1.2 \

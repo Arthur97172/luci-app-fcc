@@ -60,6 +60,9 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
+msgid "Choose which agents to install. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unchecked rather than failing the install."
+msgstr ""
+
 msgid "Clean up finished sessions"
 msgstr ""
 
@@ -171,6 +174,9 @@ msgstr ""
 msgid "No agent sessions are running."
 msgstr ""
 
+msgid "No agents are registered."
+msgstr ""
+
 msgid "No agents in the registry."
 msgstr ""
 
@@ -211,6 +217,9 @@ msgid "Remove the FCC runtime and all of its data? This deletes the runtime, the
 msgstr ""
 
 msgid "Remove the FCC runtime? Your configuration and data under the install path are kept."
+msgstr ""
+
+msgid "Reset to recommended"
 msgstr ""
 
 msgid "Restart"
@@ -339,6 +348,9 @@ msgstr ""
 msgid "Web Console"
 msgstr ""
 
+msgid "about %d MB"
+msgstr ""
+
 msgid "available"
 msgstr ""
 
@@ -352,6 +364,9 @@ msgid "installed"
 msgstr ""
 
 msgid "listening"
+msgstr ""
+
+msgid "needs %d MB RAM"
 msgstr ""
 
 msgid "not checked"

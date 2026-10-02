@@ -111,6 +111,42 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 	font-size: .85em;
 }
 
+/* Agent picker (DESIGN_SPEC.md section 3.6.5). A grid rather than a list, so a
+ * dozen agents do not become a column of one-word rows on a wide screen; it
+ * collapses to a single column on a phone. */
+.fcc-agent-picker {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(16em, 1fr));
+	gap: .25em .9em;
+	margin: .4em 0;
+}
+
+.fcc-pick {
+	display: flex;
+	align-items: baseline;
+	gap: .45em;
+	padding: .2em .3em;
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+.fcc-pick:hover { background: rgba(127, 127, 127, .12); }
+.fcc-pick input { flex: 0 0 auto; margin: 0; }
+.fcc-pick-name { flex: 0 1 auto; }
+
+.fcc-pick-meta {
+	flex: 1 1 auto;
+	font-size: .85em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+@media screen and (max-width: 480px) {
+	.fcc-agent-picker { grid-template-columns: 1fr; }
+	.fcc-pick-meta { white-space: normal; }
+}
+
 .fcc-dot {
 	display: inline-block;
 	width: .6em; height: .6em;

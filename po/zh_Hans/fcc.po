@@ -16,8 +16,6 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-
-
 msgid "%d agent session(s) are running and will be left as they are."
 msgstr "%d 个智能体会话正在运行，将保持原状。"
 
@@ -59,6 +57,9 @@ msgstr "检查更新"
 
 msgid "Checking…"
 msgstr "正在检查…"
+
+msgid "Choose which agents to install. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unchecked rather than failing the install."
+msgstr "选择要安装的 Agent。默认选项会根据本机内存和可用空间挑选；放不下的 Agent 会保持未勾选，而不是让安装失败。"
 
 msgid "Clean up finished sessions"
 msgstr "清理已结束的会话"
@@ -171,6 +172,9 @@ msgstr "没有活动会话。新建一个以打开终端。"
 msgid "No agent sessions are running."
 msgstr "当前没有正在运行的智能体会话。"
 
+msgid "No agents are registered."
+msgstr "没有已注册的 Agent。"
+
 msgid "No agents in the registry."
 msgstr "注册表中没有智能体。"
 
@@ -212,6 +216,9 @@ msgstr "移除 FCC 运行时及其全部数据？这将删除运行时、智能�
 
 msgid "Remove the FCC runtime? Your configuration and data under the install path are kept."
 msgstr "移除 FCC 运行时？安装路径下的配置和数据将被保留。"
+
+msgid "Reset to recommended"
+msgstr "恢复推荐选择"
 
 msgid "Restart"
 msgstr "重启"
@@ -339,6 +346,9 @@ msgstr "查看日志"
 msgid "Web Console"
 msgstr "Web 控制台"
 
+msgid "about %d MB"
+msgstr "约 %d MB"
+
 msgid "available"
 msgstr "可用"
 
@@ -353,6 +363,9 @@ msgstr "已安装"
 
 msgid "listening"
 msgstr "监听中"
+
+msgid "needs %d MB RAM"
+msgstr "需要 %d MB 内存"
 
 msgid "not checked"
 msgstr "未检查"

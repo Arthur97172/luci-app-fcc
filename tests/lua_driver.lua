@@ -300,6 +300,41 @@ eq("agents/default_ids", table.concat(agents.default_ids(), ","),
 	"claude,codex,pi,opencode,hermes,dsh,grok,muse,aider")
 check("agents/cline_not_default", agents.get("cline").default == false)
 
+-- Section 3.6.5: the preselected set has to shrink to fit the device. Both
+-- budgets are optional and independent, and the registry order is the priority
+-- order, so the assertions below are about which agents survive, not just how
+-- many.
+eq("agents/default_ids_no_budgets", table.concat(agents.default_ids(nil, nil), ","),
+	table.concat(agents.default_ids(), ","))
+eq("agents/default_ids_generous", table.concat(agents.default_ids(99999, 99999), ","),
+	"claude,codex,pi,opencode,hermes,dsh,grok,muse,aider")
+
+-- A 150 MB ceiling drops claude (180), codex (160), opencode (160) and dsh (180).
+eq("agents/default_ids_by_ram", table.concat(agents.default_ids(150, nil), ","),
+	"pi,hermes,grok,muse,aider")
+
+-- 300 MB of flash holds claude (140) and codex (120) and nothing else: every
+-- later agent would push the running total over.
+eq("agents/default_ids_by_disk", table.concat(agents.default_ids(nil, 300), ","),
+	"claude,codex")
+
+-- Both at once, which is the case that matters on a real router.
+eq("agents/default_ids_by_both", table.concat(agents.default_ids(150, 300), ","),
+	"pi,hermes,grok")
+
+-- Nothing fits, and that is a real answer: an empty list, not the full set.
+eq("agents/default_ids_starved", table.concat(agents.default_ids(0, 0), ","), "")
+
+-- A budget that is not a number is treated as "unknown", never as zero.
+eq("agents/default_ids_nan_is_unknown",
+	table.concat(agents.default_ids("abc", nil), ","),
+	table.concat(agents.default_ids(), ","))
+
+-- Cline is not a default at any budget.
+check("agents/default_ids_never_includes_non_defaults",
+	not agents.default_ids(99999, 99999)[5] or
+	table.concat(agents.default_ids(99999, 99999), ","):find("cline") == nil)
+
 check("agents/exists_yes", agents.exists("codex"))
 check("agents/exists_no",  not agents.exists("nosuchagent"))
 check("agents/get_rejects_bad_id", agents.get("../../etc") == nil)

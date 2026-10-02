@@ -48,11 +48,35 @@ function get(id)
 	return nil
 end
 
---- Ids of the agents the upstream installer installs by default.
-function default_ids()
-	local ids = {}
+--- Ids to preselect when installing the runtime.
+--
+-- Section 3.6.5: the default selection has to account for RAM, flash and how
+-- large each agent is, because a low-resource router cannot carry the whole
+-- set. The registry's own `default` flag says which agents upstream installs;
+-- this narrows that set to what the device can actually hold.
+--
+-- The two budgets are optional and independent. With neither, the registry
+-- defaults come back unchanged, so a caller that has no resource data still
+-- gets a usable answer instead of an empty list.
+--
+-- Order matters: agents are taken in registry order while they fit, so the
+-- result is deterministic and the first agents in the registry are the ones a
+-- tight device keeps.
+function default_ids(ram_mb, free_mb)
+	local ram  = tonumber(ram_mb)
+	local free = tonumber(free_mb)
+	local ids, used = {}, 0
 	for _, a in ipairs(load()) do
-		if a.default then ids[#ids + 1] = a.id end
+		if a.default then
+			-- A 0 in the registry means "not known", not "needs nothing", so it
+			-- is never what excludes an agent.
+			local fits_ram = (ram == nil) or (a.min_ram_mb == 0) or (a.min_ram_mb <= ram)
+			local fits_disk = (free == nil) or ((used + a.size_mb) <= free)
+			if fits_ram and fits_disk then
+				ids[#ids + 1] = a.id
+				used = used + a.size_mb
+			end
+		end
 	end
 	return ids
 end
