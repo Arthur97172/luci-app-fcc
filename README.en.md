@@ -30,7 +30,7 @@ opkg install luci-app-fcc_*.ipk
 OpenWrt 25.12:
 
 ```sh
-apk add ./luci-app-fcc*.apk
+apk add --allow-untrusted luci-app-fcc*.apk
 ```
 
 The `.ipk` and the `.apk` are produced by CI from the corresponding OpenWrt SDK.
