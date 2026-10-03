@@ -350,6 +350,19 @@ sh_script() { # sh_script <script> [args...]
 	sh "$LIBEXEC/$_sts_script" "$@" 2>&1
 }
 
+# Start a session running a command that is expected to exit immediately, the
+# way cmd_create does it: make the pane, mark it remain-on-exit, and only then
+# start the command. Handing the command to new-session instead races — the
+# session dies with its pane before remain-on-exit can be set, and the exit
+# status goes with it. A fast machine loses that race every time, which is how
+# this was found.
+tmux_start_exiting() { # tmux_start_exiting <name> <command>
+	tmux kill-session -t "$1" 2>/dev/null
+	tmux new-session -d -s "$1" 'cat' 2>/dev/null
+	tmux set-option -t "$1" remain-on-exit on 2>/dev/null
+	tmux respawn-pane -k -t "$1" "$2" 2>/dev/null
+}
+
 test_a_dead_session_reports_its_exit_code() {
 	setup_sandbox
 	if ! command -v tmux >/dev/null 2>&1; then
@@ -360,12 +373,7 @@ test_a_dead_session_reports_its_exit_code() {
 	_sts_root="$SANDBOX/opt/fcc"
 	mkdir -p "$_sts_root/sessions"
 	_sts_name="fcc-claude-901"
-	tmux kill-session -t "$_sts_name" 2>/dev/null
-
-	# The same two steps cmd_create takes: start the pane, then make it
-	# survive its own death.
-	tmux new-session -d -s "$_sts_name" 'printf hello; exit 7' 2>/dev/null
-	tmux set-option -t "$_sts_name" remain-on-exit on 2>/dev/null
+	tmux_start_exiting "$_sts_name" 'printf hello; exit 7'
 	sleep 1
 
 	# The pane is dead, but the session is deliberately still there — that is
@@ -382,9 +390,7 @@ test_a_dead_session_reports_its_exit_code() {
 	# Section 74 shows "Exit code: 0" for a clean finish, so zero has to come
 	# through as a number rather than being lost as a falsy value.
 	_sts_ok="fcc-claude-902"
-	tmux kill-session -t "$_sts_ok" 2>/dev/null
-	tmux new-session -d -s "$_sts_ok" 'printf bye; exit 0' 2>/dev/null
-	tmux set-option -t "$_sts_ok" remain-on-exit on 2>/dev/null
+	tmux_start_exiting "$_sts_ok" 'printf bye; exit 0'
 	sleep 1
 	_sts_hdr0="$(sh_script session.sh output "$_sts_ok" 0 0 | head -n1)"
 	assert_contains "$_sts_hdr0" '"exit_code": 0' "a clean exit reports zero"
@@ -401,6 +407,75 @@ test_a_dead_session_reports_its_exit_code() {
 
 	tmux kill-session -t "$_sts_name" 2>/dev/null
 	tmux kill-session -t "$_sts_ok" 2>/dev/null
+}
+
+test_create_keeps_the_exit_code_of_a_launcher_that_leaves_at_once() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — session creation needs a real pane"
+		return 0
+	fi
+
+	# The test above mirrors the sequence cmd_create uses. This one drives
+	# cmd_create itself, because the mirror cannot catch a mistake in the real
+	# thing — and the real thing is where the race lived.
+	_cs_bin="$SANDBOX/opt/fcc/bin"
+	mkdir -p "$_cs_bin" "$SANDBOX/opt/fcc/sessions"
+
+	# A runtime that looks installed and a server that looks alive, so that the
+	# two guards in front of the tmux calls are satisfied.
+	printf '#!/bin/sh\ntrap "exit 0" TERM INT\nwhile :; do sleep 1; done\n' > "$_cs_bin/fcc-server"
+	chmod +x "$_cs_bin/fcc-server"
+	"$_cs_bin/fcc-server" &
+	_cs_srv=$!
+
+	# A launcher doing what one does when it cannot reach its server: print, and
+	# leave immediately. Handing this to new-session is what used to destroy the
+	# session before remain-on-exit could be set, taking the exit code with it.
+	printf '#!/bin/sh\nprintf "boom\\n"; exit 3\n' > "$_cs_bin/fcc-claude"
+	chmod +x "$_cs_bin/fcc-claude"
+
+	_cs_created="$(PATH="$_cs_bin:$PATH" \
+		FCC_LIBDIR="$LIBEXEC" \
+		FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" \
+		FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		sh "$LIBEXEC/session.sh" create claude 100 30 2>&1)"
+	_cs_name="$(printf '%s' "$_cs_created" | sed -n 's/.*"name": "\([^"]*\)".*/\1/p')"
+	assert_ne "" "$_cs_name" "create reports the session it made: [$_cs_created]"
+
+	# The agent is started by respawning the placeholder, so the geometry
+	# new-session was given has to survive the respawn.
+	assert_eq "100x30" \
+		"$(tmux display-message -p -t "$_cs_name" '#{pane_width}x#{pane_height}' 2>/dev/null)" \
+		"the pane keeps the size it was created with"
+
+	sleep 1
+
+	# The launcher is gone, the session is not, and its exit status is still
+	# there to be read. This is the assertion the old ordering failed.
+	assert_ok "the session outlives its launcher" tmux has-session -t "$_cs_name"
+	_cs_hdr="$(sh_script session.sh output "$_cs_name" 0 0 | head -n1)"
+	assert_contains "$_cs_hdr" '"alive": false' "the launcher is no longer running"
+	assert_contains "$_cs_hdr" '"exit_code": 3' "its exit code survived creation"
+
+	# The launcher's output lands in the scrollback the console actually reads —
+	# the pipe-pane capture — and not on the visible screen, which a pane held
+	# open by remain-on-exit has replaced with tmux's own banner. The banner is
+	# therefore the proof that remain-on-exit took effect.
+	_cs_screen="$(sh_script session.sh capture "$_cs_name" \
+		| sed -e 's/[[:space:]]*$//' | sed -e '/^$/d')"
+	assert_contains "$_cs_screen" "Pane is dead" "the pane was kept after its process exited"
+
+	_cs_raw="$(tr -d '\r' < "$SANDBOX/opt/fcc/sessions/$_cs_name.out" 2>/dev/null)"
+	# Exactly the launcher's output: the `cat` placeholder has to be silent, or
+	# every console would open on a stray shell prompt ahead of the agent.
+	assert_eq "boom" "$(printf '%s' "$_cs_raw" | sed -e '/^$/d')" \
+		"the scrollback holds the launcher's output and nothing else"
+
+	tmux kill-session -t "$_cs_name" 2>/dev/null
+	kill "$_cs_srv" 2>/dev/null
+	rm -rf "$SANDBOX/opt"
 }
 
 test_old_backups_are_pruned_to_the_most_recent_n() {
@@ -440,12 +515,8 @@ test_status_explains_why_an_agent_stopped() {
 	# exit status rides along on it and no state has to be kept between polls.
 	_er_bad="fcc-codex-911"
 	_er_ok="fcc-claude-912"
-	tmux kill-session -t "$_er_bad" 2>/dev/null
-	tmux kill-session -t "$_er_ok" 2>/dev/null
-	tmux new-session -d -s "$_er_bad" 'printf boom; exit 1' 2>/dev/null
-	tmux set-option -t "$_er_bad" remain-on-exit on 2>/dev/null
-	tmux new-session -d -s "$_er_ok" 'printf fine; exit 0' 2>/dev/null
-	tmux set-option -t "$_er_ok" remain-on-exit on 2>/dev/null
+	tmux_start_exiting "$_er_bad" 'printf boom; exit 1'
+	tmux_start_exiting "$_er_ok" 'printf fine; exit 0'
 	sleep 1
 
 	_er_json="$(sh_script status.sh)"

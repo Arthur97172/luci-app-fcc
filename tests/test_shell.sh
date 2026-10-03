@@ -162,6 +162,35 @@ $_ts_hits"
 	assert_eq "" "$(printf '%s' "$_ts_out" | sed '/^$/d')" "every backend local carries its function prefix"
 }
 
+test_the_locals_checker_still_discriminates() {
+	# The check above passes when the checker reports nothing — which is also
+	# what it does when it is broken. mawk, the awk Debian and Ubuntu install by
+	# default, does not implement the interval expression the pattern used to be
+	# written with, so it flagged every correctly-prefixed local and the suite
+	# went red on any machine without gawk. Feeding the checker one name of each
+	# kind is what tells "found nothing" apart from "cannot see anything".
+	_ts_dir="$(mktemp -d)"
+	_ts_sample="$_ts_dir/locals-sample.sh"
+	{
+		printf 'good_fn() {\n'
+		printf '\t_gg_ok=1\n'
+		printf '\tPLAIN_CONST=2\n'
+		printf '}\n'
+		printf 'bad_fn() {\n'
+		printf '\t_leaky=3\n'
+		printf '}\n'
+	} > "$_ts_sample"
+
+	_ts_report="$(awk -v file="sample.sh" -f "$ROOT/tests/locals.awk" "$_ts_sample")"
+	rm -rf "$_ts_dir"
+	assert_contains "$_ts_report" "bad_fn() assigns unprefixed '_leaky'" \
+		"the checker still catches an unprefixed local"
+	assert_not_contains "$_ts_report" "_gg_ok" \
+		"a prefixed local is accepted"
+	assert_not_contains "$_ts_report" "PLAIN_CONST" \
+		"an ALL_CAPS name is accepted"
+}
+
 test_contract_is_documented() {
 	# The rule is only enforceable if the next person to edit these files knows
 	# about it, so common.sh must keep saying so.

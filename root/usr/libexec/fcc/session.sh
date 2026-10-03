@@ -128,7 +128,16 @@ cmd_create() {
 	# both validated values, never user input, so the command string cannot be
 	# injected into.
 	_cr_cmd="$(session_env_exports) exec $_cr_launcher"
-	if ! tmux new-session -d -s "$_cr_name" -x "$_cr_cols" -y "$_cr_rows" "$_cr_cmd" 2>/dev/null; then
+
+	# The pane is created holding `cat`, which waits on stdin and prints nothing,
+	# and the agent is started afterwards by respawning it. Passing the command to
+	# new-session instead would race: an agent that exits at once — a launcher
+	# that cannot reach its server, say — takes the session down with it before
+	# remain-on-exit can be set, and section 74's exit code is gone. Respawning
+	# cannot lose it, because the option is already in place before the command
+	# exists. `cat` rather than a shell keeps the placeholder silent, so nothing
+	# of it reaches the scrollback.
+	if ! tmux new-session -d -s "$_cr_name" -x "$_cr_cols" -y "$_cr_rows" 'cat' 2>/dev/null; then
 		fcc_die "failed to create tmux session"; return 1
 	fi
 
@@ -138,10 +147,16 @@ cmd_create() {
 	# whatever else the user runs in tmux.
 	tmux set-option -t "$_cr_name" remain-on-exit on 2>/dev/null
 
-	# Start capturing pane output from the very beginning.
+	# Start capturing pane output from the very beginning. Safe to attach before
+	# the agent starts: the placeholder has written nothing.
 	: > "$(out_file "$_cr_name")"
 	printf '0' > "$(base_file "$_cr_name")"
 	tmux pipe-pane -t "$_cr_name" -o "cat >> '$(out_file "$_cr_name")'" 2>/dev/null
+
+	if ! tmux respawn-pane -k -t "$_cr_name" "$_cr_cmd" 2>/dev/null; then
+		tmux kill-session -t "$_cr_name" 2>/dev/null
+		fcc_die "failed to start the agent in its session"; return 1
+	fi
 
 	fcc_log "fcc-terminal.log" "session created: $_cr_name (agent=$_cr_agent ${_cr_cols}x${_cr_rows})"
 	printf '{"name": %s, "agent": %s, "launcher": %s, "cols": %s, "rows": %s}\n' \

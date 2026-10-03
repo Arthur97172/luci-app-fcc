@@ -50,8 +50,23 @@ fn == "" { next }
 	next
 }
 
-function check(name) {
-	if (name ~ /^_[a-z0-9]{2,5}_/) return
+function check(name,   tag, rest) {
+	# An `_tag_` prefix, tag being 2-5 lower-case alphanumerics. Spelled out
+	# rather than written as /^_[a-z0-9]{2,5}_/ on purpose: mawk, which is the
+	# awk Debian and Ubuntu install as /usr/bin/awk, does not implement interval
+	# expressions. It reads the braces literally, the pattern then matches
+	# nothing, and every correctly-prefixed local in the package is reported as
+	# a violation. gawk accepts the braces, which is why this only shows up on a
+	# machine that has no gawk — including a stock Ubuntu container.
+	if (name ~ /^_[a-z0-9]/) {
+		rest = substr(name, 2)
+		tag = rest
+		sub(/_.*/, "", tag)
+		# tag != rest means there was a second underscore to strip, so the
+		# name really is `_tag_something` and not a bare `_name`.
+		if (tag != rest && length(tag) >= 2 && length(tag) <= 5 \
+		    && tag ~ /^[a-z0-9]+$/) return
+	}
 	if (name ~ /^[A-Z][A-Z0-9_]*$/) return
 	printf "%s: %s() assigns unprefixed '%s'\n", file, fn, name
 }
