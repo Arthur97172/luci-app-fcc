@@ -235,9 +235,10 @@ The version has one source: `VERSION`. The Makefile stamps the package with it,
 the *Basic Information* page displays it, and a release tag has to agree with it.
 
 ```sh
-# with 0.1.0 in VERSION
-git tag v0.1.0
-git push origin v0.1.0
+# The tag is VERSION with a v in front of it, so read it rather than retyping it.
+version="$(tr -d ' \t\r\n' < VERSION)"
+git tag "v$version"
+git push origin "v$version"
 ```
 
 Pushing a `v*` tag runs the static checks, then builds and install-smoke-tests
@@ -247,8 +248,8 @@ immediately rather than publishing a release named v0.2.0 carrying packages
 called 0.1.0. The title comes from `VERSION` too, not from the tag, so the two
 cannot drift apart.
 
-The assets are this package alone — `luci-app-fcc_0.1.0-r1_all.ipk`,
-`luci-app-fcc-0.1.0-r1.apk` and `SHA256SUMS`. All four architectures build the
+The assets are this package alone — `luci-app-fcc_<version>-r1_all.ipk`,
+`luci-app-fcc-<version>-r1.apk` and `SHA256SUMS`. All four architectures build the
 same file (`PKGARCH:=all`), and the copies are compared rather than merged: two
 SDKs disagreeing about the same package fails the release. The FCC runtime is
 installed on demand over the network, so there is no prebuilt runtime tarball in

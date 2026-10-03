@@ -16,7 +16,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fcc
-PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.0))
+PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>

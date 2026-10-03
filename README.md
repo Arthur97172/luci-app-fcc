@@ -208,9 +208,10 @@ shell 后端遵循一条容易踩到的规则：POSIX `sh` 只有一个被所有
 Release 的 tag 也必须与它一致。
 
 ```sh
-# VERSION 里是 0.1.0 时
-git tag v0.1.0
-git push origin v0.1.0
+# tag 就是 VERSION 前面加个 v，所以直接读出来，不要手敲
+version="$(tr -d ' \t\r\n' < VERSION)"
+git tag "v$version"
+git push origin "v$version"
 ```
 
 推一个 `v*` tag 会先跑静态检查，再在四个架构上构建并各跑一次安装冒烟测试，
@@ -218,7 +219,7 @@ git push origin v0.1.0
 不会出现名为 v0.2.0、包却叫 0.1.0 的 Release。标题同样取自 `VERSION` 而非 tag，
 两者无法各自漂移。
 
-资产只有本软件包——`luci-app-fcc_0.1.0-r1_all.ipk`、`luci-app-fcc-0.1.0-r1.apk`
+资产只有本软件包——`luci-app-fcc_<version>-r1_all.ipk`、`luci-app-fcc-<version>-r1.apk`
 和 `SHA256SUMS`。四个架构构建的是同一个文件（`PKGARCH:=all`），收到后是逐一
 比对而不是合并，两个 SDK 对同一个包给出不同结果会直接失败。FCC 运行时是按需
 联网安装的，所以 Release 里没有预构建的运行时压缩包。

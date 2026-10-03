@@ -936,7 +936,14 @@ test_missing_registry_is_not_fatal() {
 
 test_luci_version_reads_the_version_file() {
 	setup_sandbox
-	assert_eq "0.1.0" "$(sh_common 'fcc_luci_version')" "the version file is read"
+	# The expected value comes from the file rather than from a literal. A
+	# literal is what a release breaks: bumping VERSION is the whole act of
+	# cutting one, and it would fail here with a message about a shell function
+	# that is working correctly. What is being checked is that the function
+	# reads that file at all — a hardcoded answer fails this just as soon as the
+	# file disagrees with it, which is exactly when it matters.
+	assert_eq "$(tr -d ' \t\r\n' < "$ROOT/VERSION")" "$(sh_common 'fcc_luci_version')" \
+		"the version file is read"
 	assert_eq "0.0.0" "$(FCC_LIBDIR="$LIBEXEC" FCC_VERSION_FILE="$SANDBOX/nope" \
 		sh -c '. "$1/common.sh"; fcc_luci_version' _ "$LIBEXEC")" \
 		"a missing version file reports 0.0.0 rather than failing"

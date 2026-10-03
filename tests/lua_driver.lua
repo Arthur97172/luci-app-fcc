@@ -353,7 +353,17 @@ check("paths/script_rejects_space",  paths.script("sta tus") == nil)
 check("paths/script_rejects_semicolon", paths.script("status;id") == nil)
 check("paths/script_rejects_empty",  paths.script("") == nil)
 
-check("paths/luci_version", paths.luci_version() == "0.1.0")
+-- Compared against the tree's VERSION rather than a literal: bumping that file
+-- is what cutting a release is, and a pinned expectation would go red for a
+-- module that is behaving correctly. A module that returned a constant instead
+-- of reading the file still fails here.
+do
+	local fh = io.open(ROOT .. "/VERSION", "r")
+	local want = fh and fh:read("*a")
+	if fh then fh:close() end
+	want = want and want:gsub("^%s+", ""):gsub("%s+$", "") or nil
+	check("paths/luci_version", want ~= nil and paths.luci_version() == want)
+end
 
 -- No UCI cursor on this host, so install_base() must fall back to the default
 -- rather than returning nil.
