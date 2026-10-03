@@ -100,12 +100,24 @@ end
 --     leaves this request's session, so it survives the CGI process being
 --     reaped.
 --   * `$!` is set as soon as the shell forks, so on its own it is not evidence
---     that the exec succeeded. The command is therefore checked before the fork
---     (runnable), which is a question that can be settled without racing the
---     child; the pid is then confirmed against /proc as a second, best-effort
---     guard. Measured on a host, the /proc check alone does not catch a command
---     that fails to exec — the setsid process is still alive when it is read —
---     which is why the pre-check carries the weight.
+--     that the exec succeeded. That gap is closed before the fork, by
+--     runnable(), because it is the only question here that can be answered
+--     without racing the child.
+--
+-- There is deliberately no liveness check after the fork. One was tried: the
+-- pid was confirmed against /proc before being reported. It answers the wrong
+-- question, and it answers it as a coin toss. "Did the job start?" and "is the
+-- job still running?" are different, and a job that starts and fails at once —
+-- which is exactly what an install does when the compatibility gate blocks it —
+-- is reported as "could not start the job". Measured in the OpenWrt smoke
+-- container, `agent.sh install claude` exits in under a second when the gate
+-- blocks it, so the check loses that race about as often as it wins it, and
+-- when it loses it the reason, which the job has already written to its own
+-- log, is replaced by an error that says nothing.
+--
+-- Whether the job ran, and why it stopped, is the job's own answer to give:
+-- the lock it holds and the log it writes. The caller gets a pid as soon as
+-- the process exists, which is what it asked for.
 --
 -- @return pid (number) on success, nil on failure
 function spawn_detached(cmd, args, logfile)
@@ -125,20 +137,7 @@ function spawn_detached(cmd, args, logfile)
 	if not fh then return nil end
 	local pid = tonumber((fh:read("*a") or ""):match("%d+"))
 	fh:close()
-	if not pid or not process_alive(pid) then return nil end
 	return pid
-end
-
---- Is this pid still running?
---
--- /proc is the portable answer on OpenWrt: nixio exposes no kill(0), and
--- signalling a pid we did not create in order to find out would be worse than
--- reading the directory that already says so.
-function process_alive(pid)
-	if type(pid) ~= "number" or pid <= 0 or pid ~= math.floor(pid) then
-		return false
-	end
-	return fs.access("/proc/" .. pid) ~= nil
 end
 
 -- ---------------------------------------------------------------------------

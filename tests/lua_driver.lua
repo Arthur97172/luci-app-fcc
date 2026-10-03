@@ -241,31 +241,21 @@ eq("bytes_to_hex/padded",util.bytes_to_hex("\1\2"), "01 02")
 eq("bytes_to_hex/high",  util.bytes_to_hex("\255"), "ff")
 
 -- ---------------------------------------------------------------------------
--- spawn_detached / process_alive
+-- spawn_detached
 --
--- These two carry the fix for "Install / reinstall" answering "could not start
--- the job". OpenWrt's busybox has no `nohup`, so the job never ran — but a
--- shell that cannot exec a command still sets `$!`, and the process it names is
--- usually still there when /proc is read, so the failure looked like a success
--- and the check that was supposed to catch it was a race the child won.
+-- This carries the fix for "Install / reinstall" answering "could not start the
+-- job". OpenWrt's busybox has no `nohup`, so the job never ran — but a shell
+-- that cannot exec a command still sets `$!`, so the failure looked like a
+-- success. The first attempt at a fix confirmed the pid against /proc, which
+-- answered the opposite question ("is it still running?") and got it wrong in
+-- the other direction: an install blocked by the compatibility gate exits in
+-- under a second, so a job that started and stopped was reported as one that
+-- never started, and the reason it wrote to its own log was thrown away.
 --
--- The checks below are the two halves of the answer: a pid that really is the
--- program that was asked for, and a refusal that does not depend on timing.
+-- The checks below are the three answers that are decidable: the command is
+-- there before the fork, the pid names the program that was asked for, and a
+-- job that exits at once is still reported as started.
 -- ---------------------------------------------------------------------------
-check("process_alive/rejects_nil",      util.process_alive(nil) == false)
-check("process_alive/rejects_string",   util.process_alive("123") == false)
-check("process_alive/rejects_zero",     util.process_alive(0) == false)
-check("process_alive/rejects_negative", util.process_alive(-1) == false)
-check("process_alive/rejects_float",    util.process_alive(1.5) == false)
-
--- A pid whose process has been reaped. `echo $$` runs a shell that exits
--- immediately, and close() reaps it, so the number is free by the time it is
--- asked about — which makes this deterministic rather than a wait.
-local _sd_fh = io.popen("echo $$")
-local _sd_dead = tonumber((_sd_fh:read("*a") or ""):match("%d+"))
-_sd_fh:close()
-check("process_alive/dead_pid", _sd_dead ~= nil and util.process_alive(_sd_dead) == false,
-	"pid " .. tostring(_sd_dead) .. " should have been gone")
 
 -- One field of /proc/<pid>/stat, counted after the command name. The name is
 -- in parentheses and may itself contain spaces or parentheses, so the parse
@@ -304,8 +294,7 @@ end
 -- how fast Lua reads, not about the job, so the read is retried.
 local _sd_log = os.tmpname()
 local _sd_pid = util.spawn_detached("/bin/sleep", { "30" }, _sd_log)
-check("spawn_detached/returns_a_live_pid",
-	_sd_pid ~= nil and util.process_alive(_sd_pid) == true, "got " .. tostring(_sd_pid))
+check("spawn_detached/returns_a_pid", _sd_pid ~= nil, "got " .. tostring(_sd_pid))
 
 local _sd_comm, _sd_session = nil, nil
 if _sd_pid then
@@ -331,9 +320,19 @@ check("spawn_detached/job_is_in_its_own_session",
 	_sd_pid ~= nil and _sd_session == _sd_pid,
 	"session " .. tostring(_sd_session) .. " for pid " .. tostring(_sd_pid))
 
--- The regression itself: a command that is not there must be refused, and the
--- answer must be the same on every run. Before the pre-check this returned a
--- pid five times out of five.
+-- The regression that produced the user-visible error, and the reason the
+-- /proc confirmation was removed: a job that starts and stops immediately is
+-- still a job that started. `/bin/true` is the shortest such job there is, and
+-- answering "could not start the job" for it would throw away the log it had
+-- already written — which is where an install blocked by the compatibility gate
+-- says what blocked it. Deterministic: `echo $!` prints a pid whether or not
+-- the job is still there to be found afterwards.
+check("spawn_detached/reports_a_job_that_exits_at_once",
+	util.spawn_detached("/bin/true", {}, "/dev/null") ~= nil)
+
+-- A command that is not there must be refused, and the answer must be the same
+-- on every run. Before the pre-check this returned a pid five times out of
+-- five, because the setsid process was still alive when /proc was read.
 check("spawn_detached/refuses_a_path_that_is_not_there",
 	util.spawn_detached("/nonexistent/fcc-not-here", {}, "/dev/null") == nil)
 check("spawn_detached/refuses_a_name_that_is_not_on_path",
