@@ -344,6 +344,15 @@ test_the_release_tag_must_match_the_version_file() {
 	# matches what was actually built" is verified rather than assumed.
 	assert_contains "$_ts_r" 'does not carry version' \
 		"the release checks each asset carries that version"
+
+	# The title is written from VERSION rather than from the ref. Both are the
+	# same string by the time this step runs — the tag was checked above — but
+	# writing it from the ref would make the release name follow a typo rather
+	# than the packages, which is the drift this test exists to prevent.
+	assert_contains "$_ts_r" '--title "luci-app-fcc v$version"' \
+		"the release title is built from VERSION, not from the ref"
+	assert_not_contains "$_ts_r" '--title "$GITHUB_REF_NAME"' \
+		"the release title does not come from the tag"
 }
 
 tests_main
