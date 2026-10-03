@@ -213,25 +213,29 @@ test_entries_are_syntactically_wellformed() {
 }
 
 test_makefile_compiles_to_lucis_language_code() {
-	# Three names have to line up, and upstream luci.mk's LuciTranslation macro
-	# is the reference for all three:
+	# Two names have to line up, and upstream luci.mk's LuciTranslation macro is
+	# the reference for both:
 	#
 	#   po dir     zh_Hans                 the gettext/BCP-47 directory name
 	#   alias      LUCI_LC_ALIAS.zh_Hans=zh-cn    -> $(1) in the macro
 	#   .lmo       <pkg>.$(1).lmo          = fcc.zh-cn.lmo
-	#   uci key    $(subst -,_,$(1))       = luci.languages.zh_cn
-	#   label      $(LUCI_LANG.zh_Hans)    = 简体中文 (Simplified Chinese)
 	#
 	# This package does not include luci.mk, so LUCI_LC_ALIAS itself is never
-	# read — what matters is that the names it would have produced are the ones
+	# read — what matters is that the name it would have produced is the one
 	# written out here by hand.
 	_ts_mk="$(cat "$ROOT/Makefile")"
 	assert_contains "$_ts_mk" 'po2lmo ./po/zh_Hans/fcc.po' "the catalogue is compiled from po/zh_Hans"
 	assert_contains "$_ts_mk" 'fcc.zh-cn.lmo' "the .lmo uses the aliased language code zh-cn"
-	assert_contains "$_ts_mk" "luci.languages.zh_cn=" "the uci-defaults key is the alias with - mapped to _"
-	assert_contains "$_ts_mk" "简体中文 (Simplified Chinese)" \
-		"the registered label matches LUCI_LANG.zh_Hans"
 	assert_not_contains "$_ts_mk" 'fcc.zh_Hans.lmo' "the .lmo is not named after the po directory"
+
+	# Upstream's luci-i18n-* packages also register their language in
+	# luci.languages through uci-defaults. This package deliberately does not.
+	# It is an application, not a language pack, and adding zh_cn to the global
+	# language list would offer a half-translated interface to anyone who has
+	# not installed luci-i18n-base-zh-cn as well. LuCI loads the catalogue by
+	# itself whenever the interface language already is zh-cn.
+	assert_not_contains "$_ts_mk" 'luci.languages.zh_cn' \
+		"the package does not change the global LuCI language list"
 }
 
 test_catalogue_compiles_if_po2lmo_is_available() {

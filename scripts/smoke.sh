@@ -261,24 +261,11 @@ smoke_remove() {
 	fi
 }
 
-smoke_remove_i18n() {
-	# The translation package depends on the app package, so the package manager
-	# refuses to remove the app while it is still installed — the uninstall order
-	# is the reverse of the install order.
-	if [ "$SMOKE_EXT" = apk ]; then
-		smoke_sh "apk del luci-i18n-fcc-zh-cn"
-	else
-		smoke_sh "opkg remove luci-i18n-fcc-zh-cn"
-	fi
-}
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 SMOKE_APP="$(smoke_pkg_path "luci-app-fcc[-_]*.$SMOKE_EXT")"
-SMOKE_I18N="$(find "$SMOKE_DIST" -maxdepth 1 -type f -name "luci-i18n-fcc-*.$SMOKE_EXT" \
-	2>/dev/null | LC_ALL=C sort | head -n1)"
 
 printf 'smoke: %s on %s (%s)\n' "$SMOKE_IMAGE" "$SMOKE_PLATFORM" "$SMOKE_EXT"
 printf 'smoke: package %s\n' "$SMOKE_APP"
@@ -444,35 +431,19 @@ smoke_sh '/usr/bin/fcc-env version >/dev/null 2>&1' || _sm_rc=$?
 smoke_check "fcc-env version reports an absent runtime" 1 "$_sm_rc"
 
 # ---------------------------------------------------------------------------
-# The translation package, when it was built
+# The translation, which ships inside the package rather than beside it
 # ---------------------------------------------------------------------------
 
-if [ -n "$SMOKE_I18N" ]; then
-	smoke_note "the translation package"
-	docker cp "$SMOKE_I18N" "$SMOKE_NAME:$SMOKE_STAGE/i18n.$SMOKE_EXT"
-	_sm_rc=0
-	smoke_install "$SMOKE_STAGE/i18n.$SMOKE_EXT" || _sm_rc=$?
-	smoke_check "the translation package installs alongside it" 0 "$_sm_rc"
-	[ "$_sm_rc" = 0 ] || smoke_show_log "the package manager said"
-	_sm_rc=0
-	smoke_sh '[ -s /usr/lib/lua/luci/i18n/fcc.zh-cn.lmo ]' || _sm_rc=$?
-	smoke_check "the compiled catalogue is in place" 0 "$_sm_rc"
-fi
+smoke_note "the translation"
+_sm_rc=0
+smoke_sh '[ -s /usr/lib/lua/luci/i18n/fcc.zh-cn.lmo ]' || _sm_rc=$?
+smoke_check "the compiled zh-cn catalogue arrived with the package" 0 "$_sm_rc"
 
 # ---------------------------------------------------------------------------
 # Removal
 # ---------------------------------------------------------------------------
 
 smoke_note "removing"
-if [ -n "$SMOKE_I18N" ]; then
-	_sm_rc=0
-	smoke_remove_i18n || _sm_rc=$?
-	smoke_check "the translation package removes cleanly" 0 "$_sm_rc"
-	_sm_rc=0
-	smoke_sh '[ ! -e /usr/lib/lua/luci/i18n/fcc.zh-cn.lmo ]' || _sm_rc=$?
-	smoke_check "the compiled catalogue is gone" 0 "$_sm_rc"
-fi
-
 _sm_rc=0
 smoke_remove || _sm_rc=$?
 smoke_check "the package removes cleanly" 0 "$_sm_rc"
@@ -484,6 +455,10 @@ smoke_check "the controller is gone" 0 "$_sm_rc"
 _sm_rc=0
 smoke_sh '[ ! -e /usr/libexec/fcc/session.sh ]' || _sm_rc=$?
 smoke_check "the backends are gone" 0 "$_sm_rc"
+
+_sm_rc=0
+smoke_sh '[ ! -e /usr/lib/lua/luci/i18n/fcc.zh-cn.lmo ]' || _sm_rc=$?
+smoke_check "the compiled catalogue is gone" 0 "$_sm_rc"
 
 # ---------------------------------------------------------------------------
 

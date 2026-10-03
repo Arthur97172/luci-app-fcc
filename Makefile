@@ -130,40 +130,13 @@ define Package/luci-app-fcc/install
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-config.js $(1)/www/luci-static/resources/fcc/fcc-config.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-info.js $(1)/www/luci-static/resources/fcc/fcc-info.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc.css $(1)/www/luci-static/resources/fcc/fcc.css
-endef
 
-# ---------------------------------------------------------------------------
-# Simplified Chinese translation.
-#
-# po/zh_Hans/ is the BCP 47 source directory; LuCI's language code for it is
-# zh-cn, which is what the .lmo filename and the uci-defaults entry must use.
-# DEFAULT:=LUCI_LANG_zh_Hans means selecting "Simplified Chinese" in menuconfig
-# pulls this package in automatically — no meta package is involved.
-# ---------------------------------------------------------------------------
-define Package/luci-i18n-fcc-zh-cn
-  SECTION:=luci
-  CATEGORY:=LuCI
-  SUBMENU:=3. Applications
-  TITLE:=luci-app-fcc - Chinese (Simplified) translation
-  DEPENDS:=+luci-app-fcc
-  # No VERSION override. package-defaults.mk already sets
-  # VERSION:=$(PKG_VERSION)-r$(PKG_RELEASE); writing it by hand as
-  # $(PKG_VERSION)-$(PKG_RELEASE) drops the `r`. opkg tolerates that, which is
-  # why it survived the 24.10 build, but apk's version parser rejects it and the
-  # package fails to build with "package version is invalid".
-  PKGARCH:=all
-  HIDDEN:=1
-  DEFAULT:=LUCI_LANG_zh_Hans||(ALL&&m)
-endef
-
-define Package/luci-i18n-fcc-zh-cn/description
-  Simplified Chinese (zh-cn) translation for luci-app-fcc.
-endef
-
-define Package/luci-i18n-fcc-zh-cn/install
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	echo "uci set luci.languages.zh_cn='简体中文 (Simplified Chinese)'; uci commit luci" \
-		> $(1)/etc/uci-defaults/luci-i18n-fcc-zh-cn
+	# The Simplified Chinese catalogue ships inside this package rather than as
+	# a separate luci-i18n-fcc-zh-cn. LuCI's template parser looks for
+	# <name>.<lang>.lmo here by itself when the interface language is zh-cn, so
+	# a second package buys nothing but a second thing to install — and section
+	# 62's release lists one package. English needs no catalogue: it is the
+	# source language the _("...") strings are written in.
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
 	po2lmo ./po/zh_Hans/fcc.po $(1)/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo
 endef
@@ -192,4 +165,3 @@ define Package/luci-app-fcc/postrm
 endef
 
 $(eval $(call BuildPackage,luci-app-fcc))
-$(eval $(call BuildPackage,luci-i18n-fcc-zh-cn))

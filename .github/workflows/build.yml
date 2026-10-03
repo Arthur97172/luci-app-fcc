@@ -26,7 +26,7 @@
 #
 # downloads.openwrt.org ships real SDKs: the tarball contains a prebuilt
 # toolchain under staging_dir/toolchain-*, so only our package and its declared
-# dependencies compile. Measured on the 24.10.4 x86-64 SDK: 91s to download
+# dependencies compile. Measured on the 24.10 x86-64 SDK: 91s to download
 # 246MB, 2s to extract, and about two minutes to build luci-app-fcc together
 # with luci-base and the rest of its dependency chain. The package itself
 # compiles in under two seconds.
@@ -89,25 +89,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - release: '24.10.4'
+          - release: '24.10.8'
             arch: x86_64
             target: x86/64
-            sdk: openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            sdk: openwrt-sdk-24.10.8-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             ext: ipk
-          - release: '24.10.4'
+          - release: '24.10.8'
             arch: aarch64
             target: armsr/armv8
-            sdk: openwrt-sdk-24.10.4-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            sdk: openwrt-sdk-24.10.8-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             ext: ipk
-          - release: '25.12.0'
+          - release: '25.12.5'
             arch: x86_64
             target: x86/64
-            sdk: openwrt-sdk-25.12.0-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            sdk: openwrt-sdk-25.12.5-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             ext: apk
-          - release: '25.12.0'
+          - release: '25.12.5'
             arch: aarch64
             target: armsr/armv8
-            sdk: openwrt-sdk-25.12.0-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            sdk: openwrt-sdk-25.12.5-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             ext: apk
 
     steps:
@@ -210,29 +210,26 @@ jobs:
           # CONFIG_PACKAGE_luci-app-fcc is set; otherwise include/package.mk
           # defines `compile` as the autoremove stub alone, which cleans the
           # build directory and produces nothing. The dependency chain still
-          # builds, so without these two lines the job collects a dist/ full of
+          # builds, so without this line the job collects a dist/ full of
           # libraries and a green run ships no package of ours at all.
           #
-          # LUCI_LANG_zh_Hans is how the translation package is reached rather
-          # than a CONFIG_PACKAGE_ line: it is HIDDEN, so it has no prompt, and
-          # defconfig recomputes a promptless symbol from its default instead of
-          # honouring what is written in .config. Setting the language is also
-          # what a user does in menuconfig.
-          printf 'CONFIG_ALL=n\nCONFIG_ALL_KMODS=n\nCONFIG_ALL_NONSHARED=n\nCONFIG_PACKAGE_luci-app-fcc=y\nCONFIG_LUCI_LANG_zh_Hans=y\n' > .config
+          # There is no second line for the translation. It is no longer a
+          # package: the .lmo is built into luci-app-fcc itself (section 52
+          # requires the two languages, not two packages).
+          printf 'CONFIG_ALL=n\nCONFIG_ALL_KMODS=n\nCONFIG_ALL_NONSHARED=n\nCONFIG_PACKAGE_luci-app-fcc=y\n' > .config
           make defconfig
           # Fail loudly if the defaults came back: a silent return to ALL would
           # turn this job into a kernel build rather than a package build.
           ! grep -qE '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED)=y' .config
           test "$(grep -cE '^CONFIG_PACKAGE_luci-app-fcc=y' .config)" = 1
-          test "$(grep -cE '^CONFIG_PACKAGE_luci-i18n-fcc-zh-cn=y' .config)" = 1
           echo "kmods selected: $(grep -cE '^CONFIG_PACKAGE_kmod.*=y' .config)"
 
       - name: Build luci-base host tools
         # The released SDK ships no po2lmo — it has no tools/ tree, and the 324
         # host tools in staging_dir/host/bin do not include it. luci-base builds
         # it as a HostBuild into staging_dir/hostpkg/bin, which is what a full
-        # buildroot does and what turns our po/zh_Hans/fcc.po into the .lmo the
-        # i18n package ships. It takes about a second.
+        # buildroot does and what turns our po/zh_Hans/fcc.po into the .lmo that
+        # ships inside luci-app-fcc. It takes about a second.
         run: |
           set -eu
           cd "$SDK_DIR"
@@ -264,19 +261,13 @@ jobs:
           # extension across bin/packages rather than guessing the arch path.
           find "$SDK_DIR/bin/packages" -name "luci-app-fcc[-_]*.${{ matrix.ext }}" \
             -exec cp -v {} dist/ \;
-          find "$SDK_DIR/bin/packages" -name "luci-i18n-fcc-*.${{ matrix.ext }}" \
-            -exec cp -v {} dist/ \;
-          # Assert on the two packages by name. What this catches is a build
-          # that produced no package of ours at all because the config never
-          # selected it — the dependency chain still builds in that case, so
-          # "dist is non-empty" would say nothing.
+          # Assert on it by name. What this catches is a build that produced no
+          # package of ours at all because the config never selected it — the
+          # dependency chain still builds in that case, so "dist is non-empty"
+          # would say nothing.
           ls dist/luci-app-fcc[-_]*.${{ matrix.ext }} >/dev/null 2>&1 || {
             echo "::error::luci-app-fcc was not built"
             find "$SDK_DIR/bin/packages" -maxdepth 3 -type d
-            exit 1
-          }
-          ls dist/luci-i18n-fcc-*.${{ matrix.ext }} >/dev/null 2>&1 || {
-            echo "::error::the translation package was not built"
             exit 1
           }
           ls -l dist
@@ -287,9 +278,9 @@ jobs:
         # smoke job's business (sections 90 and 91).
         #
         # What it catches is the failure that matters here: a package that
-        # builds but ships nothing, an i18n package whose .lmo never got
-        # compiled because po2lmo was absent, or a build that produced no
-        # package of ours at all because the config never selected it.
+        # builds but ships nothing, one whose .lmo never got compiled because
+        # po2lmo was absent, or a build that produced no package of ours at all
+        # because the config never selected it.
         #
         # The checks are per package, not per extension: asserting the
         # controller inside every file would fail the translation package, which
@@ -338,11 +329,9 @@ jobs:
           # A glob that matches nothing expands to itself, so a loop over it
           # would run once on a literal pattern and — with an `[ -e ] ||
           # continue` guard — pass without having checked anything. Resolve the
-          # matches first and insist on at least one of each.
+          # matches first and insist on at least one.
           app="$(ls -1 "$DIST"/luci-app-fcc[-_]*."$EXT" 2>/dev/null || true)"
-          i18n="$(ls -1 "$DIST"/luci-i18n-fcc-*."$EXT" 2>/dev/null || true)"
-          [ -n "$app" ]  || { echo "::error::no luci-app-fcc package in dist"; fail=1; }
-          [ -n "$i18n" ] || { echo "::error::no luci-i18n-fcc package in dist"; fail=1; }
+          [ -n "$app" ] || { echo "::error::no luci-app-fcc package in dist"; fail=1; }
 
           for f in $app; do
             d="$(unpack "$(basename "$f")")"
@@ -352,14 +341,12 @@ jobs:
               || { echo "::error::$f is missing the views"; fail=1; }
             test -f "$d/usr/libexec/fcc/session.sh" \
               || { echo "::error::$f is missing the backends"; fail=1; }
-            rm -rf "$d"
-            echo "$(basename "$f"): payload ok"
-          done
-
-          for f in $i18n; do
-            d="$(unpack "$(basename "$f")")"
-            find "$d" -name '*.lmo' | grep -q . \
-              || { echo "::error::$f carries no compiled catalogue"; fail=1; }
+            # The Chinese catalogue lives in this package now, so a build where
+            # po2lmo was missing — or where its output went somewhere LuCI does
+            # not look — has to fail here. Nothing else would notice: the
+            # package installs and runs perfectly well in English.
+            test -f "$d/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo" \
+              || { echo "::error::$f carries no compiled zh-cn catalogue"; fail=1; }
             rm -rf "$d"
             echo "$(basename "$f"): payload ok"
           done
@@ -404,28 +391,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - release: '24.10.4'
+          - release: '24.10.8'
             arch: x86_64
             target: x86/64
-            rootfs: openwrt-24.10.4-x86-64-rootfs.tar.gz
+            rootfs: openwrt-24.10.8-x86-64-rootfs.tar.gz
             platform: linux/amd64
             ext: ipk
-          - release: '24.10.4'
+          - release: '24.10.8'
             arch: aarch64
             target: armsr/armv8
-            rootfs: openwrt-24.10.4-armsr-armv8-rootfs.tar.gz
+            rootfs: openwrt-24.10.8-armsr-armv8-rootfs.tar.gz
             platform: linux/arm64
             ext: ipk
-          - release: '25.12.0'
+          - release: '25.12.5'
             arch: x86_64
             target: x86/64
-            rootfs: openwrt-25.12.0-x86-64-rootfs.tar.gz
+            rootfs: openwrt-25.12.5-x86-64-rootfs.tar.gz
             platform: linux/amd64
             ext: apk
-          - release: '25.12.0'
+          - release: '25.12.5'
             arch: aarch64
             target: armsr/armv8
-            rootfs: openwrt-25.12.0-armsr-armv8-rootfs.tar.gz
+            rootfs: openwrt-25.12.5-armsr-armv8-rootfs.tar.gz
             platform: linux/arm64
             ext: apk
 
@@ -485,6 +472,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check the tag against VERSION
+        # Section 62: the tag is v<version>. ./VERSION is the one place the
+        # version lives — the Makefile reads it, the package is stamped with
+        # it, and the app displays it (section 37) — so a tag that disagrees
+        # with it would publish packages labelled one thing under a release
+        # named another. Checked first, so a mistyped tag fails in seconds
+        # rather than after the download and the comparison.
+        run: |
+          set -eu
+          version="$(tr -d ' \t\r\n' < VERSION)"
+          test -n "$version" || { echo "::error::VERSION is empty"; exit 1; }
+          expected="v$version"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION ($version) — expected $expected"
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME matches VERSION $version"
+
       - name: Download every artifact
         uses: actions/download-artifact@v4
         with:
@@ -493,24 +498,34 @@ jobs:
 
       - name: Collect the packages
         # Sections 62 and 93: a release carries this package. Every
-        # architecture builds the same two files — section 92's PKGARCH=all
-        # makes them architecture-independent — so all four artifacts arrive
-        # holding copies of the same names. They are compared rather than
-        # merged: two SDKs disagreeing about the same package is a fact worth
-        # failing on, not something to settle by arrival order.
+        # architecture builds the same file — section 92's PKGARCH=all makes it
+        # architecture-independent — so all four artifacts arrive holding
+        # copies of the same name. They are compared rather than merged: two
+        # SDKs disagreeing about the same package is a fact worth failing on,
+        # not something to settle by arrival order.
         #
         # The name filter is belt and braces. The build job already collects
-        # only our packages, but an artifact that somehow carried an upstream
+        # only our package, but an artifact that somehow carried an upstream
         # one would otherwise be published as if it were ours.
         run: |
           set -eu
+          version="$(tr -d ' \t\r\n' < VERSION)"
           mkdir -p release
           for f in artifacts/*/*; do
             [ -f "$f" ] || continue
             b="$(basename "$f")"
             case "$b" in
-              luci-app-fcc*|luci-i18n-fcc*) : ;;
+              luci-app-fcc*) : ;;
               *) echo "::warning::not publishing $b"; continue ;;
+            esac
+            # The tag says which version is being released; the file name is
+            # what the build actually produced. Comparing them here is the
+            # check that the two agree — a release whose assets are named
+            # 0.1.0 while the tag says v0.2.0 is a packaging mistake that no
+            # other step would catch.
+            case "$b" in
+              *"$version"*) : ;;
+              *) echo "::error::$b does not carry version $version"; exit 1 ;;
             esac
             if [ -e "release/$b" ]; then
               cmp -s "$f" "release/$b" || {
@@ -539,7 +554,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
+          # The tag has already been checked against VERSION, so this is the
+          # same string by construction. It is written from VERSION rather than
+          # from the ref so that the release name and the packages it carries
+          # cannot drift apart.
+          version="$(tr -d ' \t\r\n' < VERSION)"
           gh release create "$GITHUB_REF_NAME" \
-            --title "luci-app-fcc $GITHUB_REF_NAME" \
+            --title "luci-app-fcc v$version" \
             --generate-notes \
             release/*

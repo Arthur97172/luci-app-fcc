@@ -45,6 +45,11 @@ LuCI → Services → FCC
 
 All three pages work immediately, before anything else is installed.
 
+The interface follows LuCI's language. English is the source language; the
+compiled Simplified Chinese catalogue is built into this same package, so there
+is no `luci-i18n-fcc-zh-cn` to install alongside it. LuCI loads it on its own
+whenever the interface language is Chinese.
+
 ---
 
 ## First run

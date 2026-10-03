@@ -86,18 +86,21 @@ test_lua_install_paths_match_the_module_names() {
 # Package metadata
 # ---------------------------------------------------------------------------
 
-test_both_packages_are_declared() {
-	assert_contains "$(cat "$MAKEFILE")" 'define Package/luci-app-fcc' "the app package is declared"
-	assert_contains "$(cat "$MAKEFILE")" 'define Package/luci-i18n-fcc-zh-cn' "the zh-cn i18n package is declared"
-	assert_contains "$(cat "$MAKEFILE")" '$(eval $(call BuildPackage,luci-app-fcc))' "the app package is built"
-	assert_contains "$(cat "$MAKEFILE")" '$(eval $(call BuildPackage,luci-i18n-fcc-zh-cn))' "the i18n package is built"
+test_the_package_is_declared() {
+	# One package, not two. The translation is built into it — section 52 asks
+	# for two languages, not two packages — which is also what section 62's
+	# release lists.
+	assert_contains "$(cat "$MAKEFILE")" 'define Package/luci-app-fcc' "the package is declared"
+	assert_contains "$(cat "$MAKEFILE")" '$(eval $(call BuildPackage,luci-app-fcc))' "the package is built"
+	assert_eq "1" "$(grep -c '^\$(eval \$(call BuildPackage' "$MAKEFILE")" \
+		"exactly one package is built"
 }
 
-test_packages_are_architecture_independent() {
+test_the_package_is_architecture_independent() {
 	# This package is a pure control layer: Lua, JS and ash. Anything it ships
 	# is interpreted, so PKGARCH:=all is what lets one .ipk serve every target.
 	_ts_n="$(grep -c '^[[:space:]]*PKGARCH:=all' "$MAKEFILE")"
-	assert_eq "2" "$_ts_n" "both packages declare PKGARCH:=all"
+	assert_eq "1" "$_ts_n" "the package declares PKGARCH:=all"
 }
 
 test_does_not_use_luci_mk() {
@@ -199,10 +202,10 @@ test_tmux_dependency_matches_the_session_backend() {
 }
 
 # ---------------------------------------------------------------------------
-# The i18n package
+# The translation, which ships inside the package
 # ---------------------------------------------------------------------------
 
-test_i18n_package_is_wired_up() {
+test_i18n_sources_are_wired_up() {
 	assert_file "$ROOT/po/zh_Hans/fcc.po"
 	assert_file "$ROOT/po/templates/fcc.pot"
 	assert_contains "$(cat "$MAKEFILE")" 'po2lmo ./po/zh_Hans/fcc.po' "the .po is compiled with po2lmo"
@@ -211,17 +214,28 @@ test_i18n_package_is_wired_up() {
 		"po2lmo is available as a host tool"
 }
 
-test_i18n_auto_selects_with_the_language() {
-	# LuCI has no luci-i18n-<lang> meta package: the DEFAULT line is what makes
-	# menuconfig's language selection pull this package in.
-	assert_contains "$(cat "$MAKEFILE")" 'DEFAULT:=LUCI_LANG_zh_Hans' \
-		"the i18n package is selected by the zh_Hans language option"
+test_the_catalogue_installs_into_the_app_package() {
+	# LuCI's template parser loads <name>.<lang>.lmo out of
+	# /usr/lib/lua/luci/i18n by itself when the interface language is zh-cn.
+	# Installing it anywhere else means the translation never loads — and
+	# English still works, so nothing looks broken.
+	_ts_inst="$(install_block)"
+	assert_contains "$_ts_inst" \
+		'po2lmo ./po/zh_Hans/fcc.po $(1)/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo' \
+		"the catalogue is compiled into the app package"
 }
 
-test_i18n_package_depends_on_the_app() {
-	_ts_depends="$(sed -n '/^define Package\/luci-i18n-fcc-zh-cn$/,/^endef$/p' "$MAKEFILE" \
-		| sed -n 's/^[[:space:]]*DEPENDS:=//p')"
-	assert_eq "+luci-app-fcc" "$_ts_depends" "the translation depends on the app"
+test_no_separate_translation_package() {
+	# A luci-i18n-fcc-zh-cn package would be a second thing to install for no
+	# gain: the .lmo is already in the app package and is what LuCI actually
+	# loads. Section 62's release lists one package.
+	#
+	# Checked by definition rather than by name: the Makefile's own comment
+	# explains the decision, which means it names the package it argues against.
+	assert_not_contains "$(cat "$MAKEFILE")" 'define Package/luci-i18n' \
+		"the Makefile defines no second package"
+	assert_not_contains "$(cat "$MAKEFILE")" 'BuildPackage,luci-i18n' \
+		"the Makefile builds no second package"
 }
 
 # ---------------------------------------------------------------------------
@@ -276,7 +290,7 @@ release_job() {
 	sed -n '/^  release:/,$p' "$WORKFLOW"
 }
 
-test_the_build_collects_only_our_packages() {
+test_the_build_collects_only_our_package() {
 	_ts_c="$(collect_step)"
 	assert_ne "" "$_ts_c" "the build job has a collect step"
 	# The glob that collects the entire chain. Spelled out literally so that an
@@ -287,14 +301,13 @@ test_the_build_collects_only_our_packages() {
 			fail "the collect step copies every package the SDK built" ;;
 		*) pass ;;
 	esac
-	for _ts_p in 'luci-app-fcc[-_]*' 'luci-i18n-fcc-*'; do
-		assert_contains "$_ts_c" "$_ts_p" "the collect step is scoped to $_ts_p"
-	done
+	assert_contains "$_ts_c" 'luci-app-fcc[-_]*' "the collect step is scoped to our package"
+	assert_not_contains "$_ts_c" 'luci-i18n-fcc' "no second package is collected"
 }
 
 test_the_release_does_not_merge_architectures_blindly() {
-	# All four artifacts carry the same two packages — section 92's PKGARCH=all
-	# makes them architecture-independent — so merging them lets one copy
+	# All four artifacts carry the same package — section 92's PKGARCH=all
+	# makes it architecture-independent — so merging them lets one copy
 	# overwrite another with nothing said. Two SDKs disagreeing about the same
 	# package is worth failing on, not resolving by arrival order.
 	_ts_r="$(release_job)"
@@ -307,9 +320,9 @@ test_the_release_does_not_merge_architectures_blindly() {
 	assert_contains "$_ts_r" 'cmp -s' "the release job compares the copies it received"
 }
 
-test_the_release_publishes_only_our_packages() {
+test_the_release_publishes_only_our_package() {
 	_ts_r="$(release_job)"
-	assert_contains "$_ts_r" 'luci-app-fcc*|luci-i18n-fcc*' \
+	assert_contains "$_ts_r" 'luci-app-fcc*) : ;;' \
 		"the release job filters the assets it publishes"
 	# The publish list must be the collected directory, not the raw download:
 	# artifacts/ is what the job received, release/ is what it decided to ship,
@@ -317,6 +330,20 @@ test_the_release_publishes_only_our_packages() {
 	_ts_gh="$(printf '%s\n' "$_ts_r" | sed -n '/gh release create/,$p')"
 	assert_contains "$_ts_gh" 'release/*' "the release publishes the filtered directory"
 	assert_not_contains "$_ts_gh" 'artifacts/' "the release does not publish the raw download"
+}
+
+test_the_release_tag_must_match_the_version_file() {
+	# Section 62: the tag is v<version>, and ./VERSION is the one place the
+	# version lives — the Makefile stamps the package with it and the app
+	# displays it (section 37). Without the check a v0.2.0 tag would publish
+	# packages named 0.1.0, and nothing downstream would notice.
+	_ts_r="$(release_job)"
+	assert_contains "$_ts_r" 'does not match VERSION' "the release compares the tag with VERSION"
+	assert_contains "$_ts_r" 'expected="v$version"' "the expected tag is VERSION with a v"
+	# The assets are stamped from the same file, so this is where "the tag
+	# matches what was actually built" is verified rather than assumed.
+	assert_contains "$_ts_r" 'does not carry version' \
+		"the release checks each asset carries that version"
 }
 
 tests_main
