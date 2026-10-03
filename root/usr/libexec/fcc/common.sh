@@ -416,6 +416,150 @@ fcc_cpu_info() {
 }
 
 # ---------------------------------------------------------------------------
+# Where the kernel keeps its CPU facts
+#
+# Both are single directories that can be pointed elsewhere, for the same reason
+# FCC_LIBDIR and FCC_DEFAULT_BASE can: the machine running the tests is not an
+# ARM router. It has cpufreq of its own, which would answer every question here
+# before the fallbacks were reached, and it has no device tree at all — so
+# without these the code path that ARM routers depend on could not be run.
+# ---------------------------------------------------------------------------
+fcc_sys_cpu() {
+	# fcc_sys_cpu -> the kernel's per-CPU sysfs root.
+	printf '%s' "${FCC_SYS_CPU:-/sys/devices/system/cpu}"
+}
+
+fcc_dt_base() {
+	# fcc_dt_base -> where the kernel exposes the device tree. A path that is
+	# not there is not an error: every reader of it refuses a directory it
+	# cannot read, and the caller ends up with no rate — which is what happens
+	# on every x86 router.
+	printf '%s' "${FCC_DT_BASE:-/sys/firmware/devicetree/base}"
+}
+
+fcc_hex_dump() {
+	# fcc_hex_dump <file>... -> those files' bytes as lowercase hex, or empty.
+	#
+	# Reading a device tree property means reading bytes, and OpenWrt's busybox
+	# has no od: hexdump is the applet it ships instead. Both are asked for the
+	# same bare byte stream — od -An -tx1, hexdump -v -e '1/1 "%02x"' — and the
+	# caller cannot tell which answered. Where neither exists the answer is
+	# empty, which every caller here already treats as "the property is not
+	# there".
+	#
+	# -v is load-bearing for hexdump: without it a run of repeated lines
+	# collapses to `*`, and an OPP table is fifteen lines that differ in one or
+	# two digits, so the table would be silently cut down to its first entries.
+	#
+	# Several files concatenate, with nothing between them, which is what lets a
+	# whole OPP table be read in one process rather than one per OPP.
+	[ -n "${1:-}" ] || return 1
+	if command -v od >/dev/null 2>&1; then
+		od -An -tx1 "$@" 2>/dev/null | tr -d ' \n'
+		return 0
+	fi
+	if command -v hexdump >/dev/null 2>&1; then
+		hexdump -v -e '1/1 "%02x"' "$@" 2>/dev/null | tr -d ' \n'
+		return 0
+	fi
+	return 1
+}
+
+fcc_cpu_dt_hz() {
+	# fcc_cpu_dt_hz <clock-frequency-file> -> the rate in Hz, or empty.
+	#
+	# The device tree's clock-frequency is a big-endian 32-bit count of Hz, so
+	# it is read as bytes: `read` would hand back four unprintable characters
+	# and any arithmetic on those would be nonsense.
+	#
+	# It lives here rather than inline in status.sh so it can be tested against
+	# a fixture, for the same reason fcc_cpu_info does: the machine running the
+	# tests is not an ARM router and has no device tree to read.
+	#
+	# The length is checked before the bytes reach the arithmetic, because
+	# `$(( 0x ))` is a syntax error in ash and a short read — a truncated
+	# property, a file that is not the one we thought it was — would otherwise
+	# take the whole status script, and the page reading it, down with it.
+	# There is no character check to go with it: fcc_hex_dump emits nothing but
+	# hex digits, so one would never fire.
+	[ -n "${1:-}" ] && [ -r "$1" ] || return 1
+
+	_cd_hex="$(fcc_hex_dump "$1")" || return 1
+	case "$_cd_hex" in
+		????????*) ;;
+		*) return 1 ;;
+	esac
+	# The first four bytes, whatever else the file holds.
+	_cd_hex="${_cd_hex%"${_cd_hex#????????}"}"
+
+	_cd_hz=$(( 0x$_cd_hex ))
+	[ "$_cd_hz" -gt 0 ] || return 1
+	printf '%s' "$_cd_hz"
+}
+
+fcc_cpu_dt_opp_hz() {
+	# fcc_cpu_dt_opp_hz <devicetree-base-dir> -> the highest opp-hz, in Hz, or
+	# empty.
+	#
+	# This is the other way a device tree states a CPU clock, and on arm64 it is
+	# the usual one: the cpu nodes carry an operating-points-v2 table instead of
+	# a clock-frequency. The Airoha EN7581 — the SoC in the AN7581 routers — is
+	# exactly that shape, so on those boards the property fcc_cpu_dt_hz reads is
+	# not there at all and this is the only clock figure the device tree holds.
+	#
+	# Why this matters at all, rather than being a second way to ask a question
+	# sysfs already answers: OpenWrt 24.10 builds the EN7581 cpufreq driver
+	# (CONFIG_ARM_AIROHA_SOC_CPUFREQ) but leaves CONFIG_CPUFREQ_DT off. That
+	# driver's whole job is to register a cpufreq-dt platform device, so with the
+	# generic driver absent nothing binds, no policy is created, and *neither*
+	# /sys/devices/system/cpu/cpu0/cpufreq nor cpufreq/policy0 exists. The board
+	# is running fine; sysfs simply has no rate to report, and the page shows a
+	# dash on hardware that is working.
+	#
+	# The table is found by name rather than by following the phandle the cpu
+	# node points at. Following it would mean reading a phandle out of every node
+	# at the device tree root, which is a process per node on every status poll —
+	# section 3.8 keeps this script to one process — and the walk is not needed
+	# for the answer: what is wanted is the highest rate the CPU is specified at,
+	# and the highest opp-hz in any CPU table is that rate whether the board has
+	# one cluster or a big.LITTLE pair.
+	#
+	# Each value is 64-bit big-endian and lives on its own opp node, so the glob
+	# ends in opp-*/opp-hz rather than opp-table*/opp-hz — the table node itself
+	# carries only compatible and opp-shared. Every one of those files is exactly
+	# one cell pair, which is what lets them all go to a single fcc_hex_dump:
+	# their bytes concatenate into a string that divides evenly into
+	# 16-hex-digit values, and the whole table costs one process rather than one
+	# per OPP.
+	_dt_base="${1:-}"
+	[ -n "$_dt_base" ] && [ -d "$_dt_base" ] || return 1
+
+	_dt_hex="$(fcc_hex_dump "$_dt_base"/opp-table*/opp-*/opp-hz)" || return 1
+	[ -n "$_dt_hex" ] || return 1
+	[ $(( ${#_dt_hex} % 16 )) -eq 0 ] || return 1
+
+	_dt_best=""
+	while [ ${#_dt_hex} -ge 16 ]; do
+		_dt_one="${_dt_hex%"${_dt_hex#????????????????}"}"
+		_dt_hex="${_dt_hex#????????????????}"
+		# The high word of a CPU clock is zero. A rate that needs it is not one
+		# this is being asked about, and the arithmetic for one would be wider
+		# than a 32-bit router's shell is required to carry.
+		case "$_dt_one" in
+			00000000*) ;;
+			*) continue ;;
+		esac
+		_dt_hz=$(( 0x${_dt_one#00000000} ))
+		[ "$_dt_hz" -gt 0 ] || continue
+		if [ -z "$_dt_best" ] || [ "$_dt_hz" -gt "$_dt_best" ]; then
+			_dt_best="$_dt_hz"
+		fi
+	done
+	[ -n "$_dt_best" ] || return 1
+	printf '%s' "$_dt_best"
+}
+
+# ---------------------------------------------------------------------------
 # FCC server health (DESIGN_SPEC.md section 49)
 #
 # Section 49 asks for a post-update check on three levels: the process exists,

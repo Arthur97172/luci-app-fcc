@@ -42,6 +42,43 @@ sh_common() {
 	sh -c '. "$1/common.sh"; eval "$2"' _ "$LIBEXEC" "$1" 2>&1
 }
 
+# sh_common, but with PATH replaced by a directory holding only the named tools,
+# so that a branch which depends on which tools exist is the only branch that
+# can run. Prepending would not do: the point is that the tools left out cannot
+# be found at all.
+#   sh_common_tools '<tools>' '<code>'
+sh_common_tools() {
+	rm -rf "$SANDBOX/toolbin"
+	mkdir -p "$SANDBOX/toolbin"
+	# sh itself, because PATH has to hold the shell that is about to be run.
+	for _tr_t in sh $1; do
+		_tr_p="$(command -v "$_tr_t" 2>/dev/null)" || continue
+		ln -sf "$_tr_p" "$SANDBOX/toolbin/$_tr_t"
+	done
+	PATH="$SANDBOX/toolbin" \
+	FCC_LIBDIR="$LIBEXEC" \
+	FCC_AGENTS_CONF="$AGENTS_CONF" \
+	FCC_VERSION_FILE="$ROOT/VERSION" \
+	FCC_DEFAULT_BASE="$SANDBOX/opt" \
+	sh -c '. "$1/common.sh"; eval "$2"' _ "$LIBEXEC" "$2" 2>&1
+}
+
+# <hex-string> -> the octal escapes printf writes those bytes from.
+#
+# The device tree fixtures are written in hex because that is how the bytes come
+# out of dtc, and hand-copying them into octal is how a fixture quietly stops
+# being the thing it claims to be. \xHH would be shorter and is a bashism; this
+# file has to run under any sh.
+hex_to_octal() {
+	_tr_hx="$1"
+	_tr_out=""
+	while [ -n "$_tr_hx" ]; do
+		_tr_out="$_tr_out\\$(printf '%03o' $(( 0x${_tr_hx%"${_tr_hx#??}"} )))"
+		_tr_hx="${_tr_hx#??}"
+	done
+	printf '%s' "$_tr_out"
+}
+
 # ---------------------------------------------------------------------------
 # Path canonicalisation — the most security-relevant function in the backend,
 # because the result is a directory the runtime is installed into and exec'd
@@ -314,6 +351,206 @@ test_cpu_info_reads_every_architectures_spelling() {
 
 	assert_eq "" "$(sh_common 'fcc_cpu_info /nonexistent/cpuinfo')" \
 		"a missing cpuinfo yields nothing rather than an error"
+}
+
+test_cpu_dt_hz_reads_a_big_endian_property() {
+	setup_sandbox
+	# The device tree property is a big-endian 32-bit count of Hz. Nothing on
+	# the machine running these tests has one, so the parser is given fixtures
+	# — which is the only way to check the byte order at all, since getting it
+	# backwards produces a plausible-looking number rather than an error.
+	#
+	# 0x1dcd6500 is 500000000 Hz, the clock on a good many ARM routers.
+	_tr_dt="$SANDBOX/clock-frequency"
+	printf '\035\315\145\000' > "$_tr_dt"
+	assert_eq "500000000" "$(sh_common "fcc_cpu_dt_hz $_tr_dt")" \
+		"a big-endian clock-frequency is read as Hz"
+
+	# The same bytes read the other way round are 0x0065cd1d = 6671645 Hz.
+	# Asserting the number above already pins the byte order; this is the wrong
+	# answer, written down so that a future change to the decoder fails loudly
+	# here instead of quietly reporting a 6 MHz router.
+	assert_ne "6671645" "$(sh_common "fcc_cpu_dt_hz $_tr_dt")" \
+		"the bytes are not read little-endian"
+
+	# 1.2 GHz, which is 0x47868c00 — large enough that a decoder reading the
+	# property as a signed 32-bit value would go negative on the way in.
+	printf '\107\206\214\000' > "$SANDBOX/clock-frequency-12g"
+	assert_eq "1200000000" "$(sh_common "fcc_cpu_dt_hz $SANDBOX/clock-frequency-12g")" \
+		"a 1.2 GHz rate is read as a positive number"
+
+	# A zero property is the kernel saying it does not know, which is not a
+	# frequency and must not be shown as 0 MHz.
+	printf '\000\000\000\000' > "$SANDBOX/clock-frequency-zero"
+	assert_no "a zero clock-frequency yields nothing" \
+		sh_common "fcc_cpu_dt_hz $SANDBOX/clock-frequency-zero >/dev/null"
+
+	# A truncated or foreign file must be refused rather than fed to the
+	# arithmetic: `$(( 0x ))` is a syntax error in ash, and it would take the
+	# whole status script — and the page that reads it — down with it.
+	printf '\035\315' > "$SANDBOX/clock-frequency-short"
+	assert_no "a truncated property is refused" \
+		sh_common "fcc_cpu_dt_hz $SANDBOX/clock-frequency-short >/dev/null"
+
+	assert_no "a missing property is refused" \
+		sh_common "fcc_cpu_dt_hz $SANDBOX/nonexistent >/dev/null"
+	assert_no "an empty argument is refused" \
+		sh_common 'fcc_cpu_dt_hz "" >/dev/null'
+}
+
+test_hex_dump_uses_od_or_hexdump() {
+	setup_sandbox
+	printf '\035\315\145\000' > "$SANDBOX/four"
+	# OpenWrt's busybox has hexdump and no od at all, so on the routers this
+	# package is for, the hexdump branch is the only branch that ever runs. Both
+	# are asserted separately rather than once with both tools present, because a
+	# change that fixed one and broke the other would otherwise pass unnoticed on
+	# a developer machine, where od is always there to hide it.
+	assert_eq "1dcd6500" "$(sh_common_tools 'od tr' "fcc_hex_dump $SANDBOX/four")" \
+		"the od branch emits bare lowercase hex"
+	assert_eq "1dcd6500" "$(sh_common_tools 'hexdump tr' "fcc_hex_dump $SANDBOX/four")" \
+		"the hexdump branch emits the same string"
+	assert_eq "1dcd6500" "$(sh_common_tools 'od hexdump tr' "fcc_hex_dump $SANDBOX/four")" \
+		"od answers when both are present"
+
+	# Several files concatenate with nothing between them, which is what lets a
+	# whole OPP table be read in one process.
+	printf '\001\002' > "$SANDBOX/two"
+	assert_eq "1dcd65000102" \
+		"$(sh_common_tools 'od tr' "fcc_hex_dump $SANDBOX/four $SANDBOX/two")" \
+		"files are concatenated in order"
+	assert_eq "1dcd65000102" \
+		"$(sh_common_tools 'hexdump tr' "fcc_hex_dump $SANDBOX/four $SANDBOX/two")" \
+		"and the two tools agree on the concatenation"
+
+	assert_no "no argument is refused" sh_common_tools 'od tr' 'fcc_hex_dump >/dev/null'
+	assert_no "neither tool present is refused" \
+		sh_common_tools 'true' "fcc_hex_dump $SANDBOX/four >/dev/null"
+}
+
+# The Airoha EN7581 device tree as the kernel exposes it under
+# /sys/firmware/devicetree/base: fifteen OPPs on opp-table, and a second table
+# that carries opp-level and no opp-hz. The bytes are what dtc emits for
+# `opp-hz = /bits/ 64 <N>` — 64-bit big-endian, high word first — and the values
+# are the ones in target/linux/airoha/dts/an7581.dtsi.
+#   make_an7581_opp_table -> the directory holding it
+make_an7581_opp_table() {
+	_tr_d="$SANDBOX/dtbase"
+	rm -rf "$_tr_d"
+	for _tr_opp in \
+		000000001dcd6500:500000000 0000000020c85580:550000000 \
+		0000000023c34600:600000000 0000000026be3680:650000000 \
+		0000000029b92700:700000000 000000002cb41780:750000000 \
+		000000002faf0800:800000000 0000000032a9f880:850000000 \
+		0000000035a4e900:900000000 00000000389fd980:950000000 \
+		000000003b9aca00:1000000000 000000003e95ba80:1050000000 \
+		000000004190ab00:1100000000 00000000448b9b80:1150000000 \
+		0000000047868c00:1200000000
+	do
+		_tr_hz="${_tr_opp#*:}"
+		mkdir -p "$_tr_d/opp-table/opp-$_tr_hz"
+		printf "$(hex_to_octal "${_tr_opp%%:*}")" > "$_tr_d/opp-table/opp-$_tr_hz/opp-hz"
+	done
+	# The second table is matched by the opp-table* glob, and has no opp-hz at
+	# all, so it contributes nothing — which is the point of including it.
+	mkdir -p "$_tr_d/opp-table-cpu-smcc/opp0"
+	printf "$(hex_to_octal 00000000)" > "$_tr_d/opp-table-cpu-smcc/opp0/opp-level"
+	printf '%s' "$_tr_d"
+}
+
+test_cpu_dt_opp_hz_reads_the_an7581_table() {
+	setup_sandbox
+	_tr_dt="$(make_an7581_opp_table)"
+	assert_eq "1200000000" "$(sh_common "fcc_cpu_dt_opp_hz $_tr_dt")" \
+		"the highest opp-hz is the rate the CPU is specified at"
+
+	# The glob sorts by name, so opp-1000000000 is read before opp-1200000000 and
+	# the last value seen is 950000000, not the largest. A reader that took the
+	# last value instead of the maximum would answer that.
+	assert_ne "950000000" "$(sh_common "fcc_cpu_dt_opp_hz $_tr_dt")" \
+		"the answer is the maximum, not the last value read"
+
+	# This is the branch that runs on the hardware the fallback exists for: the
+	# busybox in OpenWrt 24.10.4 has no od, and neither does the one on a router.
+	assert_eq "1200000000" "$(sh_common_tools 'hexdump tr' "fcc_cpu_dt_opp_hz $_tr_dt")" \
+		"the table reads the same through hexdump"
+
+	# A rate that does not fit in 32 bits is not a CPU clock, and the arithmetic
+	# for one would be wider than a 32-bit router's shell is required to carry.
+	mkdir -p "$SANDBOX/dtwide/opp-table/opp-x"
+	printf "$(hex_to_octal 0000000147868c00)" > "$SANDBOX/dtwide/opp-table/opp-x/opp-hz"
+	assert_no "a value that needs its high word is refused" \
+		sh_common "fcc_cpu_dt_opp_hz $SANDBOX/dtwide >/dev/null"
+
+	# A truncated property would misalign every value after it, so the total
+	# length is checked before anything is parsed.
+	mkdir -p "$SANDBOX/dtshort/opp-table/opp-x"
+	printf "$(hex_to_octal 1dcd6500)" > "$SANDBOX/dtshort/opp-table/opp-x/opp-hz"
+	assert_no "a truncated opp-hz is refused" \
+		sh_common "fcc_cpu_dt_opp_hz $SANDBOX/dtshort >/dev/null"
+
+	# A zero rate is the kernel saying it does not know, which must not be shown
+	# as 0 MHz.
+	mkdir -p "$SANDBOX/dtzero/opp-table/opp-x"
+	printf "$(hex_to_octal 0000000000000000)" > "$SANDBOX/dtzero/opp-table/opp-x/opp-hz"
+	assert_no "a zero opp-hz is refused" \
+		sh_common "fcc_cpu_dt_opp_hz $SANDBOX/dtzero >/dev/null"
+
+	mkdir -p "$SANDBOX/dtempty"
+	assert_no "a device tree with no opp table is refused" \
+		sh_common "fcc_cpu_dt_opp_hz $SANDBOX/dtempty >/dev/null"
+	assert_no "a missing device tree is refused" \
+		sh_common "fcc_cpu_dt_opp_hz $SANDBOX/nonexistent >/dev/null"
+	assert_no "an empty argument is refused" \
+		sh_common 'fcc_cpu_dt_opp_hz "" >/dev/null'
+}
+
+test_status_falls_back_to_the_device_tree_for_the_cpu_rate() {
+	setup_sandbox
+	# The AN7581 case, end to end. OpenWrt 24.10 builds the EN7581 cpufreq
+	# driver but leaves CONFIG_CPUFREQ_DT off, and that driver's whole job is to
+	# register a cpufreq-dt platform device — so nothing binds, no policy is
+	# created, and neither sysfs layout exists. The page showed a dash on a
+	# router that was running perfectly well.
+	#
+	# An empty directory stands in for that sysfs and the fixture is the real
+	# AN7581 OPP table. This is the half the unit tests cannot reach: that
+	# status.sh gets as far as the fallback and that the number arrives in the
+	# document the page reads.
+	_tr_dt="$(make_an7581_opp_table)"
+	mkdir -p "$SANDBOX/empty-sys"
+	_tr_run() {
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_SYS_CPU="$1" FCC_DT_BASE="$2" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":'
+	}
+
+	_tr_out="$(_tr_run "$SANDBOX/empty-sys" "$_tr_dt")"
+	assert_contains "$_tr_out" '"cpu_mhz": 1200' \
+		"the device tree answers when sysfs has no rate"
+	assert_contains "$_tr_out" '"cpu_mhz_max": 1200' \
+		"and the nominal rate is the best answer to the maximum too"
+
+	# With cpufreq present it wins: that is the rate the CPU is running at now,
+	# not the rate it is specified at, and the fallback must never displace it.
+	mkdir -p "$SANDBOX/sys/cpu0/cpufreq"
+	printf '2400000\n' > "$SANDBOX/sys/cpu0/cpufreq/scaling_cur_freq"
+	printf '2600000\n' > "$SANDBOX/sys/cpu0/cpufreq/cpuinfo_max_freq"
+	_tr_out="$(_tr_run "$SANDBOX/sys" "$_tr_dt")"
+	assert_contains "$_tr_out" '"cpu_mhz": 2400' \
+		"cpufreq is preferred where the kernel has it"
+	assert_contains "$_tr_out" '"cpu_mhz_max": 2600' \
+		"and its own maximum comes with it"
+
+	# A board with neither reports no maximum, rather than a zero. Section 44:
+	# an absent reading is not a reading of nothing. cpu_mhz is not asserted
+	# here because it has a third source — /proc/cpuinfo reports a rate on x86,
+	# and this machine is an x86 one — so the only field with nowhere left to
+	# look is the maximum.
+	_tr_out="$(_tr_run "$SANDBOX/empty-sys" "$SANDBOX/nonexistent")"
+	assert_contains "$_tr_out" '"cpu_mhz_max": null' \
+		"a board with no rate anywhere reports no maximum"
 }
 
 test_status_document_reports_the_cpu() {

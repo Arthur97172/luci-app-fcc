@@ -123,6 +123,21 @@ smoke_expect() {
 	fi
 }
 
+smoke_check_fails() {
+	# smoke_check_fails <description> <actual-rc>
+	#
+	# For a command asserted to fail, where the code is the shell's business
+	# rather than ours: busybox's ash answers `command -v` for a utility it
+	# cannot find with 127, a desktop shell answers 1, and the question being
+	# asked is only whether the utility was found.
+	_scf_d="$1"
+	if [ "$2" -ne 0 ] 2>/dev/null; then
+		smoke_ok "$_scf_d"
+	else
+		smoke_bad "$_scf_d (expected a non-zero exit, got $2)"
+	fi
+}
+
 # ---------------------------------------------------------------------------
 # The container
 # ---------------------------------------------------------------------------
@@ -531,6 +546,54 @@ docker exec "$SMOKE_NAME" rm -rf /opt/fcc >/dev/null 2>&1
 # branch works. The first two checks say so out loud, so that a rootfs which
 # gains od is noticed rather than quietly changing what is under test.
 # ---------------------------------------------------------------------------
+
+smoke_note "the CPU rate on a board with no cpufreq"
+
+_sm_rc=0
+smoke_sh 'command -v od >/dev/null 2>&1' || _sm_rc=$?
+smoke_check_fails "this rootfs has no od, so the hexdump branch is what runs" "$_sm_rc"
+_sm_rc=0
+smoke_sh 'command -v hexdump >/dev/null 2>&1' || _sm_rc=$?
+smoke_check "hexdump, the applet busybox ships instead, is there" 0 "$_sm_rc"
+
+# Three OPPs from the AN7581 table, as dtc encodes `opp-hz = /bits/ 64 <N>`:
+# 64-bit big-endian, high word first. 500 MHz, 1 GHz and 1.2 GHz.
+#
+# Three rather than one, because the glob sorts by name — so opp-1000000000 and
+# opp-1200000000 are read before opp-500000000 and the last value seen is the
+# smallest. A reader that took the last value instead of the maximum, or that
+# stopped after the first file, answers something other than 1.2 GHz here.
+_sm_dt="$SMOKE_TMP/dt"
+rm -rf "$_sm_dt"
+for _sm_opp in 500000000 1000000000 1200000000; do
+	mkdir -p "$_sm_dt/opp-table/opp-$_sm_opp"
+done
+printf '\000\000\000\000\035\315\145\000' > "$_sm_dt/opp-table/opp-500000000/opp-hz"
+printf '\000\000\000\000\073\232\312\000' > "$_sm_dt/opp-table/opp-1000000000/opp-hz"
+printf '\000\000\000\000\107\206\214\000' > "$_sm_dt/opp-table/opp-1200000000/opp-hz"
+
+# The tar has to be built with the OPP tree at its root, so the paths land
+# directly under the device tree base.
+tar -C "$_sm_dt" -cf "$SMOKE_TMP/dt.tar" .
+_sm_rc=0
+docker exec -i "$SMOKE_NAME" sh -c '
+	mount -t tmpfs none /sys || exit 1
+	mkdir -p /sys/devices/system/cpu /sys/firmware/devicetree/base
+	tar -C /sys/firmware/devicetree/base -xf -
+	[ -e /sys/devices/system/cpu/cpu0/cpufreq ] && exit 1
+	[ -e /sys/devices/system/cpu/cpufreq/policy0 ] && exit 1
+	exit 0
+' < "$SMOKE_TMP/dt.tar" || _sm_rc=$?
+smoke_check "a board with no cpufreq anywhere and an OPP table in its device tree" 0 "$_sm_rc"
+
+_sm_rate="$(smoke_out '. /usr/libexec/fcc/common.sh; fcc_cpu_dt_opp_hz /sys/firmware/devicetree/base')"
+smoke_check "the highest opp-hz reads through busybox's hexdump" 1200000000 "$_sm_rate"
+
+_sm_rate="$(smoke_out 'FCC_SYS_CPU=/sys/devices/system/cpu FCC_DT_BASE=/sys/firmware/devicetree/base \
+	sh /usr/libexec/fcc/status.sh' | sed -n 's/.*"cpu_mhz": \([^,]*\).*/\1/p')"
+smoke_check "and status.sh reports it as the CPU's rate" 1200 "$_sm_rate"
+
+docker exec "$SMOKE_NAME" umount /sys >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
 # The translation, which ships inside the package rather than beside it

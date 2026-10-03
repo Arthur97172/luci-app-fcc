@@ -164,11 +164,21 @@ esac
 
 # cpufreq, where the kernel has it, answers better than /proc/cpuinfo: it is
 # the rate the CPU is running at now rather than a nominal one.
+#
+# The sysfs layout moved. Until Linux 5.6 the attributes sat under
+# cpu0/cpufreq; the cpufreq core now exposes one directory per policy, so an
+# ARM router on a current kernel has cpufreq/policy0 and no cpu0/cpufreq at
+# all. Both are tried. Current-rate attributes come first in each pair — a rate
+# being read right now beats a maximum the CPU may never be asked to reach.
+_cpu_sys="$(fcc_sys_cpu)"
 _cpu_khz=""
 for _cpu_f in \
-	/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq \
-	/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq \
-	/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq
+	"$_cpu_sys/cpu0/cpufreq/scaling_cur_freq" \
+	"$_cpu_sys/cpu0/cpufreq/cpuinfo_cur_freq" \
+	"$_cpu_sys/cpufreq/policy0/scaling_cur_freq" \
+	"$_cpu_sys/cpufreq/policy0/cpuinfo_cur_freq" \
+	"$_cpu_sys/cpu0/cpufreq/cpuinfo_max_freq" \
+	"$_cpu_sys/cpufreq/policy0/cpuinfo_max_freq"
 do
 	[ -r "$_cpu_f" ] || continue
 	IFS= read -r _cpu_khz < "$_cpu_f" 2>/dev/null || :
@@ -177,15 +187,65 @@ done
 case "$_cpu_khz" in
 	''|*[!0-9]*) _cpu_khz="" ;;
 esac
+
+# Device tree, when sysfs has nothing to say.
+#
+# This is the rate the kernel was told the CPU runs at. On a board with no
+# cpufreq policy — either because the kernel has no driver for it or, as on the
+# Airoha EN7581 under OpenWrt 24.10, because the driver that would bind is not
+# built — it is the only clock figure that exists anywhere on the system, and
+# without it the page shows a dash on hardware that is running perfectly well.
+#
+# It is a nominal rate, not a current one, and that difference is real: this is
+# what the CPU is specified at, not what it is doing this second. It is used
+# only after every cpufreq attribute has been tried, so a board that can answer
+# the better question is never given the worse answer.
+#
+# Two shapes, because the device tree states this two ways and the boards that
+# need the fallback use the second. `clock-frequency` is a big-endian 32-bit
+# count of Hz, read as bytes — `read` would hand back four unprintable
+# characters; cpu0/of_node is a symlink to the CPU's own device tree node, which
+# avoids guessing the unit address (`cpu@0` on one SoC, `cpu@000` on the next).
+# An arm64 board instead carries an operating-points-v2 table and no
+# clock-frequency at all, which is what fcc_cpu_dt_opp_hz reads.
+if [ -z "$_cpu_khz" ]; then
+	for _cpu_f in \
+		"$_cpu_sys/cpu0/of_node/clock-frequency" \
+		"$(fcc_dt_base)/cpus/cpu@0/clock-frequency"
+	do
+		_cpu_hz="$(fcc_cpu_dt_hz "$_cpu_f")" || continue
+		_cpu_khz=$(( _cpu_hz / 1000 ))
+		[ "$_cpu_khz" -gt 0 ] && break
+		_cpu_khz=""
+	done
+fi
+if [ -z "$_cpu_khz" ]; then
+	_cpu_hz="$(fcc_cpu_dt_opp_hz "$(fcc_dt_base)")" || _cpu_hz=""
+	[ -n "$_cpu_hz" ] && _cpu_khz=$(( _cpu_hz / 1000 ))
+fi
+case "$_cpu_khz" in
+	''|*[!0-9]*) _cpu_khz="" ;;
+esac
 [ -n "$_cpu_khz" ] && cpu_mhz=$(( _cpu_khz / 1000 ))
 
+# The maximum, from the same two layouts. When the current rate came from the
+# device tree there is no separate maximum to find, and the nominal clock is
+# the best available answer to that question too.
 _cpu_khz_max=""
-if [ -r /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq ]; then
-	IFS= read -r _cpu_khz_max < /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || :
-fi
+for _cpu_f in \
+	"$_cpu_sys/cpu0/cpufreq/cpuinfo_max_freq" \
+	"$_cpu_sys/cpufreq/policy0/cpuinfo_max_freq" \
+	"$_cpu_sys/cpu0/cpufreq/scaling_max_freq" \
+	"$_cpu_sys/cpufreq/policy0/scaling_max_freq"
+do
+	[ -r "$_cpu_f" ] || continue
+	IFS= read -r _cpu_khz_max < "$_cpu_f" 2>/dev/null || :
+	[ -n "$_cpu_khz_max" ] && break
+done
 case "$_cpu_khz_max" in
 	''|*[!0-9]*) _cpu_khz_max="" ;;
 esac
+[ -z "$_cpu_khz_max" ] && _cpu_khz_max="$_cpu_khz"
 [ -n "$_cpu_khz_max" ] && cpu_mhz_max=$(( _cpu_khz_max / 1000 ))
 
 # Build the process maps ONCE (no per-agent forks).
