@@ -111,40 +111,58 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 	font-size: .85em;
 }
 
-/* Agent picker (DESIGN_SPEC.md section 3.6.5). A grid rather than a list, so a
- * dozen agents do not become a column of one-word rows on a wide screen; it
- * collapses to a single column on a phone. */
-.fcc-agent-picker {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(16em, 1fr));
-	gap: .25em .9em;
-	margin: .4em 0;
+/* Agent selection (DESIGN_SPEC.md section 3.6.5) lives in the agent table
+ * itself: the tick box is the first column, so the size and memory floor that
+ * decide the choice sit on the same row as the box rather than in a second
+ * list repeating every agent name. */
+.fcc-pick-head {
+	width: 2.2em;
+	padding-right: 0;
 }
 
-.fcc-pick {
-	display: flex;
-	align-items: baseline;
-	gap: .45em;
-	padding: .2em .3em;
-	border-radius: 3px;
+.fcc-pick-cell {
+	width: 2.2em;
+	padding-right: 0;
+	text-align: center;
+}
+
+/* The label wraps only the box, so clicking anywhere in the cell toggles it
+ * without the label stretching across the table and stealing the row. */
+.fcc-pick-only {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	padding: .35em 0;
 	cursor: pointer;
 }
 
-.fcc-pick:hover { background: rgba(127, 127, 127, .12); }
-.fcc-pick input { flex: 0 0 auto; margin: 0; }
-.fcc-pick-name { flex: 0 1 auto; }
+.fcc-pick-box { margin: 0; }
 
-.fcc-pick-meta {
-	flex: 1 1 auto;
-	font-size: .85em;
-	white-space: nowrap;
+/* A header cell that names a control which has no visible text needs the name
+ * for screen readers and nothing on screen. */
+.fcc-sr-only {
+	position: absolute;
+	width: 1px; height: 1px;
+	margin: -1px; padding: 0;
 	overflow: hidden;
-	text-overflow: ellipsis;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
 }
 
-@media screen and (max-width: 480px) {
-	.fcc-agent-picker { grid-template-columns: 1fr; }
-	.fcc-pick-meta { white-space: normal; }
+/* Requirements are short and read as one unit ("about 140 MB · needs 180 MB
+ * RAM"); the existing .fcc-nowrap above already keeps them on one line. */
+
+/* On a phone the seven columns do not fit, and the two that carry no decision
+ * are the ones to drop: the launcher name is implied by the agent, and the
+ * version is on the Basic Information page. The tick box, the name, the size
+ * and the action stay. */
+@media screen and (max-width: 600px) {
+	#fcc-agent-table th:nth-child(3),
+	#fcc-agent-table td:nth-child(3),
+	#fcc-agent-table th:nth-child(4),
+	#fcc-agent-table td:nth-child(4) { display: none; }
 }
 
 .fcc-dot {

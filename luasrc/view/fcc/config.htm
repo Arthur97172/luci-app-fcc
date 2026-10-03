@@ -133,27 +133,31 @@
 			<h4><%:Agents%></h4>
 
 			<p class="fcc-muted">
-				<%:Choose which agents to install. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unchecked rather than failing the install.%>
+				<%:Tick the agents to install, then install the runtime. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unticked rather than failing the install.%>
 			</p>
-			<div id="fcc-install-agents" class="fcc-agent-picker"><%:Loading…%></div>
-			<div class="fcc-toolbar">
-				<button id="fcc-install-agents-defaults" class="cbi-button"><%:Reset to recommended%></button>
-			</div>
 
+			<!-- The table is the picker (section 3.6.5): one row per agent
+			     carrying its size and memory floor beside a tick box, instead of
+			     a checkbox list repeating every name above the table. -->
 			<table class="fcc-table" id="fcc-agent-table">
 				<thead>
 					<tr>
+						<th class="fcc-pick-head"><span class="fcc-sr-only"><%:Install%></span></th>
 						<th><%:Agent%></th>
 						<th><%:Launcher%></th>
 						<th><%:Version%></th>
+						<th><%:Size / RAM%></th>
 						<th><%:State%></th>
 						<th class="fcc-right"><%:Actions%></th>
 					</tr>
 				</thead>
-				<tbody></tbody>
+				<tbody>
+					<tr><td colspan="7" class="fcc-muted"><%:Loading…%></td></tr>
+				</tbody>
 			</table>
 
 			<div class="fcc-toolbar">
+				<button id="fcc-install-agents-defaults" class="cbi-button"><%:Reset to recommended%></button>
 				<button id="fcc-agent-refresh" class="cbi-button"><%:Re-detect versions%></button>
 			</div>
 			<div id="fcc-agent-status"></div>

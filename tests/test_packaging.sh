@@ -239,6 +239,33 @@ test_no_separate_translation_package() {
 }
 
 # ---------------------------------------------------------------------------
+# The agent table is also the agent picker
+#
+# Section 3.6.5's selection used to be a second checkbox list above the table,
+# repeating every agent name beside the size and memory floor that decide the
+# choice. It is now the table's own first column, so each agent is named once
+# and the two lists cannot disagree. There is no DOM harness here, so the
+# invariant is pinned against the markup and the renderer that fills it.
+# ---------------------------------------------------------------------------
+
+test_agent_picker_is_the_agent_table() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-agent-table"' "the view has the agent table"
+	assert_not_contains "$(cat "$_ts_view")" 'fcc-agent-picker' "the separate picker is gone from the view"
+	assert_not_contains "$(cat "$_ts_js")" 'fcc-agent-picker' "no script still renders a separate picker"
+	assert_not_contains "$(cat "$_ts_js")" 'renderAgentPicker' "the old picker renderer is gone"
+
+	# The header and the renderer must agree on the column count, or every row
+	# after the tick box lands under the wrong heading.
+	# `<th[ >]`, not `<th`: the latter also counts the `<thead>` element.
+	_ts_cols="$(sed -n '/id="fcc-agent-table"/,/<\/thead>/p' "$_ts_view" | grep -c '<th[ >]')"
+	assert_eq "7" "$_ts_cols" "the table has seven columns including the tick box"
+	assert_contains "$(cat "$_ts_js")" "colspan: '7'" "the placeholder row spans the same seven"
+}
+
+# ---------------------------------------------------------------------------
 # ACL
 # ---------------------------------------------------------------------------
 

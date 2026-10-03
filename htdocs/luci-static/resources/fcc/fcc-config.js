@@ -15,11 +15,17 @@
 	var jobTimer = null;
 	var jobStart = 0;
 
-	/* The agent picker's last server-rendered state, so "Reset to
-	 * recommended" can redraw without another round trip. */
+	/* The agent table is also the picker (section 3.6.5): one row per agent
+	 * carrying its size and memory floor, with a box to tick, rather than a
+	 * separate checkbox list repeating every name above it.
+	 *
+	 * The selection is held here rather than read back out of the DOM, because
+	 * the table is redrawn whenever a job finishes and a redraw must not
+	 * quietly undo the boxes the user ticked. */
+	var agentSelection = {};
 	var agentRegistry = {};
 	var agentRecommended = [];
-	var agentPickerReady = false;
+	var agentReady = false;
 
 	/* ------------------------------------------------------------- settings */
 
@@ -98,35 +104,36 @@
 
 	/* --------------------------------------------------------- server state */
 
-	function loadServer() {
-		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
-			var box = FCC.$('#fcc-server-state');
-			var s = d.server || {};
-			var f = d.fcc || {};
-			box.innerHTML = '';
-			box.appendChild(FCC.el('div', {}, [
-				FCC.el('span', { class: 'fcc-dot ' + (s.running ? 'on' : 'off') }),
-				FCC.el('strong', {
-					text: s.running ? FCC._('Running') : FCC._('Stopped')
-				})
-			]));
-			var rows = [
-				[FCC._('Version'), f.version || '—'],
-				[FCC._('PID'), s.running ? String(s.pid) : '—'],
-				[FCC._('Uptime'), s.running ? FCC.fmtDuration(s.uptime) : '—'],
-				[FCC._('Memory (RSS)'), s.running ? FCC.fmtKB(s.memory_rss_kb) : '—'],
-				[FCC._('Listening on'), (s.bind || '—') + ':' + (s.port || '—')]
-			];
-			box.appendChild(FCC.el('table', { class: 'fcc-table' },
-				rows.map(function (r) {
-					return FCC.el('tr', {}, [
-						FCC.el('th', { text: r[0] }),
-						FCC.el('td', { class: 'fcc-mono', text: r[1] })
-					]);
-				})
-			));
-			return d;
-		});
+	/* Every panel on this page is filled from the one batched status call, so
+	 * the renderers take that document rather than each fetching their own —
+	 * three panels polling separately would cost the router three processes per
+	 * refresh for one answer. */
+	function renderServer(d) {
+		var box = FCC.$('#fcc-server-state');
+		var s = d.server || {};
+		var f = d.fcc || {};
+		box.innerHTML = '';
+		box.appendChild(FCC.el('div', {}, [
+			FCC.el('span', { class: 'fcc-dot ' + (s.running ? 'on' : 'off') }),
+			FCC.el('strong', {
+				text: s.running ? FCC._('Running') : FCC._('Stopped')
+			})
+		]));
+		var rows = [
+			[FCC._('Version'), f.version || '—'],
+			[FCC._('PID'), s.running ? String(s.pid) : '—'],
+			[FCC._('Uptime'), s.running ? FCC.fmtDuration(s.uptime) : '—'],
+			[FCC._('Memory (RSS)'), s.running ? FCC.fmtKB(s.memory_rss_kb) : '—'],
+			[FCC._('Listening on'), (s.bind || '—') + ':' + (s.port || '—')]
+		];
+		box.appendChild(FCC.el('table', { class: 'fcc-table' },
+			rows.map(function (r) {
+				return FCC.el('tr', {}, [
+					FCC.el('th', { text: r[0] }),
+					FCC.el('td', { class: 'fcc-mono', text: r[1] })
+				]);
+			})
+		));
 	}
 
 	/* Section 12: stopping the server has to say so before it happens, because
@@ -160,7 +167,7 @@
 				} else {
 					FCC.notice(FCC.$('#fcc-server-status'), 'ok', FCC._('Done.'));
 				}
-				setTimeout(function () { loadServer(); refreshRuntime(); }, 1500);
+				setTimeout(refreshAll, 1500);
 			});
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-server-status'), 'fail', err.message);
@@ -169,48 +176,119 @@
 
 	/* ------------------------------------------------------------- agents */
 
-	function loadAgents() {
-		return FCC.api('agents', {}, { method: 'GET' }).then(function (data) {
-			var tbody = FCC.$('#fcc-agent-table tbody');
-			tbody.innerHTML = '';
-			Object.keys(data).forEach(function (id) {
-				var a = data[id];
-				var state = a.running
-					? FCC.el('span', { class: 'fcc-badge ok', text: FCC._('running') })
-					: (a.installed
-						? FCC.el('span', { class: 'fcc-badge', text: FCC._('installed') })
-						: FCC.el('span', { class: 'fcc-badge off', text: FCC._('not installed') }));
+	/* Section 3.6.5's two figures, as one cell.
+	 *
+	 * They are a property of the agent, not a measurement of this device — the
+	 * recommendation is the guess about what fits — so they read as
+	 * requirements. An agent with neither recorded shows a dash rather than a
+	 * zero. */
+	function requirementText(a) {
+		var bits = [];
+		if (a.approx_size_mb) {
+			bits.push(FCC._('about %d MB').replace('%d', a.approx_size_mb));
+		}
+		if (a.min_ram_mb) {
+			bits.push(FCC._('needs %d MB RAM').replace('%d', a.min_ram_mb));
+		}
+		return bits.length ? bits.join(' · ') : '—';
+	}
 
-				var action = a.installed
-					? FCC.el('button', {
-						class: 'cbi-button cbi-button-remove',
-						text: FCC._('Remove'),
-						disabled: a.running ? 'disabled' : null,
-						title: a.running ? FCC._('Close its session first.') : '',
-						onclick: function () { agentOp('agent_remove', id); }
-					})
-					: FCC.el('button', {
-						class: 'cbi-button cbi-button-apply',
-						text: FCC._('Install'),
-						onclick: function () { agentOp('agent_install', id); }
-					});
+	/* One row per agent, and the row is the picker too: the box on the left is
+	 * what Install/reinstall acts on, and the size and memory floor that used to
+	 * be repeated in a second list above are columns here.
+	 *
+	 * Everything comes from the batched status document (section 3.8), which
+	 * carries the registry metadata as well as the live state. Asking the agents
+	 * relay for the same list would be a second process per refresh for a
+	 * subset of the same answer.
+	 *
+	 * The list of agents is the status document's, not a cached one: an agent
+	 * added to the registry must appear on the next refresh without a reload. */
+	function renderAgents(agents) {
+		var tbody = FCC.$('#fcc-agent-table tbody');
+		if (!tbody) { return; }
 
-				tbody.appendChild(FCC.el('tr', {}, [
-					FCC.el('td', { text: a.name }),
-					FCC.el('td', { class: 'fcc-mono', text: a.command }),
-					/* Section 44: an installed agent whose version could not be
-					 * read shows "Unknown", never a guessed number. The reason
-					 * goes in the tooltip so the cell stays one word wide. */
-					FCC.el('td', {
-						class: 'fcc-mono',
-						text: a.version || (a.version_error ? FCC._('Unknown') : '—'),
-						title: a.version_error || ''
-					}),
-					FCC.el('td', {}, [state]),
-					FCC.el('td', { class: 'fcc-right' }, [action])
-				]));
-			});
+		agentRegistry = agents || {};
+		var ids = Object.keys(agentRegistry).sort(function (a, b) {
+			var an = String((agentRegistry[a] || {}).name || a).toLowerCase();
+			var bn = String((agentRegistry[b] || {}).name || b).toLowerCase();
+			return an < bn ? -1 : (an > bn ? 1 : 0);
 		});
+
+		tbody.innerHTML = '';
+		if (!ids.length) {
+			tbody.appendChild(FCC.el('tr', {}, [
+				FCC.el('td', {
+					colspan: '7', class: 'fcc-muted',
+					text: FCC._('No agents are registered.')
+				})
+			]));
+			agentReady = true;
+			return;
+		}
+
+		var rec = {};
+		agentRecommended.forEach(function (id) { rec[id] = true; });
+		ids.forEach(function (id) {
+			if (!(id in agentSelection)) { agentSelection[id] = !!rec[id]; }
+		});
+
+		ids.forEach(function (id) {
+			var a = agentRegistry[id] || {};
+
+			var box = FCC.el('input', {
+				type: 'checkbox', value: id, id: 'fcc-pick-' + id, class: 'fcc-pick-box'
+			});
+			/* Set the property, not the attribute: setAttribute('checked', false)
+			 * still checks the box. */
+			box.checked = !!agentSelection[id];
+			box.addEventListener('change', function () { agentSelection[id] = box.checked; });
+
+			var state = a.running
+				? FCC.el('span', { class: 'fcc-badge ok', text: FCC._('running') })
+				: (a.installed
+					? FCC.el('span', { class: 'fcc-badge', text: FCC._('installed') })
+					: FCC.el('span', { class: 'fcc-badge off', text: FCC._('not installed') }));
+
+			var action = a.installed
+				? FCC.el('button', {
+					class: 'cbi-button cbi-button-remove',
+					text: FCC._('Remove'),
+					disabled: a.running ? 'disabled' : null,
+					title: a.running ? FCC._('Close its session first.') : '',
+					onclick: function () { agentOp('agent_remove', id); }
+				})
+				: FCC.el('button', {
+					class: 'cbi-button cbi-button-apply',
+					text: FCC._('Install'),
+					onclick: function () { agentOp('agent_install', id); }
+				});
+
+			tbody.appendChild(FCC.el('tr', {}, [
+				/* The label is what makes the whole cell clickable; the box keeps
+				 * its own id so the header and the row still name the same
+				 * control for anything reading the DOM. */
+				FCC.el('td', { class: 'fcc-pick-cell' }, [
+					FCC.el('label', { class: 'fcc-pick-only', for: 'fcc-pick-' + id }, [box])
+				]),
+				FCC.el('td', { text: a.name }),
+				FCC.el('td', { class: 'fcc-mono', text: a.command }),
+				/* Section 44: an installed agent whose version could not be read
+				 * shows "Unknown" and says why in the tooltip, never a guessed
+				 * number. An agent that simply is not installed shows a dash:
+				 * the two cases are different and the page keeps them apart. */
+				FCC.el('td', {
+					class: 'fcc-mono',
+					text: a.version || (a.version_error ? FCC._('Unknown') : '—'),
+					title: a.version_error || ''
+				}),
+				FCC.el('td', { class: 'fcc-muted fcc-nowrap', text: requirementText(a) }),
+				FCC.el('td', {}, [state]),
+				FCC.el('td', { class: 'fcc-right' }, [action])
+			]));
+		});
+
+		agentReady = true;
 	}
 
 	function agentOp(action, id) {
@@ -226,7 +304,7 @@
 		FCC.notice(FCC.$('#fcc-agent-status'), '', FCC._('Detecting versions…'));
 		FCC.api('agent_versions', {}, { method: 'POST' }).then(function () {
 			FCC.notice(FCC.$('#fcc-agent-status'), 'ok', FCC._('Versions updated.'));
-			loadAgents();
+			refreshAll().catch(function () {});
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-agent-status'), 'fail', err.message);
 		});
@@ -234,22 +312,20 @@
 
 	/* -------------------------------------------------------- runtime + jobs */
 
-	function refreshRuntime() {
-		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
-			var box = FCC.$('#fcc-runtime-state');
-			box.innerHTML = '';
-			var f = d.fcc || {};
-			box.appendChild(FCC.el('div', {}, [
-				FCC.el('span', { class: 'fcc-dot ' + (f.installed ? 'on' : 'off') }),
-				FCC.el('strong', {
-					text: f.installed ? FCC._('Installed') : FCC._('Not installed')
-				}),
-				FCC.el('span', {
-					class: 'fcc-muted',
-					text: f.installed ? '  v' + (f.version || '?') : ''
-				})
-			]));
-		});
+	function renderRuntime(d) {
+		var box = FCC.$('#fcc-runtime-state');
+		box.innerHTML = '';
+		var f = d.fcc || {};
+		box.appendChild(FCC.el('div', {}, [
+			FCC.el('span', { class: 'fcc-dot ' + (f.installed ? 'on' : 'off') }),
+			FCC.el('strong', {
+				text: f.installed ? FCC._('Installed') : FCC._('Not installed')
+			}),
+			FCC.el('span', {
+				class: 'fcc-muted',
+				text: f.installed ? '  v' + (f.version || '?') : ''
+			})
+		]));
 	}
 
 	/* ------------------------------------------------------ agent selection */
@@ -265,88 +341,43 @@
 	 * user has unchecked everything. */
 
 	function selectedAgentIds() {
-		var ids = [];
-		Array.prototype.forEach.call(
-			document.querySelectorAll('#fcc-install-agents input[type="checkbox"]'),
-			function (b) { if (b.checked) { ids.push(b.value); } }
-		);
-		return ids;
+		return Object.keys(agentSelection).filter(function (id) {
+			return agentSelection[id];
+		});
 	}
 
-	function renderAgentPicker(agents, recommended) {
-		var box = FCC.$('#fcc-install-agents');
-		if (!box) { return; }
+	/* Reset to recommended. The whole map is replaced, so an agent the user
+	 * unticked comes back and one the registry no longer lists goes away. */
+	function applyRecommended() {
+		agentSelection = {};
+		agentRecommended.forEach(function (id) { agentSelection[id] = true; });
+		renderAgents(agentRegistry);
+	}
 
-		agentRegistry = agents || {};
-		agentRecommended = recommended || [];
-		agentPickerReady = true;
-
-		var rec = {};
-		agentRecommended.forEach(function (id) { rec[id] = true; });
-
-		box.innerHTML = '';
-		var ids = Object.keys(agentRegistry).sort(function (a, b) {
-			var an = String((agentRegistry[a] || {}).name || a).toLowerCase();
-			var bn = String((agentRegistry[b] || {}).name || b).toLowerCase();
-			return an < bn ? -1 : (an > bn ? 1 : 0);
-		});
-		if (!ids.length) {
-			box.appendChild(FCC.el('div', {
-				class: 'fcc-muted', text: FCC._('No agents are registered.')
-			}));
-			return;
+	/* The recommended set, computed against the budget the status document has
+	 * already reported. Reading /proc and df again here would make two sources
+	 * for "how much memory is there", and they would eventually disagree. */
+	function loadRecommended(sys) {
+		var s = sys || {};
+		var params = {};
+		if (s.memory_total_kb) {
+			params.ram_mb = Math.floor(s.memory_total_kb / 1024);
+		}
+		if (s.storage_free_bytes) {
+			params.free_mb = Math.floor(s.storage_free_bytes / 1048576);
 		}
 
-		ids.forEach(function (id) {
-			var a = agentRegistry[id] || {};
-			var input = FCC.el('input', { type: 'checkbox', value: id, id: 'fcc-pick-' + id });
-			/* Set the property, not the attribute: setAttribute('checked', false)
-			 * still checks the box. */
-			input.checked = !!rec[id];
-
-			var bits = [];
-			if (a.approx_size_mb) {
-				bits.push(FCC._('about %d MB').replace('%d', a.approx_size_mb));
-			}
-			if (a.min_ram_mb) {
-				bits.push(FCC._('needs %d MB RAM').replace('%d', a.min_ram_mb));
-			}
-
-			box.appendChild(FCC.el('label', { class: 'fcc-pick', for: 'fcc-pick-' + id }, [
-				input,
-				FCC.el('span', { class: 'fcc-pick-name', text: a.name || id }),
-				bits.length
-					? FCC.el('span', { class: 'fcc-muted fcc-pick-meta', text: bits.join(' \u00b7 ') })
-					: null
-			]));
+		/* If the policy endpoint is unreachable, fall back to the registry's own
+		 * default flags rather than leaving every box unticked — an install must
+		 * not be blocked by a nicety. */
+		var fallback = Object.keys(agentRegistry).filter(function (id) {
+			return agentRegistry[id] && agentRegistry[id].default;
 		});
-	}
 
-	function loadAgentPicker() {
-		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
-			var sys = (d && d.system) || {};
-			var reg = (d && d.agents) || {};
-
-			var params = {};
-			if (sys.memory_total_kb) {
-				params.ram_mb = Math.floor(sys.memory_total_kb / 1024);
-			}
-			if (sys.storage_free_bytes) {
-				params.free_mb = Math.floor(sys.storage_free_bytes / 1048576);
-			}
-
-			/* If the policy endpoint is unreachable, fall back to the registry's
-			 * own default flags rather than leaving the panel stuck on
-			 * "Loading…" — an install must not be blocked by a nicety. */
-			var fallback = Object.keys(reg).filter(function (id) {
-				return reg[id] && reg[id].default;
-			});
-
-			return FCC.api('agent_defaults', params, { method: 'GET' })
-				.then(function (r) { return (r && r.ids) || fallback; })
-				.catch(function () { return fallback; })
-				.then(function (ids) { renderAgentPicker(reg, ids); });
-		});
+		return FCC.api('agent_defaults', params, { method: 'GET' })
+			.then(function (r) { return (r && r.ids) || fallback; })
+			.catch(function () { return fallback; })
+			.then(function (ids) { agentRecommended = ids; });
 	}
 
 	function startJobWatch(lock, log) {
@@ -433,9 +464,28 @@
 	/* ---------------------------------------------------------------- init */
 
 	function refreshAll() {
-		loadServer().catch(function () {});
-		refreshRuntime().catch(function () {});
-		loadAgents().catch(function () {});
+		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
+			renderServer(d);
+			renderRuntime(d);
+			renderAgents(d.agents);
+			return d;
+		});
+	}
+
+	/* The first paint has one ordering requirement the later refreshes do not:
+	 * the recommended set must be known before the table is drawn, because the
+	 * table is where the tick boxes live. So the status call comes first, the
+	 * recommendation is computed from the budget it reported, and the table is
+	 * drawn once — rather than drawn unticked and immediately redrawn. */
+	function firstPaint() {
+		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
+			renderServer(d);
+			renderRuntime(d);
+			agentRegistry = d.agents || {};
+			return loadRecommended(d.system);
+		}).then(function () {
+			renderAgents(agentRegistry);
+		});
 	}
 
 	function init() {
@@ -450,7 +500,13 @@
 
 		FCC.$('#fcc-runtime-install').addEventListener('click', function () {
 			var params = {};
-			if (agentPickerReady) { params.agents = selectedAgentIds().join(','); }
+			/* Only send the selection once the table has been drawn. Before
+			 * that the map is empty because nothing has been shown to the user
+			 * yet, and an empty `agents` field does not mean "no opinion" — it
+			 * means "install none" (section 3.6.5). Leaving the field off lets
+			 * the backend apply its own defaults, which is what an install
+			 * pressed before the page finished loading should do. */
+			if (agentReady) { params.agents = selectedAgentIds().join(','); }
 			runJobAction('install_runtime', params, 'install', 'fcc-runtime.log');
 		});
 		FCC.$('#fcc-runtime-update').addEventListener('click', function () {
@@ -473,9 +529,7 @@
 			runJobAction('uninstall_runtime', { purge: 1 }, 'install', 'fcc-runtime.log');
 		});
 
-		FCC.$('#fcc-install-agents-defaults').addEventListener('click', function () {
-			renderAgentPicker(agentRegistry, agentRecommended);
-		});
+		FCC.$('#fcc-install-agents-defaults').addEventListener('click', applyRecommended);
 
 		FCC.$('#fcc-agent-refresh').addEventListener('click', refreshVersions);
 		FCC.$('#fcc-doctor-run').addEventListener('click', runDoctor);
@@ -483,8 +537,7 @@
 		loadConfig().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
-		refreshAll();
-		loadAgentPicker().catch(function (err) {
+		firstPaint().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 	}
