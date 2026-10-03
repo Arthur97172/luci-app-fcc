@@ -42,7 +42,17 @@ define Package/luci-app-fcc
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=FCC AI Coding Agent Manager
-  DEPENDS:=+luci-base +luci-compat +curl +ca-bundle +tar +tmux
+  # No +tar, deliberately. Nothing in this package shells out to tar — the
+  # runtime installer is fetched as a shell script and run, and backups are
+  # directory renames — and the base image's busybox already provides /bin/tar.
+  # It would also make the package unselectable on 25.12: upstream's tar now
+  # carries DEPENDS:=+PACKAGE_TAR_XZ:xz, and the metadata generator copies that
+  # variant gate onto every dependent as
+  #   depends on !(PACKAGE_TAR_XZ) || PACKAGE_xz-utils
+  # TAR_XZ defaults to y and xz-utils to n, so the gate is false and defconfig
+  # silently drops the symbol. 24.10 expressed the same thing as EXTRA_DEPENDS,
+  # which does not propagate to dependents, so only 25.12 is affected.
+  DEPENDS:=+luci-base +luci-compat +curl +ca-bundle +tmux
   PKGARCH:=all
   URL:=https://github.com/Arthur97172/luci-app-fcc
 endef
@@ -136,7 +146,11 @@ define Package/luci-i18n-fcc-zh-cn
   SUBMENU:=3. Applications
   TITLE:=luci-app-fcc - Chinese (Simplified) translation
   DEPENDS:=+luci-app-fcc
-  VERSION:=$(PKG_VERSION)-$(PKG_RELEASE)
+  # No VERSION override. package-defaults.mk already sets
+  # VERSION:=$(PKG_VERSION)-r$(PKG_RELEASE); writing it by hand as
+  # $(PKG_VERSION)-$(PKG_RELEASE) drops the `r`. opkg tolerates that, which is
+  # why it survived the 24.10 build, but apk's version parser rejects it and the
+  # package fails to build with "package version is invalid".
   PKGARCH:=all
   HIDDEN:=1
   DEFAULT:=LUCI_LANG_zh_Hans||(ALL&&m)

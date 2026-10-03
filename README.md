@@ -1,228 +1,220 @@
 # luci-app-fcc
 
-Manage [FCC (Free Claude Code)](https://github.com/Alishahryar1/free-claude-code)
-and its coding agents from the LuCI web interface on OpenWrt / ImmortalWrt.
+**简体中文** | [English](README.en.md)
 
-Three pages, one package:
+在 OpenWrt / ImmortalWrt 的 LuCI 网页界面里管理
+[FCC（Free Claude Code）](https://github.com/Alishahryar1/free-claude-code)
+及其编程 Agent。
 
-| Page | What it does |
+一个软件包，三个页面：
+
+| 页面 | 作用 |
 | --- | --- |
-| **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
-| **Configuration** | FCC server settings (address, port, log level), the runtime install path, start/stop/restart, and a link to the FCC Admin page. |
-| **Basic Information** | Version, status, PID, uptime, RSS memory, system memory and storage, and FCC update checks. |
+| **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider 的真正交互式终端——每个 Agent 一个 tmux 会话，直接在浏览器里用。 |
+| **配置** | FCC 服务器设置（地址、端口、日志级别）、运行时安装路径、启动/停止/重启，以及 FCC Admin 页面入口。 |
+| **基本信息** | 版本、状态、PID、运行时长、RSS 内存、系统内存与存储，以及 FCC 更新检查。 |
 
-`luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
-shell. It does **not** contain Python, Node.js, `uv`, the FCC runtime or any
-coding agent — those are installed separately, on demand, under `/opt/fcc`.
+`luci-app-fcc` **只是控制层**。它只包含 Lua、JavaScript 和 POSIX shell，
+**不包含** Python、Node.js、`uv`、FCC 运行时或任何编程 Agent——这些都按需单独安装在
+`/opt/fcc` 下。
 
 ---
 
-## Install
+## 安装
 
-OpenWrt 24.10:
+OpenWrt 24.10：
 
 ```sh
 opkg install luci-app-fcc_*.ipk
 ```
 
-OpenWrt 25.12:
+OpenWrt 25.12：
 
 ```sh
 apk add ./luci-app-fcc*.apk
 ```
 
-The `.ipk` and the `.apk` are produced by CI from the corresponding OpenWrt SDK.
-They are genuinely different package formats — an `.ipk` renamed to `.apk` is
-not a package and will not install.
+`.ipk` 与 `.apk` 由 CI 用对应版本的 OpenWrt SDK 构建。它们是两种完全不同的包格式——
+把 `.ipk` 改名成 `.apk` 得到的不是安装包，装不上。
 
-Then open:
+然后打开：
 
 ```
-LuCI → Services → FCC
+LuCI → 服务 → FCC
 ```
 
-All three pages work immediately, before anything else is installed.
+三个页面装完即可使用，无需先安装别的东西。
 
 ---
 
-## First run
+## 首次使用
 
-**1. Install the FCC runtime.** On the *Basic Information* page, choose
-**Install FCC Runtime**. You do not need to SSH in and run FCC's installer by
-hand — the page fetches the official installer over HTTPS, records its SHA-256,
-and runs it. Python, `uv` and the runtime itself are installed under the
-configured install path (`/opt/fcc` by default), never into this package.
+**1. 安装 FCC 运行时。** 在*基本信息*页面点击 **Install FCC Runtime**。
+不需要 SSH 进去手动跑 FCC 的安装脚本——页面会通过 HTTPS 拉取官方安装器、记录其
+SHA-256 并执行。Python、`uv` 和运行时本身都装在配置的安装路径下（默认 `/opt/fcc`），
+绝不进入本软件包。
 
-**2. Configure.** On the *Configuration* page, set the address and port, then
-**Open FCC Admin** to add provider credentials. API keys are entered in FCC's
-own admin UI and are never stored in UCI — this package has nowhere to put them.
+**2. 配置。** 在*配置*页面设置地址和端口，然后点 **Open FCC Admin** 添加服务商凭据。
+API 密钥在 FCC 自己的管理界面里填写，从不写入 UCI——本软件包根本没有存放它们的地方。
 
-> **Keep the address at `127.0.0.1`** unless you deliberately need to reach the
-> FCC Admin page from another device on your LAN. The FCC server's own default
-> is `0.0.0.0`; this package overrides it and will not accept a bind address
-> that is not a literal IP.
+> **除非你确实需要从局域网内其他设备访问 FCC Admin，否则请把地址保持为 `127.0.0.1`。**
+> FCC 服务器自身的默认值是 `0.0.0.0`；本软件包会覆盖它，并且不接受非字面 IP 的绑定地址。
 
-**3. Use an agent.** On the *Web Console* page, pick an agent and press
-**Start**. Each agent gets its own session, named `fcc-<agent>-NNN`.
+**3. 使用 Agent。** 在 *Web 终端*页面选择 Agent 并按 **Start**。
+每个 Agent 拥有自己的会话，命名为 `fcc-<agent>-NNN`。
 
-**4. Update.** *Basic Information* → **Check Update** → **Update FCC**. The
-update is a sequence, not a single call: it checks free space, warns about open
-console sessions, saves the current state, stops the server, reinstalls, verifies
-the binary, restarts, and then confirms the server is actually answering before
-reporting success.
+**4. 更新。** *基本信息* → **Check Update** → **Update FCC**。
+更新是一串步骤而不是一次调用：检查剩余空间、提示仍打开的终端会话、保存当前状态、
+停止服务器、重新安装、校验二进制、重启，最后确认服务器真的在响应才报告成功。
 
-If any step fails, the previous runtime is put back. The old runtime tree is
-*renamed* aside before the update rather than copied — on one filesystem that is
-instant and costs no extra space — so restoring it needs no download and no
-second copy. Your `data/` is copied, since a successful update has to find it
-still in place. After a rollback the log says either `Previous FCC version
-restored` or, if the restored server will not start, `FCC Server remains
-stopped. Please inspect logs.` LuCI itself is untouched either way.
+任何一步失败都会把之前的运行时放回去。更新前，旧的运行时目录是被*改名*挪到一边
+而不是复制的——在同一个文件系统上这是瞬间完成且不占额外空间——所以恢复它既不需要
+重新下载也不需要第二份拷贝。`data/` 是复制的，因为更新成功后必须仍能在原处找到它。
+回滚后日志会写 `Previous FCC version restored`，或者，如果恢复后的服务器起不来，
+写 `FCC Server remains stopped. Please inspect logs.`。两种情况下 LuCI 本身都不受影响。
 
 ---
 
-## Requirements
+## 依赖
 
-Installed automatically as dependencies:
+作为依赖自动安装：
 
 ```
-luci-base  luci-compat  curl  ca-bundle  tar  tmux
+luci-base  luci-compat  curl  ca-bundle  tmux
 ```
 
-`tmux` is not optional: it is the terminal backend the Web Console drives.
+`tmux` 不是可选项：它是 Web 终端所驱动的终端后端。
 
-The FCC runtime has its own requirements — currently Python 3.14 (upstream pins
-`requires-python == 3.14.7`), FastAPI and Uvicorn. Those are the runtime's
-business, not this package's: installing `luci-app-fcc` must not pull a language
-runtime onto a router that only wanted to look at the status page. That is also
-why the runtime is installed on demand rather than shipped here.
+`tar` 是刻意*不*在其中的。本包没有任何地方调用 tar——运行时安装器是以 shell 脚本形式
+获取并执行的，备份用的是目录改名——而且每个镜像上的 busybox 都已经提供 `/bin/tar`。
+依赖 GNU `tar` 包还会让本包在 25.12 上无法被选中：上游的 tar 带有一个变体门控
+（`TAR_XZ` 默认开、`xz-utils` 默认关），元数据生成器会把它复制到每一个依赖者身上。
+
+`luci-compat` 是另一个关键依赖，而且不那么显眼。OpenWrt 24.10 和 25.12 把 LuCI 核心
+迁到了 ucode：`luci-base` 已经完全不包含 `/usr/lib/lua/luci`。本包的控制器和视图所
+运行的 Lua 调度器与模板引擎现在位于 `luci-lua-runtime`，而 `luci-compat` 依赖它——
+所以列出 `luci-compat` 才是把它们拉进来的原因。没有它，包依然装得干干净净，页面却
+永远打不开；这正是安装冒烟测试要断言 `/usr/lib/lua/luci/dispatcher.lua` 存在的原因。
+
+FCC 运行时有自己的要求——目前是 Python 3.14（上游锁定 `requires-python == 3.14.7`）、
+FastAPI 和 Uvicorn。那是运行时自己的事，不是本包的：安装 `luci-app-fcc` 不能把一个
+语言运行时拖到一台只想看看状态页的路由器上。这也是运行时按需安装而非随包分发的原因。
 
 ---
 
-## How the Web Console works
+## Web 终端是怎么工作的
 
-The console is a genuine terminal, not a log viewer. Each session is a `tmux`
-session on the router; the browser talks to it through the LuCI backend.
+终端是真正的终端，不是日志查看器。每个会话是路由器上的一个 `tmux` 会话；
+浏览器通过 LuCI 后端与它通信。
 
-**The transport is an HTTP byte stream, not a WebSocket.** This is a deliberate
-departure and it is worth stating plainly:
+**传输方式是 HTTP 字节流，不是 WebSocket。** 这是一个刻意的偏离，值得明说：
 
-* A WebSocket would need a long-running Node.js or Python server. Both are
-  forbidden here — the package must not add a language runtime, and it must not
-  run a persistent daemon beyond the FCC server itself.
-* `uhttpd`, the web server LuCI runs on, has no WebSocket support to fall back
-  on.
+* WebSocket 需要一个长期运行的 Node.js 或 Python 服务器。两者在这里都被禁止——
+  本包不得引入语言运行时，也不得在 FCC 服务器之外运行常驻守护进程。
+* LuCI 所运行的 Web 服务器 `uhttpd` 没有 WebSocket 支持可以退而求其次。
 
-So the backend exposes the session's output as a byte stream with **absolute
-offsets**, and the browser long-polls it. Each response carries the bytes after
-the offset the client already has, so a reconnect resumes exactly where it
-stopped instead of replaying the screen. Scrollback is capped and trimmed from
-the front; the base offset advances by exactly the number of bytes dropped, so
-an absolute offset means the same thing before and after a trim.
+所以后端把会话输出以**绝对偏移量**的字节流暴露出来，浏览器用长轮询读取。
+每个响应只携带客户端已有偏移量之后的字节，因此重连会精确地从断点继续，
+而不是重放整个屏幕。回滚缓冲区有上限，超出时从头部裁剪；基准偏移量恰好前进
+被丢弃的字节数，所以裁剪前后一个绝对偏移量含义相同。
 
-Keystrokes travel the other way as base64, are decoded to bytes by the backend
-and re-encoded as hex for `tmux send-keys -H` — the value handed to tmux is
-never attacker-controlled text.
+按键走另一个方向：以 base64 传输，由后端解码为字节，再编码成十六进制交给
+`tmux send-keys -H`——交给 tmux 的值从不是攻击者可控的文本。
 
-The practical cost of not using a WebSocket: input latency is one long-poll
-round trip rather than immediate, and the poll interval is capped at 25 seconds
-server-side. For an interactive coding agent on a router that is not
-noticeable; for a full-screen TUI redraw it can be. See *Known limitations*.
+不用 WebSocket 的实际代价：输入延迟是一次长轮询往返而非即时，且服务端把轮询间隔
+上限定为 25 秒。对路由器上的交互式编程 Agent 来说这察觉不到；对全屏 TUI 重绘则
+可能有感。参见*已知限制*。
 
 ---
 
-## Repository layout
+## 仓库结构
 
 ```
-Makefile                  explicit Package/ definitions (no luci.mk)
-VERSION                   single source of the package version
-luasrc/controller/fcc.lua the LuCI dispatcher and the JSON API
-luasrc/fcc/               util.lua, agents.lua, paths.lua
-luasrc/view/fcc/          the three pages
-htdocs/luci-static/…/fcc/ browser JavaScript and xterm.js
-root/etc/init.d/fcc       procd service for the FCC server
-root/usr/libexec/fcc/     the shell backend
-root/usr/share/luci-app-fcc/agents.conf   the agent registry
-po/                       translation catalogues
-scripts/                  gen-po.sh, package-check.sh, test.sh
-tests/                    the check suite
+Makefile                  显式的 Package/ 定义（不用 luci.mk）
+VERSION                   软件包版本的唯一来源
+luasrc/controller/fcc.lua LuCI 调度器与 JSON API
+luasrc/fcc/               util.lua、agents.lua、paths.lua
+luasrc/view/fcc/          三个页面
+htdocs/luci-static/…/fcc/ 浏览器端 JavaScript 与 xterm.js
+root/etc/init.d/fcc       FCC 服务器的 procd 服务
+root/usr/libexec/fcc/     shell 后端
+root/usr/share/luci-app-fcc/agents.conf   Agent 注册表
+po/                       翻译目录
+scripts/                  gen-po.sh、package-check.sh、smoke.sh、test.sh
+tests/                    检查套件
 ```
 
-`luasrc/` maps onto `/usr/lib/lua/luci/`, so `luasrc/fcc/util.lua` is the module
-`luci.fcc.util`. The install manifest in the Makefile mirrors that, and
-`tests/test_packaging.sh` fails if the two ever disagree.
+`luasrc/` 映射到 `/usr/lib/lua/luci/`，所以 `luasrc/fcc/util.lua` 就是模块
+`luci.fcc.util`。Makefile 里的安装清单与之对应，一旦两者不一致，
+`tests/test_packaging.sh` 就会失败。
 
-### Adding an agent
+### 添加一个 Agent
 
-Add one line to `root/usr/share/luci-app-fcc/agents.conf`:
+在 `root/usr/share/luci-app-fcc/agents.conf` 里加一行：
 
 ```
-id|Friendly Name|launcher|default_install|approx_size_mb|min_ram_mb|probe
+id|友好名称|启动器|默认是否安装|约需空间MB|最低内存MB|探测命令
 ```
 
-The `probe` column is the *underlying* CLI used to read a version, and must
-never be an `fcc-*` launcher — those start the agent. Leave it empty when the
-underlying CLI is unknown or unsafe to run (`hermes --version` hangs, so
-`hermes` has no probe). Real state is always detected dynamically; the file is a
-hint.
+`probe`（探测命令）一列是用于读取版本的*底层* CLI，绝不能是 `fcc-*` 启动器——
+那些会启动 Agent。当底层 CLI 未知或运行不安全时留空（`hermes --version` 会挂起，
+所以 `hermes` 没有探测命令）。真实状态始终动态探测；这个文件只是提示。
 
 ---
 
-## Development
+## 开发
 
-Everything runs on a normal Linux machine. No OpenWrt tree, no cross-compiler,
-no root:
+一切都在普通 Linux 机器上运行。不需要 OpenWrt 源码树、不需要交叉编译器、不需要 root：
 
 ```sh
-sh scripts/test.sh          # package-check + every suite
-sh scripts/test.sh -q       # summaries only
-sh scripts/test.sh lua shell  # named suites
-sh scripts/package-check.sh # the static package check on its own
-sh scripts/gen-po.sh        # regenerate po/templates/fcc.pot
-sh scripts/gen-po.sh --check # fail if the template is stale
+sh scripts/test.sh          # package-check + 全部套件
+sh scripts/test.sh -q       # 只显示摘要
+sh scripts/test.sh lua shell  # 指定套件
+sh scripts/package-check.sh # 单独跑静态包检查
+sh scripts/gen-po.sh        # 重新生成 po/templates/fcc.pot
+sh scripts/gen-po.sh --check # 模板过期则失败
 ```
 
-The suites are:
+套件如下：
 
-| Suite | Covers |
+| 套件 | 覆盖内容 |
 | --- | --- |
-| `shell` | shebangs, POSIX portability, the prefixed-local contract |
-| `lua` | module logic, plus Lua↔shell parity for shared rules |
-| `runtime` | the backend's behaviour: path canonicalisation, id grammars, JSON, cache, `/proc`, terminal offsets |
-| `packaging` | the install manifest against the tree, dependencies, the i18n wiring |
-| `i18n` | template ↔ catalogue parity, po2lmo's drop rule, LuCI language codes |
-| `security` | no committed credentials, no WAN bind, POST-only mutations, ACL scope, no WebSocket server |
+| `shell` | shebang、POSIX 可移植性、局部变量前缀约定 |
+| `lua` | 模块逻辑，以及共享规则的 Lua↔shell 一致性 |
+| `runtime` | 后端行为：路径规范化、id 文法、JSON、缓存、`/proc`、终端偏移量 |
+| `packaging` | 安装清单与源码树、依赖、i18n 接线 |
+| `i18n` | 模板 ↔ 目录一致性、po2lmo 的丢弃规则、LuCI 语言代码 |
+| `security` | 无提交的凭据、无 WAN 绑定、变更类操作仅 POST、ACL 范围、无 WebSocket 服务器 |
 
-The shell backend follows one rule that is easy to trip over: POSIX `sh` has a
-single global scope shared by every function, and the scripts run under
-`set -u`. A helper that assigns a bare `_name` therefore clobbers its caller's
-variable. Every local is prefixed with a per-function tag (`_ug_v`, `_ou_off`),
-and `tests/test_shell.sh` enforces it.
+`scripts/smoke.sh` 刻意不属于 `test.sh`：它需要 Docker 和一个发行版根文件系统，
+所以 CI 把它作为独立任务运行。它会解开发行版官方 rootfs、在真正的 procd 下启动它、
+用该发行版自己的包管理器（24.10 用 `opkg`，25.12 用 `apk`）安装构建出的包，
+然后在里面执行 `/etc/init.d/fcc status`。这正是第 90、91 节要求的检查，
+也是唯一一个靠读文件无法回答的检查。
 
----
-
-## Known limitations
-
-* **No WebSocket transport for the console.** Explained above; it is a
-  consequence of the no-extra-runtime and no-persistent-daemon constraints, not
-  an oversight. A full-screen TUI redraw is visibly slower than it would be over
-  a socket.
-* **`hermes` has no version probe.** `hermes --version` does not terminate, so
-  the registry leaves its probe empty and the UI reports the version as unknown
-  rather than hanging the status refresh.
-* **Agent versions are probed, not guaranteed.** A version is read from the
-  underlying CLI with a 5-second timeout and cached for 60 seconds. An agent
-  whose CLI changes its output format will show an unfamiliar string.
-* **The console needs `tmux`.** Without it the other two pages still work; the
-  console reports the missing dependency instead of failing silently.
-* **A rolled-back update costs a second runtime's worth of disk while it runs.**
-  Rollback works by renaming the previous runtime aside rather than copying it,
-  which is free on one filesystem — but the new runtime still has to be written
-  before the old one is discarded, so the free-space preflight has to cover one
-  runtime, not zero. That is what it checks.
+shell 后端遵循一条容易踩到的规则：POSIX `sh` 只有一个被所有函数共享的全局作用域，
+而脚本在 `set -u` 下运行。一个赋值裸 `_name` 的辅助函数因此会覆盖调用者的变量。
+每个局部变量都带一个按函数区分的前缀（`_ug_v`、`_ou_off`），
+`tests/test_shell.sh` 会强制执行。
 
 ---
 
-## License
+## 已知限制
 
-GPL-3.0. See [LICENSE](LICENSE).
+* **终端没有 WebSocket 传输。** 上文已解释；这是"不引入额外运行时"和"不运行常驻
+  守护进程"两条约束的结果，不是疏漏。全屏 TUI 重绘明显比走 socket 慢。
+* **`hermes` 没有版本探测。** `hermes --version` 不会结束，所以注册表把它的探测命令
+  留空，界面把版本报告为未知，而不是让状态刷新卡住。
+* **Agent 版本是探测得来的，不保证准确。** 版本以 5 秒超时从底层 CLI 读取并缓存
+  60 秒。CLI 改了输出格式的 Agent 会显示一个陌生的字符串。
+* **终端需要 `tmux`。** 没有它另外两个页面照常工作；终端会报告缺少依赖，
+  而不是静默失败。
+* **回滚的更新在运行期间会占用第二份运行时大小的磁盘。** 回滚靠把旧运行时改名挪到
+  一边而不是复制，在同一个文件系统上是免费的——但新运行时仍必须先写完才能丢弃旧的，
+  所以剩余空间预检必须覆盖一份运行时而不是零。它检查的正是这个。
+
+---
+
+## 许可证
+
+GPL-3.0。见 [LICENSE](LICENSE)。

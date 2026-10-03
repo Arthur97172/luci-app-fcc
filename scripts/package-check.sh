@@ -114,7 +114,7 @@ done
 [ -z "$forbidden" ] && ok "DEPENDS pulls in no language runtime" \
 	|| bad "DEPENDS pulls in a runtime:$forbidden"
 
-for d in luci-base luci-compat curl ca-bundle tar tmux; do
+for d in luci-base luci-compat curl ca-bundle tmux; do
 	case "$depends" in
 		*"+$d"*) : ;;
 		*) bad "DEPENDS is missing +$d" ;;
@@ -122,6 +122,14 @@ for d in luci-base luci-compat curl ca-bundle tar tmux; do
 done
 case "$depends" in
 	*"+tmux"*) ok "tmux, which the Web Console requires, is declared" ;;
+esac
+# +tar is refused on purpose. On 25.12 upstream's tar carries
+# DEPENDS:=+PACKAGE_TAR_XZ:xz, which becomes `depends on !(PACKAGE_TAR_XZ) ||
+# PACKAGE_xz-utils` on every dependent; with TAR_XZ=y and xz-utils=n by default
+# that gate is false and defconfig drops the package without a word.
+case "$depends" in
+	*"+tar"*) bad "DEPENDS must not pull in +tar: it is unselectable on 25.12" ;;
+	*) ok "tar is not a dependency, so the 25.12 variant gate cannot bite" ;;
 esac
 
 # ---------------------------------------------------------------------------

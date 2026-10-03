@@ -150,16 +150,42 @@ test_no_runtime_dependencies() {
 }
 
 test_declared_dependencies_are_used() {
-	# Every dependency should be a thing the code actually calls. These four are
+	# Every dependency should be a thing the code actually calls. These five are
 	# the ones the backend shells out to.
 	_ts_depends="$(sed -n '/^define Package\/luci-app-fcc$/,/^endef$/p' "$MAKEFILE" \
 		| sed -n 's/^[[:space:]]*DEPENDS:=//p')"
-	for _ts_d in luci-base luci-compat curl ca-bundle tar tmux; do
+	for _ts_d in luci-base luci-compat curl ca-bundle tmux; do
 		case "$_ts_depends" in
 			*"+$_ts_d"*) pass ;;
 			*) fail "DEPENDS is missing +$_ts_d: [$_ts_depends]" ;;
 		esac
 	done
+}
+
+test_readmes_are_paired_and_cross_linked() {
+	# README.md is the Chinese default and README.en.md the English one. Each
+	# links to the other at the top, so whoever lands on either can switch. A
+	# translation that silently drifts away is worse than none.
+	assert_contains "$(cat "$ROOT/README.md")" "[English](README.en.md)" \
+		"the Chinese README links to the English one"
+	assert_contains "$(cat "$ROOT/README.en.md")" "[简体中文](README.md)" \
+		"the English README links back to the Chinese one"
+}
+
+test_tar_is_not_a_dependency() {
+	# On 25.12 upstream's tar carries DEPENDS:=+PACKAGE_TAR_XZ:xz, which the
+	# metadata generator copies onto every dependent as
+	#   depends on !(PACKAGE_TAR_XZ) || PACKAGE_xz-utils
+	# TAR_XZ defaults to y and xz-utils to n, so the gate is false, kconfig drops
+	# the symbol, and the build silently produces no package at all. Nothing here
+	# calls tar — the installer is fetched as a shell script and run, backups are
+	# directory renames — and busybox supplies /bin/tar anyway.
+	_ts_depends="$(sed -n '/^define Package\/luci-app-fcc$/,/^endef$/p' "$MAKEFILE" \
+		| sed -n 's/^[[:space:]]*DEPENDS:=//p')"
+	case "$_ts_depends" in
+		*"+tar"*) fail "+tar makes the package unselectable on 25.12: [$_ts_depends]" ;;
+		*) pass ;;
+	esac
 }
 
 test_tmux_dependency_matches_the_session_backend() {

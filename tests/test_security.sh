@@ -28,7 +28,11 @@ shipped_files() {
 	find "$ROOT/root" "$ROOT/htdocs" "$ROOT/luasrc" "$ROOT/po" \
 	     "$ROOT/scripts" "$ROOT/tests" "$ROOT/.github" -type f 2>/dev/null
 	printf '%s\n' "$ROOT/Makefile" "$ROOT/VERSION" "$ROOT/LICENSE" "$ROOT/.gitignore"
-	[ -f "$ROOT/README.md" ] && printf '%s\n' "$ROOT/README.md"
+	# Both READMEs. README.md is the Chinese default, README.en.md the English
+	# one; they cross-link at the top.
+	for _sh_r in "$ROOT"/README*.md; do
+		[ -f "$_sh_r" ] && printf '%s\n' "$_sh_r"
+	done
 }
 
 # The body of one controller function. The optional `local` matters: the guard

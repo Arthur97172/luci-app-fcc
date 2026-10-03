@@ -115,9 +115,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install extraction tooling
-        # The SDK tarballs are zstd-compressed.
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+      - name: Install host tooling
+        # zstd unpacks the SDK tarballs. gawk is not a nicety: the SDK's
+        # prerequisite check greps the output of `awk --version` for "GNU", and
+        # Ubuntu's /usr/bin/awk is mawk, which does not print it. Without gawk
+        # the run stops at "Please install GNU 'awk'" before compiling
+        # anything — and because scripts/feeds runs the same check internally
+        # through `make prepare-tmpinfo`, gawk has to be present before the
+        # feeds are set up, not merely before the compile.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zstd gawk
 
       - name: Cache the SDK
         id: sdk
@@ -136,20 +142,27 @@ jobs:
           ls -l sdk.tar.zst
 
       - name: Extract the SDK
+        # Unpacked outside the workspace on purpose. The package Makefile lives
+        # at the repository root, so the src-link feed has to point at the
+        # checkout itself; an SDK unpacked *inside* the checkout is then part of
+        # what the feed scan walks, and its package/toolchain directory gets
+        # picked up as a package of ours. $RUNNER_TEMP is outside, and is
+        # already the conventional scratch area.
         run: |
           set -eu
-          mkdir -p sdk
-          tar --zstd -xf sdk.tar.zst -C sdk --strip-components=1
-          test -d sdk/staging_dir
-          test -x sdk/scripts/feeds
+          echo "SDK_DIR=$RUNNER_TEMP/sdk" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sdk"
+          tar --zstd -xf sdk.tar.zst -C "$RUNNER_TEMP/sdk" --strip-components=1
+          test -d "$RUNNER_TEMP/sdk/staging_dir"
+          test -x "$RUNNER_TEMP/sdk/scripts/feeds"
           # The toolchain is what makes this an SDK and not an Image Builder.
           # Without it the build silently falls back to building everything.
-          ls -d sdk/staging_dir/toolchain-*
+          ls -d "$RUNNER_TEMP/sdk"/staging_dir/toolchain-*
 
       - name: Configure feeds
         run: |
           set -eu
-          cd sdk
+          cd "$SDK_DIR"
           # feeds.conf.default pins the luci feed to the commit this SDK release
           # was built against; keeping it is what makes luci-base/host (po2lmo)
           # available below.
@@ -165,7 +178,7 @@ jobs:
       - name: Update feeds
         run: |
           set -eu
-          cd sdk
+          cd "$SDK_DIR"
           ./scripts/feeds update -a
           ./scripts/feeds install -p fcc -a
           # luci-base is a build dependency of our package
@@ -177,25 +190,41 @@ jobs:
       - name: Configure the build
         run: |
           set -eu
-          cd sdk
-          # The SDK's Config.in has `config ALL` with a bare `default y` ("Select
-          # all userspace packages by default"), so a plain `make defconfig`
-          # selects the entire package universe — kmods included, which drags in
-          # package/kernel/linux and a full kernel compile. That is the same trap
-          # as the Image Builder, one layer down, and it is why the 25.12 entry
-          # of this matrix has to turn it off explicitly rather than trusting
-          # defconfig to be minimal.
+          cd "$SDK_DIR"
+          # The SDK ships no .config, so this step used to start by rewriting a
+          # file that was not there and died on the first grep. The three
+          # overrides are therefore written first, and `make defconfig` then
+          # fills in everything else around them.
           #
-          # ALL_KMODS and ALL_NONSHARED both default to ALL, but the generated
-          # .config spells them out, so all three are overridden. The rest of
-          # the file is kept: it carries the target and toolchain selection.
-          grep -vE '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED)=' .config > .config.tmp
-          printf 'CONFIG_ALL=n\nCONFIG_ALL_KMODS=n\nCONFIG_ALL_NONSHARED=n\n' >> .config.tmp
-          mv .config.tmp .config
+          # They are written first for a second reason: the SDK's Config.in has
+          # `config ALL` with a bare `default y` ("Select all userspace packages
+          # by default"), and defconfig keeps values already present in .config.
+          # Seeding ALL=n before the first defconfig is what stops the config
+          # from selecting the entire package universe — kmods included, which
+          # drags in package/kernel/linux and a full kernel compile. That is the
+          # same trap as the Image Builder, one layer down. ALL_KMODS and
+          # ALL_NONSHARED both default to ALL, so all three are seeded.
+          #
+          # Selecting the package is not optional either. `make
+          # package/luci-app-fcc/compile` builds the package only when
+          # CONFIG_PACKAGE_luci-app-fcc is set; otherwise include/package.mk
+          # defines `compile` as the autoremove stub alone, which cleans the
+          # build directory and produces nothing. The dependency chain still
+          # builds, so without these two lines the job collects a dist/ full of
+          # libraries and a green run ships no package of ours at all.
+          #
+          # LUCI_LANG_zh_Hans is how the translation package is reached rather
+          # than a CONFIG_PACKAGE_ line: it is HIDDEN, so it has no prompt, and
+          # defconfig recomputes a promptless symbol from its default instead of
+          # honouring what is written in .config. Setting the language is also
+          # what a user does in menuconfig.
+          printf 'CONFIG_ALL=n\nCONFIG_ALL_KMODS=n\nCONFIG_ALL_NONSHARED=n\nCONFIG_PACKAGE_luci-app-fcc=y\nCONFIG_LUCI_LANG_zh_Hans=y\n' > .config
           make defconfig
           # Fail loudly if the defaults came back: a silent return to ALL would
           # turn this job into a kernel build rather than a package build.
           ! grep -qE '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED)=y' .config
+          test "$(grep -cE '^CONFIG_PACKAGE_luci-app-fcc=y' .config)" = 1
+          test "$(grep -cE '^CONFIG_PACKAGE_luci-i18n-fcc-zh-cn=y' .config)" = 1
           echo "kmods selected: $(grep -cE '^CONFIG_PACKAGE_kmod.*=y' .config)"
 
       - name: Build luci-base host tools
@@ -206,7 +235,7 @@ jobs:
         # i18n package ships. It takes about a second.
         run: |
           set -eu
-          cd sdk
+          cd "$SDK_DIR"
           make package/luci-base/host/compile V=s
           test -x staging_dir/hostpkg/bin/po2lmo
           staging_dir/hostpkg/bin/po2lmo 2>&1 | head -1 || true
@@ -214,7 +243,7 @@ jobs:
       - name: Build the package
         run: |
           set -eu
-          cd sdk
+          cd "$SDK_DIR"
           make package/luci-app-fcc/compile V=s
 
       - name: Collect artifacts
@@ -223,42 +252,91 @@ jobs:
           mkdir -p dist
           # The feed name is the directory the SDK writes into, so glob the
           # extension across bin/packages rather than guessing the arch path.
-          find sdk/bin/packages -name "*.${{ matrix.ext }}" -exec cp -v {} dist/ \;
+          find "$SDK_DIR/bin/packages" -name "*.${{ matrix.ext }}" -exec cp -v {} dist/ \;
           test -n "$(ls -A dist)" || {
             echo "::error::the build produced no .${{ matrix.ext }}"
-            find sdk/bin -maxdepth 4 -type d | head -50
+            find "$SDK_DIR/bin" -maxdepth 4 -type d | head -50
+            exit 1
+          }
+          # The dependency chain's packages land in dist/ as well, so a
+          # non-empty dist is no evidence that the packages this job exists to
+          # produce were built. Assert on those two by name.
+          ls dist/luci-app-fcc[-_]*.${{ matrix.ext }} >/dev/null 2>&1 || {
+            echo "::error::luci-app-fcc was not built"
+            find "$SDK_DIR/bin/packages" -maxdepth 3 -type d
+            exit 1
+          }
+          ls dist/luci-i18n-fcc-*.${{ matrix.ext }} >/dev/null 2>&1 || {
+            echo "::error::the translation package was not built"
             exit 1
           }
           ls -l dist
 
       - name: Verify the artifacts
-        # A cheap integrity check on what we are about to publish. It is not a
-        # substitute for installing the package on a real system — that is the
-        # smoke test section 90/91 asks for, and it needs a running OpenWrt, so
-        # it is not something this job can do. What it does catch is the failure
-        # that matters here: a package that builds but ships nothing, or an
-        # i18n package whose .lmo never got compiled because po2lmo was absent.
+        # The static half of the install check: what we are about to publish
+        # really does contain the package. Installing on a real system is the
+        # smoke job's business (sections 90 and 91).
         #
-        # The checks are per package, not per extension. Asserting the
-        # controller inside every .ipk would fail the translation package, which
+        # What it catches is the failure that matters here: a package that
+        # builds but ships nothing, an i18n package whose .lmo never got
+        # compiled because po2lmo was absent, or a build that produced no
+        # package of ours at all because the config never selected it.
+        #
+        # The checks are per package, not per extension: asserting the
+        # controller inside every file would fail the translation package, which
         # correctly contains only the catalogue.
         run: |
           set -eu
-          cd dist
+          DIST="$PWD/dist"
+          EXT='${{ matrix.ext }}'
+          APK="$SDK_DIR/staging_dir/host/bin/apk"
           fail=0
 
           # An .ipk is a tar holding control.tar.gz and data.tar.gz. Unpacking
           # both is safe: neither is executed.
           unpack_ipk() {
             _vi_d="$(mktemp -d)"
-            tar -C "$_vi_d" -xzf "$1"
+            tar -C "$_vi_d" -xzf "$DIST/$1"
             tar -C "$_vi_d" -xzf "$_vi_d/data.tar.gz"
             printf '%s' "$_vi_d"
           }
 
-          for f in luci-app-fcc_*.*; do
-            [ -e "$f" ] || continue
-            d="$(unpack_ipk "$f")"
+          # An .apk on 25.12 is not a tar at all. apk-tools 3 writes the ADB
+          # container, and `tar -tzf` rejects it outright with "not in gzip
+          # format" — which is how the previous version of this step would have
+          # failed every 25.12 run. The SDK's own apk binary is the one thing
+          # here that can read it. --allow-untrusted because the package is
+          # signed with a key this runner has no reason to hold; the payload is
+          # what is being checked, and the smoke job does the real install.
+          unpack_apk() {
+            _vi_d="$(mktemp -d)"
+            ( cd "$_vi_d" && "$APK" extract --allow-untrusted "$DIST/$1" >/dev/null )
+            printf '%s' "$_vi_d"
+          }
+
+          unpack() {
+            case "$1" in
+              *.ipk) unpack_ipk "$1" ;;
+              *.apk) unpack_apk "$1" ;;
+              *) echo "::error::$1 is neither an .ipk nor an .apk"; return 1 ;;
+            esac
+          }
+
+          if [ "$EXT" = apk ]; then
+            test -x "$APK" || { echo "::error::the SDK ships no apk tool at $APK"; exit 1; }
+          fi
+
+          # A glob that matches nothing expands to itself, so a loop over it
+          # would run once on a literal pattern and — with an `[ -e ] ||
+          # continue` guard — pass without having checked anything. Resolve the
+          # matches first and insist on at least one of each.
+          app="$(ls -1 "$DIST"/luci-app-fcc[-_]*."$EXT" 2>/dev/null || true)"
+          i18n="$(ls -1 "$DIST"/luci-i18n-fcc-*."$EXT" 2>/dev/null || true)"
+          [ -n "$app" ]  || { echo "::error::no luci-app-fcc package in dist"; fail=1; }
+          [ -n "$i18n" ] || { echo "::error::no luci-i18n-fcc package in dist"; fail=1; }
+
+          for f in $app; do
+            d="$(unpack "$(basename "$f")")"
             test -f "$d/usr/lib/lua/luci/controller/fcc.lua" \
               || { echo "::error::$f is missing the controller"; fail=1; }
             test -d "$d/usr/lib/lua/luci/view/fcc" \
@@ -266,26 +344,15 @@ jobs:
             test -f "$d/usr/libexec/fcc/session.sh" \
               || { echo "::error::$f is missing the backends"; fail=1; }
             rm -rf "$d"
-            echo "$f: ok"
+            echo "$(basename "$f"): payload ok"
           done
 
-          for f in luci-i18n-fcc-*.*; do
-            [ -e "$f" ] || continue
-            d="$(unpack_ipk "$f")"
+          for f in $i18n; do
+            d="$(unpack "$(basename "$f")")"
             find "$d" -name '*.lmo' | grep -q . \
               || { echo "::error::$f carries no compiled catalogue"; fail=1; }
             rm -rf "$d"
-            echo "$f: ok"
-          done
-
-          # The apk container is not the ipk one, so the payload is listed
-          # rather than unpacked. This is deliberately weaker than the ipk
-          # checks above and only asserts the archive is readable and non-empty.
-          for f in *.apk; do
-            [ -e "$f" ] || continue
-            tar -tzf "$f" >/dev/null || { echo "::error::$f is not a readable archive"; fail=1; }
-            tar -tzf "$f" | grep -q . || { echo "::error::$f is empty"; fail=1; }
-            echo "$f: archive ok ($(tar -tzf "$f" | wc -l) entries)"
+            echo "$(basename "$f"): payload ok"
           done
 
           test "$fail" = 0
@@ -299,12 +366,100 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
+  # Install smoke test (sections 90 and 91).
+  #
+  # The build job proves the package compiles and contains what it should. This
+  # proves it installs: it runs the release's own package manager inside the
+  # release's own root filesystem — opkg on 24.10, apk on 25.12 — and then runs
+  # the command section 91 names, `/etc/init.d/fcc status`, against a real procd
+  # rather than a stand-in.
+  #
+  # The rootfs is the official one from downloads.openwrt.org for the release
+  # the SDK built against, so the feeds the declared dependencies must resolve
+  # from are the matching ones.
+  #
+  # The aarch64 entries run an arm64 rootfs under qemu; what they add over the
+  # x86_64 entries is small, since the package is PKGARCH:=all and the payload
+  # is identical. They are here because the matrix in section 92 says aarch64,
+  # and because "installs on the architecture we ship" is worth stating rather
+  # than assuming.
+  # ---------------------------------------------------------------------------
+  smoke:
+    name: Install smoke test (${{ matrix.release }} / ${{ matrix.arch }})
+    needs: build
+    runs-on: ubuntu-latest
+    # The rootfs is a few megabytes and the install resolves a dependency chain
+    # from the release feed. The bound covers a cold feed on a slow runner.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: '24.10.4'
+            arch: x86_64
+            target: x86/64
+            rootfs: openwrt-24.10.4-x86-64-rootfs.tar.gz
+            platform: linux/amd64
+            ext: ipk
+          - release: '24.10.4'
+            arch: aarch64
+            target: armsr/armv8
+            rootfs: openwrt-24.10.4-armsr-armv8-rootfs.tar.gz
+            platform: linux/arm64
+            ext: ipk
+          - release: '25.12.0'
+            arch: x86_64
+            target: x86/64
+            rootfs: openwrt-25.12.0-x86-64-rootfs.tar.gz
+            platform: linux/amd64
+            ext: apk
+          - release: '25.12.0'
+            arch: aarch64
+            target: armsr/armv8
+            rootfs: openwrt-25.12.0-armsr-armv8-rootfs.tar.gz
+            platform: linux/arm64
+            ext: apk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the built packages
+        uses: actions/download-artifact@v4
+        with:
+          name: luci-app-fcc-${{ matrix.release }}-${{ matrix.arch }}
+          path: dist
+
+      - name: Enable foreign-architecture containers
+        # Registers binfmt handlers, which is what makes the arm64 rootfs's
+        # /sbin/init executable on an x86_64 runner. A no-op for the x86_64
+        # entries.
+        uses: docker/setup-qemu-action@v3
+
+      - name: Fetch the release rootfs
+        run: |
+          set -eu
+          url="https://downloads.openwrt.org/releases/${{ matrix.release }}/targets/${{ matrix.target }}/${{ matrix.rootfs }}"
+          echo "fetching $url"
+          curl -fsSL --retry 3 --retry-delay 5 -o rootfs.tar.gz "$url"
+          ls -l rootfs.tar.gz
+          docker import rootfs.tar.gz "fcc-rootfs:${{ matrix.release }}"
+
+      - name: Install and check
+        run: |
+          sh scripts/smoke.sh \
+            "fcc-rootfs:${{ matrix.release }}" \
+            "${{ matrix.platform }}" \
+            "${{ matrix.ext }}" \
+            dist
+
+  # ---------------------------------------------------------------------------
   # Release (section 62). Only on a v* tag, and only after every architecture
-  # has built, so a tag can never publish a partial set.
+  # has built and every one of them has installed cleanly, so a tag can never
+  # publish a package that does not install.
   # ---------------------------------------------------------------------------
   release:
     name: Publish release
-    needs: build
+    needs: [build, smoke]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
