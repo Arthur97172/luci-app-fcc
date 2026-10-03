@@ -130,6 +130,64 @@ st_used_b=$(( st_used_k * 1024 ))
 
 arch="$(uname -m 2>/dev/null)"
 
+# ---------------------------------------------------------------------------
+# CPU model, frequency and cores
+#
+# The model/core parsing lives in common.sh so it can be tested against the
+# cpuinfo of every architecture this runs on, not just the one the test machine
+# has. What stays here is the cpufreq lookup, which is the part that needs a
+# real kernel: where /sys exposes a rate it is the frequency the CPU is running
+# at now, which is a better answer than the nominal one cpuinfo reports.
+# ---------------------------------------------------------------------------
+cpu_model=""
+cpu_mhz=""
+cpu_mhz_max=""
+cpu_cores=""
+
+_cpu_info="$(fcc_cpu_info)"
+{
+	IFS= read -r cpu_model
+	IFS= read -r cpu_mhz
+	IFS= read -r cpu_cores
+} <<-EOF
+$_cpu_info
+EOF
+
+# /proc/cpuinfo reports MHz as a float ("2400.000"); the page shows whole MHz.
+case "$cpu_mhz" in
+	''|*[!0-9.]*) cpu_mhz="" ;;
+	*.*)          cpu_mhz="${cpu_mhz%%.*}" ;;
+esac
+case "$cpu_mhz" in
+	''|*[!0-9]*) cpu_mhz="" ;;
+esac
+
+# cpufreq, where the kernel has it, answers better than /proc/cpuinfo: it is
+# the rate the CPU is running at now rather than a nominal one.
+_cpu_khz=""
+for _cpu_f in \
+	/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq \
+	/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq \
+	/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq
+do
+	[ -r "$_cpu_f" ] || continue
+	IFS= read -r _cpu_khz < "$_cpu_f" 2>/dev/null || :
+	[ -n "$_cpu_khz" ] && break
+done
+case "$_cpu_khz" in
+	''|*[!0-9]*) _cpu_khz="" ;;
+esac
+[ -n "$_cpu_khz" ] && cpu_mhz=$(( _cpu_khz / 1000 ))
+
+_cpu_khz_max=""
+if [ -r /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq ]; then
+	IFS= read -r _cpu_khz_max < /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || :
+fi
+case "$_cpu_khz_max" in
+	''|*[!0-9]*) _cpu_khz_max="" ;;
+esac
+[ -n "$_cpu_khz_max" ] && cpu_mhz_max=$(( _cpu_khz_max / 1000 ))
+
 # Build the process maps ONCE (no per-agent forks).
 #
 # pane_dead/pane_dead_status ride along on the map we already fetch, which is
@@ -172,12 +230,16 @@ COMM_MAP="$(build_comm_map)"
 	case "$session_count" in ''|*[!0-9]*) session_count=0 ;; esac
 	printf '  "sessions": {"active": %s},\n' "$session_count"
 
-	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s},\n' \
+	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s, "cpu_model": %s, "cpu_mhz": %s, "cpu_mhz_max": %s, "cpu_cores": %s},\n' \
 		"$(fcc_json_num_or_null "$mem_total")" \
 		"$(fcc_json_num_or_null "$mem_avail")" \
 		"$st_total_b" "$st_free_b" "$st_used_b" \
 		"$(fcc_json_str "$storage_path")" \
-		"$(fcc_json_str "$arch")"
+		"$(fcc_json_str "$arch")" \
+		"$(fcc_json_str_or_null "$cpu_model")" \
+		"$(fcc_json_num_or_null "$cpu_mhz")" \
+		"$(fcc_json_num_or_null "$cpu_mhz_max")" \
+		"$(fcc_json_num_or_null "$cpu_cores")"
 
 	printf '  "agents": {'
 	_ag_first=1
@@ -240,9 +302,24 @@ COMM_MAP="$(build_comm_map)"
 		fi
 		ag_ver="$(fcc_cache_get "agent_$aid" 2>/dev/null || true)"
 
+		# Section 44: "no version because it is not installed" and "no version
+		# because the probe failed" must not look identical, and inventing a
+		# version is worse than either. The reason travels beside the null so the
+		# table can say why rather than only that it does not know. This is the
+		# same rule agent.sh applies to its single-agent output; the batched
+		# document has to carry it too or the page loses the distinction.
+		ag_verr=""
+		if [ -z "${ag_ver:-}" ] && [ "$ag_installed" = true ]; then
+			if [ -z "$aprobe" ]; then
+				ag_verr="no version probe for this agent"
+			else
+				ag_verr="version command failed"
+			fi
+		fi
+
 		[ "$_ag_first" -eq 1 ] || printf ','
 		_ag_first=0
-		printf '\n    %s: {"name": %s, "command": %s, "installed": %s, "running": %s, "pid": %s, "uptime": %s, "memory_rss_kb": %s, "version": %s, "default": %s, "approx_size_mb": %s, "min_ram_mb": %s, "error": %s}' \
+		printf '\n    %s: {"name": %s, "command": %s, "installed": %s, "running": %s, "pid": %s, "uptime": %s, "memory_rss_kb": %s, "version": %s, "version_error": %s, "default": %s, "approx_size_mb": %s, "min_ram_mb": %s, "error": %s}' \
 			"$(fcc_json_str "$aid")" \
 			"$(fcc_json_str "$aname")" \
 			"$(fcc_json_str "$acmd")" \
@@ -251,6 +328,7 @@ COMM_MAP="$(build_comm_map)"
 			"$(fcc_json_num_or_null "$ag_up")" \
 			"$(fcc_json_num_or_null "$ag_rss")" \
 			"$(fcc_json_str_or_null "${ag_ver:-}")" \
+			"$(fcc_json_str_or_null "${ag_verr:-}")" \
 			"$(fcc_json_bool "$adef")" \
 			"$(fcc_json_num_or_null "$asize")" \
 			"$(fcc_json_num_or_null "$aram")" \

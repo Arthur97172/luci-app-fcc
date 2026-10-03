@@ -235,6 +235,122 @@ test_proc_readers() {
 	esac
 }
 
+# One line of a captured multi-line value, so a test can assert each field
+# separately instead of matching a blob.
+cpu_line() { printf '%s\n' "$1" | sed -n "$2p"; }
+
+test_cpu_info_reads_every_architectures_spelling() {
+	setup_sandbox
+	# /proc/cpuinfo names the CPU differently on every architecture OpenWrt runs
+	# on, so the parser is exercised against each spelling rather than against
+	# whatever the machine running the tests happens to be. A parser that only
+	# ever sees the test host's cpuinfo passes here and shows a dash on a router.
+	_tr_x86="$SANDBOX/cpuinfo.x86"
+	printf 'processor\t: 0\nmodel name\t: Intel(R) Core(TM) i7-10610U CPU @ 1.80GHz\ncpu MHz\t\t: 2398.829\n\nprocessor\t: 1\nmodel name\t: Intel(R) Core(TM) i7-10610U CPU @ 1.80GHz\ncpu MHz\t\t: 2398.829\n' > "$_tr_x86"
+	_tr_out="$(sh_common "fcc_cpu_info $_tr_x86")"
+	assert_eq "Intel(R) Core(TM) i7-10610U CPU @ 1.80GHz" "$(cpu_line "$_tr_out" 1)" "x86 reports its model name"
+	assert_eq "2398.829" "$(cpu_line "$_tr_out" 2)" "x86 reports its cpu MHz"
+	assert_eq "2" "$(cpu_line "$_tr_out" 3)" "x86 counts both processors"
+
+	# 32-bit ARM has no "model name"; the board's "Hardware" line is the only
+	# thing naming the CPU, and it is what the page must show.
+	_tr_arm="$SANDBOX/cpuinfo.arm"
+	printf 'processor\t: 0\nmodel name\t: ARMv7 Processor rev 5 (v7l)\nHardware\t: BCM2711\n\nprocessor\t: 1\nmodel name\t: ARMv7 Processor rev 5 (v7l)\n' > "$_tr_arm"
+	_tr_out="$(sh_common "fcc_cpu_info $_tr_arm")"
+	assert_eq "ARMv7 Processor rev 5 (v7l)" "$(cpu_line "$_tr_out" 1)" "arm prefers model name over Hardware"
+	assert_eq "2" "$(cpu_line "$_tr_out" 3)" "arm counts both processors"
+
+	_tr_arm_hw="$SANDBOX/cpuinfo.arm-hw"
+	printf 'processor\t: 0\nHardware\t: BCM2711\n' > "$_tr_arm_hw"
+	assert_eq "BCM2711" "$(cpu_line "$(sh_common "fcc_cpu_info $_tr_arm_hw")" 1)" \
+		"arm falls back to Hardware when there is no model name"
+
+	# MIPS names it "cpu model" and reports BogoMIPS. BogoMIPS is a calibration
+	# constant, not a clock rate, so it must not be picked up as the frequency —
+	# a number that looks like an answer and is not one is worse than a dash.
+	_tr_mips="$SANDBOX/cpuinfo.mips"
+	printf 'system type\t\t: MediaTek MT7621\ncpu model\t\t: MIPS 1004Kc V2.15\nBogoMIPS\t\t: 586.13\nprocessor\t\t: 0\n' > "$_tr_mips"
+	_tr_out="$(sh_common "fcc_cpu_info $_tr_mips")"
+	assert_eq "MIPS 1004Kc V2.15" "$(cpu_line "$_tr_out" 1)" "mips reports its cpu model"
+	assert_eq "" "$(cpu_line "$_tr_out" 2)" "BogoMIPS is not reported as a frequency"
+	assert_eq "1" "$(cpu_line "$_tr_out" 3)" "mips counts its single processor"
+
+	# A model name containing a colon must survive intact: reading the value
+	# from $2 rather than the whole line would truncate it at the colon.
+	_tr_colon="$SANDBOX/cpuinfo.colon"
+	printf 'processor\t: 0\nmodel name\t: Foo: Bar Baz\n' > "$_tr_colon"
+	assert_eq "Foo: Bar Baz" "$(cpu_line "$(sh_common "fcc_cpu_info $_tr_colon")" 1)" \
+		"a colon inside the model name does not truncate it"
+
+	# Nothing readable means nothing reported. Inventing "1 core" for a cpuinfo
+	# we could not parse would put a made-up reading on the page.
+	: > "$SANDBOX/cpuinfo.empty"
+	_tr_out="$(sh_common "fcc_cpu_info $SANDBOX/cpuinfo.empty")"
+	assert_eq "" "$(cpu_line "$_tr_out" 1)" "an empty cpuinfo yields no model"
+	assert_eq "" "$(cpu_line "$_tr_out" 3)" "an empty cpuinfo yields no core count"
+
+	assert_eq "" "$(sh_common 'fcc_cpu_info /nonexistent/cpuinfo')" \
+		"a missing cpuinfo yields nothing rather than an error"
+}
+
+test_status_document_reports_the_cpu() {
+	setup_sandbox
+	# Basic Information shows the CPU from this document, so the four fields have
+	# to be here and correctly typed. The values are checked against /proc rather
+	# than hard-coded, so the test passes on any machine.
+	_tr_sys="$(sh_script status.sh | grep '"system":')"
+
+	assert_contains "$_tr_sys" '"cpu_model":' "the system block carries a CPU model"
+	assert_contains "$_tr_sys" '"cpu_mhz":' "the system block carries a current frequency"
+	assert_contains "$_tr_sys" '"cpu_mhz_max":' "the system block carries a maximum frequency"
+	assert_contains "$_tr_sys" '"cpu_cores":' "the system block carries a core count"
+
+	# A core count that disagrees with /proc is worse than no core count: the
+	# page presents it as a reading.
+	assert_contains "$_tr_sys" "\"cpu_cores\": $(grep -c '^processor' /proc/cpuinfo)" \
+		"the core count matches /proc/cpuinfo"
+
+	# Section 44: a frequency the kernel does not expose comes through as null,
+	# never as a guessed number.
+	_tr_mhz="$(printf '%s\n' "$_tr_sys" | sed -e 's/.*"cpu_mhz": //' -e 's/,.*//')"
+	case "$_tr_mhz" in
+		null) pass ;;
+		''|*[!0-9]*) fail "cpu_mhz should be null or a whole number of MHz, got [$_tr_mhz]" ;;
+		*) pass ;;
+	esac
+}
+
+test_status_reports_why_a_version_is_missing() {
+	setup_sandbox
+	# Section 44: "no version because the agent is not installed" and "no version
+	# because the probe did not produce one" are different states, and collapsing
+	# them into a single dash throws away the only clue the user gets. The
+	# batched document has to carry the reason beside the null, the way agent.sh
+	# does for its single-agent output, or the table cannot tell them apart.
+	#
+	# `sh` stands in for an installed launcher: installation is decided by
+	# `command -v`, so anything on PATH counts.
+	_tr_conf="$SANDBOX/agents.conf"
+	printf '%s\n' \
+		'noprobe|No Probe|sh|0|10|10|' \
+		'badprobe|Bad Probe|sh|0|10|10|false' \
+		'absent|Absent|fcc-not-a-real-launcher|0|10|10|sh' > "$_tr_conf"
+
+	# sh_script pins the real registry, so this one invocation builds the
+	# environment itself.
+	_tr_json="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$_tr_conf" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		sh "$LIBEXEC/status.sh" 2>&1)"
+
+	assert_contains "$_tr_json" '"version_error": "no version probe for this agent"' \
+		"an installed agent with no probe registered says so"
+	assert_contains "$_tr_json" '"version_error": "version command failed"' \
+		"an installed agent whose probe produced nothing says so"
+	assert_contains "$_tr_json" '"version_error": null' \
+		"an agent that is not installed reports no error, only an absent version"
+	assert_contains "$_tr_json" '"installed": false' "the uninstalled agent is reported as such"
+}
+
 test_starttime_parsing_survives_a_hostile_comm() {
 	setup_sandbox
 	# /proc/<pid>/stat field 2 is the command name, which may contain spaces and

@@ -357,6 +357,43 @@ fcc_proc_alive() {
 	[ -n "$1" ] && [ -d "/proc/$1" ]
 }
 
+fcc_cpu_info() {
+	# fcc_cpu_info [cpuinfo-file] -> three lines: model, MHz, cores.
+	#
+	# /proc/cpuinfo names the CPU differently on every architecture OpenWrt runs
+	# on: x86 has "model name", 32-bit ARM has "Hardware", MIPS has "cpu model".
+	# The first of those present wins; when none is, the model line comes back
+	# empty and the page shows a dash rather than a board name passed off as a
+	# CPU. The core count is empty too when no "processor" line was seen — the
+	# caller reports null rather than inventing a 1.
+	#
+	# BogoMIPS is deliberately not consulted. It is a calibration constant, not a
+	# clock rate, and printing it as MHz would be a number that looks like an
+	# answer and is not one. The MHz here is what x86 reports; a kernel with
+	# cpufreq answers better, and the caller prefers that.
+	#
+	# The value is taken from $0 rather than $2 because a model name may itself
+	# contain a colon and $2 would stop at it.
+	awk -F: '
+		{
+			k = $1
+			sub(/^[ \t]+/, "", k); sub(/[ \t]+$/, "", k)
+			v = $0
+			sub(/^[^:]*:[ \t]*/, "", v); sub(/[ \t]+$/, "", v)
+		}
+		k == "processor"  { cores++ }
+		k == "model name" { if (model  == "") model  = v }
+		k == "Hardware"   { if (hw     == "") hw     = v }
+		k == "cpu model"  { if (cmodel == "") cmodel = v }
+		k == "cpu MHz"    { if (mhz    == "") mhz    = v }
+		END {
+			if (model == "") model = cmodel
+			if (model == "") model = hw
+			printf "%s\n%s\n%s\n", model, mhz, cores
+		}
+	' "${1:-/proc/cpuinfo}" 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
 # FCC server health (DESIGN_SPEC.md section 49)
 #

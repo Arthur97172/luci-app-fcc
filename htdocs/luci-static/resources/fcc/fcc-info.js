@@ -21,10 +21,32 @@
 		]);
 	}
 
+	/* Frequency and core count are separate readings and either can be missing —
+	 * a kernel with no cpufreq has no current rate, and a device that reports
+	 * neither shows only what it does have rather than a line of blanks. The
+	 * current rate is printed against the maximum only when the two differ: on a
+	 * fixed-clock SoC they are the same number and repeating it reads as a bug. */
+	function cpuDetail(s) {
+		var bits = [];
+		var cur = s.cpu_mhz, max = s.cpu_mhz_max;
+		if (cur && max && String(cur) !== String(max)) {
+			bits.push(cur + ' / ' + max + ' MHz');
+		} else if (cur || max) {
+			bits.push((cur || max) + ' MHz');
+		}
+		if (s.cpu_cores) {
+			bits.push(s.cpu_cores + ' ' + (Number(s.cpu_cores) === 1 ? FCC._('core') : FCC._('cores')));
+		}
+		return bits.join(' · ');
+	}
+
 	function renderSystem(s) {
 		var box = FCC.$('#fcc-info-system');
 		box.innerHTML = '';
 		var total = s.memory_total_kb, avail = s.memory_available_kb;
+		/* Section 44: a device whose /proc/cpuinfo names no model shows a dash
+		 * rather than a board name passed off as a CPU. */
+		box.appendChild(card(FCC._('CPU'), s.cpu_model || '—', cpuDetail(s)));
 		box.appendChild(card(FCC._('Memory'), FCC.fmtKB(total),
 			avail !== null && avail !== undefined
 				? FCC.fmtKB(avail) + ' ' + FCC._('available')
