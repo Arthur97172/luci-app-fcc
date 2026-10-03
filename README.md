@@ -195,10 +195,33 @@ sh scripts/gen-po.sh --check # 模板过期则失败
 然后在里面执行 `/etc/init.d/fcc status`。这正是第 90、91 节要求的检查，
 也是唯一一个靠读文件无法回答的检查。
 
+---
+
 shell 后端遵循一条容易踩到的规则：POSIX `sh` 只有一个被所有函数共享的全局作用域，
 而脚本在 `set -u` 下运行。一个赋值裸 `_name` 的辅助函数因此会覆盖调用者的变量。
 每个局部变量都带一个按函数区分的前缀（`_ug_v`、`_ou_off`），
 `tests/test_shell.sh` 会强制执行。
+
+### 发布
+
+版本只有一个来源：`VERSION`。Makefile 用它给软件包打版本，*基本信息*页面显示它，
+Release 的 tag 也必须与它一致。
+
+```sh
+# VERSION 里是 0.1.0 时
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+推一个 `v*` tag 会先跑静态检查，再在四个架构上构建并各跑一次安装冒烟测试，
+全部通过后才发布。发布的第一步就是拿 tag 和 `VERSION` 比对：对不上立即失败，
+不会出现名为 v0.2.0、包却叫 0.1.0 的 Release。标题同样取自 `VERSION` 而非 tag，
+两者无法各自漂移。
+
+资产只有本软件包——`luci-app-fcc_0.1.0-r1_all.ipk`、`luci-app-fcc-0.1.0-r1.apk`
+和 `SHA256SUMS`。四个架构构建的是同一个文件（`PKGARCH:=all`），收到后是逐一
+比对而不是合并，两个 SDK 对同一个包给出不同结果会直接失败。FCC 运行时是按需
+联网安装的，所以 Release 里没有预构建的运行时压缩包。
 
 ---
 
