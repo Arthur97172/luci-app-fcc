@@ -211,14 +211,18 @@ fcc_valid_agent() {
 	# wrong and reads like a second, unrelated problem.
 	#
 	# Measured on the smoke container: the message appears with SIGPIPE
-	# ignored and disappears without it. It does NOT appear for this
-	# particular pipeline, because ten registry lines fit in the pipe buffer
-	# and cut finishes writing before grep can exit — which is why this is a
-	# shape being removed rather than a failure being reproduced. Nothing here
-	# is large enough to be worth short-circuiting, so awk reads the registry
-	# to the end and decides then, and no stage is ever cut off mid-write.
-	# The id is already known to be lowercase alphanumeric, so it is safe to
-	# hand to awk as a value.
+	# ignored and disappears without it. Whether it appears for this pipeline
+	# depends on whether cut has anything left to write when grep exits, and
+	# that is a race rather than a property: the shipped ten-line registry fits
+	# in the pipe buffer and stayed silent, while the same pipeline over a
+	# registry larger than the buffer prints it every time — which is the
+	# reproduction scripts/smoke.sh now asserts, both ways round. It was
+	# reported from a router, where the race goes the other way: grep is a
+	# process on a slow CPU and can finish before cut is scheduled to write at
+	# all. Nothing here is large enough to be worth short-circuiting, so awk
+	# reads the registry to the end and decides then, and no stage is ever cut
+	# off mid-write. The id is already known to be lowercase alphanumeric, so
+	# it is safe to hand to awk as a value.
 	fcc_agents_each | awk -F'|' -v id="$1" '$1 == id { found = 1 } END { exit !found }'
 }
 

@@ -488,6 +488,41 @@ else
 	smoke_ok "nothing was left writing into a closed pipe"
 fi
 
+# The complaint that check is about is not hypothetical, and this is where that
+# is shown rather than asserted. The shape it came from — cut writing into a
+# reader that exits on its first match — still prints it on this rootfs, once
+# the registry is bigger than the pipe buffer so that cut has something left to
+# write after the reader has gone. The shipped registry is ten lines and fits in
+# the buffer, so the old code was silent here and loud on a router; a regression
+# would come back the same way, which is what makes this worth checking with a
+# registry that is not ten lines.
+#
+# The id asked for is the first line's, so the reader matches immediately —
+# which is the case an install actually hits, because claude is first in
+# agents.conf.
+smoke_sh 'i=0
+	while [ $i -lt 3000 ]; do
+		printf "claude|Claude Code|claude|1|300|1024|--version\n"
+		i=$(( i + 1 ))
+	done > /tmp/fcc-big-registry.conf
+	trap "" PIPE
+	cut -d"|" -f1 /tmp/fcc-big-registry.conf | grep -qx claude 2>&1' \
+	> "$SMOKE_TMP/pipe-old" 2>&1 || true
+if grep -q 'Broken pipe' "$SMOKE_TMP/pipe-old"; then
+	smoke_ok "the shape this replaced still complains, so the check above can fail"
+else
+	smoke_bad "the old shape stayed silent, so the check above proves nothing"
+fi
+
+smoke_sh '. /usr/libexec/fcc/common.sh
+	FCC_AGENTS_CONF=/tmp/fcc-big-registry.conf fcc_valid_agent claude 2>&1' \
+	> "$SMOKE_TMP/pipe-new" 2>&1 || true
+if grep -q 'Broken pipe' "$SMOKE_TMP/pipe-new"; then
+	smoke_bad "fcc_valid_agent complained into a closed pipe: $(head -c 200 "$SMOKE_TMP/pipe-new")"
+else
+	smoke_ok "and the replacement is silent on the same registry"
+fi
+
 # The log is what the page tails, so the reason has to reach it and not just
 # stdout. Each line carries its own timestamp, which is what makes it a log
 # entry rather than a blob dropped into the file.
