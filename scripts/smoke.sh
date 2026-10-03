@@ -283,6 +283,22 @@ SMOKE_I18N="$(find "$SMOKE_DIST" -maxdepth 1 -type f -name "luci-i18n-fcc-*.$SMO
 printf 'smoke: %s on %s (%s)\n' "$SMOKE_IMAGE" "$SMOKE_PLATFORM" "$SMOKE_EXT"
 printf 'smoke: package %s\n' "$SMOKE_APP"
 
+# A locally imported rootfs carries whatever platform `docker import` recorded,
+# which is the host's unless it was told otherwise. Asking to run it as anything
+# else makes Docker decide the image is not here at all and go looking in a
+# registry — the run then dies with "pull access denied", which names neither
+# the platform nor the import and reads like a credentials problem. Check first
+# and say what is actually wrong.
+SMOKE_IMG_PLATFORM="$(docker image inspect "$SMOKE_IMAGE" \
+	--format '{{.Os}}/{{.Architecture}}' 2>/dev/null || true)"
+if [ -n "$SMOKE_IMG_PLATFORM" ] && [ "$SMOKE_IMG_PLATFORM" != "$SMOKE_PLATFORM" ]; then
+	printf 'smoke: %s is %s but this run asked for %s\n' \
+		"$SMOKE_IMAGE" "$SMOKE_IMG_PLATFORM" "$SMOKE_PLATFORM" >&2
+	printf 'smoke: re-import it with: docker import --platform %s <rootfs.tar.gz> %s\n' \
+		"$SMOKE_PLATFORM" "$SMOKE_IMAGE" >&2
+	exit 2
+fi
+
 smoke_note "booting the rootfs"
 docker run -d --name "$SMOKE_NAME" --privileged --platform "$SMOKE_PLATFORM" \
 	-v "$SMOKE_TMP/network:/etc/config/network:ro" \

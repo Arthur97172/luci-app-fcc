@@ -442,7 +442,16 @@ jobs:
           echo "fetching $url"
           curl -fsSL --retry 3 --retry-delay 5 -o rootfs.tar.gz "$url"
           ls -l rootfs.tar.gz
-          docker import rootfs.tar.gz "fcc-rootfs:${{ matrix.release }}"
+          # --platform matters, and only for the arm64 entries. `docker import`
+          # records the *host's* platform unless told otherwise, so an arm64
+          # rootfs imported on an x86_64 runner is labelled linux/amd64. Asking
+          # to run that as linux/arm64 makes Docker conclude the image is not
+          # here at all and go looking in a registry, where it fails with
+          # "pull access denied for fcc-rootfs" — an error that names neither
+          # the platform nor the import. The x86_64 entries match the host and
+          # would pass either way, which is exactly why this went unnoticed.
+          docker import --platform "${{ matrix.platform }}" \
+            rootfs.tar.gz "fcc-rootfs:${{ matrix.release }}"
 
       - name: Install and check
         run: |
