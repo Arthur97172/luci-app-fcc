@@ -241,6 +241,109 @@ eq("bytes_to_hex/padded",util.bytes_to_hex("\1\2"), "01 02")
 eq("bytes_to_hex/high",  util.bytes_to_hex("\255"), "ff")
 
 -- ---------------------------------------------------------------------------
+-- spawn_detached / process_alive
+--
+-- These two carry the fix for "Install / reinstall" answering "could not start
+-- the job". OpenWrt's busybox has no `nohup`, so the job never ran — but a
+-- shell that cannot exec a command still sets `$!`, and the process it names is
+-- usually still there when /proc is read, so the failure looked like a success
+-- and the check that was supposed to catch it was a race the child won.
+--
+-- The checks below are the two halves of the answer: a pid that really is the
+-- program that was asked for, and a refusal that does not depend on timing.
+-- ---------------------------------------------------------------------------
+check("process_alive/rejects_nil",      util.process_alive(nil) == false)
+check("process_alive/rejects_string",   util.process_alive("123") == false)
+check("process_alive/rejects_zero",     util.process_alive(0) == false)
+check("process_alive/rejects_negative", util.process_alive(-1) == false)
+check("process_alive/rejects_float",    util.process_alive(1.5) == false)
+
+-- A pid whose process has been reaped. `echo $$` runs a shell that exits
+-- immediately, and close() reaps it, so the number is free by the time it is
+-- asked about — which makes this deterministic rather than a wait.
+local _sd_fh = io.popen("echo $$")
+local _sd_dead = tonumber((_sd_fh:read("*a") or ""):match("%d+"))
+_sd_fh:close()
+check("process_alive/dead_pid", _sd_dead ~= nil and util.process_alive(_sd_dead) == false,
+	"pid " .. tostring(_sd_dead) .. " should have been gone")
+
+-- One field of /proc/<pid>/stat, counted after the command name. The name is
+-- in parentheses and may itself contain spaces or parentheses, so the parse
+-- starts at the last ')' rather than splitting the whole line.
+local function proc_stat_field(pid, n)
+	local fh = io.open("/proc/" .. pid .. "/stat", "r")
+	if not fh then return nil end
+	local rest = (fh:read("*l") or ""):match("%)%s*(.*)$")
+	fh:close()
+	if not rest then return nil end
+	local i = 0
+	for field in rest:gmatch("%S+") do
+		i = i + 1
+		if i == n then return field end
+	end
+	return nil
+end
+
+-- Retry a read until it answers, so an assertion is about the end state rather
+-- than about how quickly the kernel reached it.
+local function await(fn, tries)
+	for _ = 1, (tries or 100) do
+		local v = fn()
+		if v then return v end
+		os.execute("sleep 0.02")
+	end
+	return nil
+end
+
+-- The live case, and the one the UI depends on: the pid must name the program
+-- that was asked for, not merely some process that happens to be running.
+--
+-- It does, and the number does not change — setsid() takes the session and then
+-- execs in place. But both happen just after the fork, so reading /proc once
+-- catches the process while it is still called `setsid`. That is a fact about
+-- how fast Lua reads, not about the job, so the read is retried.
+local _sd_log = os.tmpname()
+local _sd_pid = util.spawn_detached("/bin/sleep", { "30" }, _sd_log)
+check("spawn_detached/returns_a_live_pid",
+	_sd_pid ~= nil and util.process_alive(_sd_pid) == true, "got " .. tostring(_sd_pid))
+
+local _sd_comm, _sd_session = nil, nil
+if _sd_pid then
+	_sd_comm = await(function()
+		local c = io.open("/proc/" .. _sd_pid .. "/comm", "r")
+		if not c then return nil end
+		local s = (c:read("*l") or ""):gsub("%s+$", "")
+		c:close()
+		return (s ~= "" and s ~= "setsid") and s or nil
+	end)
+	-- Field 4 after the name: state ppid pgrp session. By the time the exec has
+	-- happened setsid() has certainly been called, so this needs no retry.
+	_sd_session = tonumber(proc_stat_field(_sd_pid, 4))
+	os.execute("kill " .. _sd_pid .. " 2>/dev/null")
+end
+os.remove(_sd_log)
+
+check("spawn_detached/pid_is_the_program", _sd_comm == "sleep", "got " .. tostring(_sd_comm))
+
+-- The other half of what setsid buys, and the reason it replaced `nohup`: the
+-- job is in a session of its own, so it survives the CGI process being reaped.
+check("spawn_detached/job_is_in_its_own_session",
+	_sd_pid ~= nil and _sd_session == _sd_pid,
+	"session " .. tostring(_sd_session) .. " for pid " .. tostring(_sd_pid))
+
+-- The regression itself: a command that is not there must be refused, and the
+-- answer must be the same on every run. Before the pre-check this returned a
+-- pid five times out of five.
+check("spawn_detached/refuses_a_path_that_is_not_there",
+	util.spawn_detached("/nonexistent/fcc-not-here", {}, "/dev/null") == nil)
+check("spawn_detached/refuses_a_name_that_is_not_on_path",
+	util.spawn_detached("fcc-no-such-applet", {}, "/dev/null") == nil)
+check("spawn_detached/refuses_an_empty_command",
+	util.spawn_detached("", {}, "/dev/null") == nil)
+check("spawn_detached/refuses_a_nil_command",
+	util.spawn_detached(nil, {}, "/dev/null") == nil)
+
+-- ---------------------------------------------------------------------------
 -- paths
 -- ---------------------------------------------------------------------------
 check("paths/script_ok",    paths.script("status") == paths.LIBEXEC .. "/status.sh")

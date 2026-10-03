@@ -61,28 +61,84 @@ function exec_silent(cmd, args)
 	exec_argv(cmd, args)
 end
 
+--- Could this command be started at all?
+--
+-- This has to be answered before the fork. A shell that cannot exec the command
+-- still sets `$!`, and the process it names is normally still there at the
+-- moment it is read — so asking /proc afterwards is a race the child wins, and
+-- a job that never ran is indistinguishable from one that started. The
+-- filesystem is the only party that knows in advance.
+--
+-- An absolute path is checked where it is; a bare name is looked up the way the
+-- shell would look it up. Whether the file is *executable* is still the exec's
+-- answer to give — this rejects the case that would otherwise fail silently,
+-- not every case that can fail.
+local function runnable(cmd)
+	if type(cmd) ~= "string" or cmd == "" then return false end
+	if cmd:find("/", 1, true) then
+		return fs.access(cmd) ~= nil
+	end
+	return which(cmd) ~= nil
+end
+
 --- Start a long-running command detached from this request.
 --
 -- Installing or updating the FCC runtime downloads and builds for minutes —
 -- far longer than an HTTP request may live. The work is therefore started in
 -- the background with its output appended to a log file, and the UI polls the
--- log and the install lock. Both the child's stdout/stderr and the wrapper
--- shell's are redirected, so io.popen() does not block waiting on the pipe.
+-- log and the install lock. The child's stdout/stderr and the wrapper shell's
+-- are both redirected, so io.popen() does not block waiting on the pipe.
+--
+-- Two details here are load-bearing, and getting either wrong fails silently:
+--
+--   * busybox has no `nohup`. OpenWrt's /bin/sh is busybox ash and the applet
+--     is not built into it, so `nohup cmd &` dies with "nohup: not found" —
+--     and because the redirections are applied before the failed exec, that
+--     message is written to the *log file* rather than to stderr. The job
+--     never ran and nothing the caller could see said so. `setsid` is present
+--     on every OpenWrt image and is the better tool regardless: the child
+--     leaves this request's session, so it survives the CGI process being
+--     reaped.
+--   * `$!` is set as soon as the shell forks, so on its own it is not evidence
+--     that the exec succeeded. The command is therefore checked before the fork
+--     (runnable), which is a question that can be settled without racing the
+--     child; the pid is then confirmed against /proc as a second, best-effort
+--     guard. Measured on a host, the /proc check alone does not catch a command
+--     that fails to exec — the setsid process is still alive when it is read —
+--     which is why the pre-check carries the weight.
 --
 -- @return pid (number) on success, nil on failure
 function spawn_detached(cmd, args, logfile)
+	if not runnable(cmd) then return nil end
+
 	local parts = { shell_quote(cmd) }
 	for _, a in ipairs(args or {}) do
 		parts[#parts + 1] = shell_quote(a)
 	end
 	local log = shell_quote(logfile or "/dev/null")
-	local line = "nohup " .. table.concat(parts, " ") ..
-		" >> " .. log .. " 2>&1 < /dev/null & echo $!"
-	local fh = io.popen(line)
+	local job = table.concat(parts, " ") .. " >> " .. log .. " 2>&1 < /dev/null"
+
+	local setsid = which("setsid")
+	if setsid then job = shell_quote(setsid) .. " " .. job end
+
+	local fh = io.popen(job .. " & echo $!")
 	if not fh then return nil end
 	local pid = tonumber((fh:read("*a") or ""):match("%d+"))
 	fh:close()
+	if not pid or not process_alive(pid) then return nil end
 	return pid
+end
+
+--- Is this pid still running?
+--
+-- /proc is the portable answer on OpenWrt: nixio exposes no kill(0), and
+-- signalling a pid we did not create in order to find out would be worse than
+-- reading the directory that already says so.
+function process_alive(pid)
+	if type(pid) ~= "number" or pid <= 0 or pid ~= math.floor(pid) then
+		return false
+	end
+	return fs.access("/proc/" .. pid) ~= nil
 end
 
 -- ---------------------------------------------------------------------------

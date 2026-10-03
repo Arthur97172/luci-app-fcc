@@ -214,6 +214,26 @@ end
 -- Install/update take minutes. The HTTP request only starts the work and
 -- returns; the UI then polls act_job() for the lock state and the log tail.
 -- ---------------------------------------------------------------------------
+--- The directory a job's log goes in, created if it is not there yet.
+--
+-- The install path is not always writable — /opt may be absent, or sit on a
+-- read-only overlay — and a job whose log cannot be opened dies before it
+-- starts, because the shell applies the redirection before the exec. The
+-- backend falls back to /tmp/fcc-logs and act_job() reads from there as well,
+-- so the same fallback is applied here and the two cannot disagree about where
+-- a job's output went.
+local function job_log_dir()
+	local mkdir = util.which("mkdir")
+	local dir = paths.logs_dir()
+	if mkdir then
+		local _, code = util.exec_argv(mkdir, { "-p", dir })
+		if code == 0 then return dir end
+	end
+	dir = "/tmp/fcc-logs"
+	if mkdir then util.exec_argv(mkdir, { "-p", dir }) end
+	return dir
+end
+
 function start_job(argv, logname, lockname)
 	local script = paths.script(argv[1])
 	if not script or not util.file_exists(script) then
@@ -222,10 +242,7 @@ function start_job(argv, logname, lockname)
 	local rest = {}
 	for i = 2, #argv do rest[#rest + 1] = argv[i] end
 
-	local log = paths.logs_dir() .. "/" .. logname
-	-- Make sure the log directory exists before the detached child opens it.
-	local mkdir = util.which("mkdir")
-	if mkdir then util.exec_argv(mkdir, { "-p", paths.logs_dir() }) end
+	local log = job_log_dir() .. "/" .. logname
 
 	local pid = util.spawn_detached(script, rest, log)
 	if not pid then return fail("could not start the job") end
