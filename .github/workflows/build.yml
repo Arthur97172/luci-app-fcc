@@ -250,17 +250,26 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
+          # Only this project's packages. Building luci-app-fcc builds its whole
+          # dependency chain alongside it — luci-base, curl, tmux, lua and about
+          # sixty others — and copying bin/packages wholesale put every one of
+          # those into the artifact, and from there into a release that sections
+          # 62 and 93 say carries luci-app-fcc. Publishing other projects'
+          # packages under our name is wrong however convenient the glob is.
+          #
+          # The smoke job does not need them: it installs the built package and
+          # resolves its dependencies from the release's own feed.
+          #
           # The feed name is the directory the SDK writes into, so glob the
           # extension across bin/packages rather than guessing the arch path.
-          find "$SDK_DIR/bin/packages" -name "*.${{ matrix.ext }}" -exec cp -v {} dist/ \;
-          test -n "$(ls -A dist)" || {
-            echo "::error::the build produced no .${{ matrix.ext }}"
-            find "$SDK_DIR/bin" -maxdepth 4 -type d | head -50
-            exit 1
-          }
-          # The dependency chain's packages land in dist/ as well, so a
-          # non-empty dist is no evidence that the packages this job exists to
-          # produce were built. Assert on those two by name.
+          find "$SDK_DIR/bin/packages" -name "luci-app-fcc[-_]*.${{ matrix.ext }}" \
+            -exec cp -v {} dist/ \;
+          find "$SDK_DIR/bin/packages" -name "luci-i18n-fcc-*.${{ matrix.ext }}" \
+            -exec cp -v {} dist/ \;
+          # Assert on the two packages by name. What this catches is a build
+          # that produced no package of ours at all because the config never
+          # selected it — the dependency chain still builds in that case, so
+          # "dist is non-empty" would say nothing.
           ls dist/luci-app-fcc[-_]*.${{ matrix.ext }} >/dev/null 2>&1 || {
             echo "::error::luci-app-fcc was not built"
             find "$SDK_DIR/bin/packages" -maxdepth 3 -type d
@@ -481,13 +490,49 @@ jobs:
         with:
           path: artifacts
           pattern: luci-app-fcc-*
-          merge-multiple: true
+
+      - name: Collect the packages
+        # Sections 62 and 93: a release carries this package. Every
+        # architecture builds the same two files — section 92's PKGARCH=all
+        # makes them architecture-independent — so all four artifacts arrive
+        # holding copies of the same names. They are compared rather than
+        # merged: two SDKs disagreeing about the same package is a fact worth
+        # failing on, not something to settle by arrival order.
+        #
+        # The name filter is belt and braces. The build job already collects
+        # only our packages, but an artifact that somehow carried an upstream
+        # one would otherwise be published as if it were ours.
+        run: |
+          set -eu
+          mkdir -p release
+          for f in artifacts/*/*; do
+            [ -f "$f" ] || continue
+            b="$(basename "$f")"
+            case "$b" in
+              luci-app-fcc*|luci-i18n-fcc*) : ;;
+              *) echo "::warning::not publishing $b"; continue ;;
+            esac
+            if [ -e "release/$b" ]; then
+              cmp -s "$f" "release/$b" || {
+                echo "::error::$b differs between the artifacts that carry it"
+                sha256sum "$f" "release/$b"
+                exit 1
+              }
+              continue
+            fi
+            cp "$f" "release/$b"
+          done
+          ls -l release
+          test -n "$(ls -A release)" || {
+            echo "::error::no packages to publish"
+            find artifacts -maxdepth 2
+            exit 1
+          }
 
       - name: Checksums
         run: |
           set -eu
-          ls -l artifacts
-          cd artifacts && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
+          cd release && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
 
       - name: Create the release
         env:
@@ -497,4 +542,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "luci-app-fcc $GITHUB_REF_NAME" \
             --generate-notes \
-            artifacts/*
+            release/*

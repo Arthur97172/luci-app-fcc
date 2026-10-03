@@ -13,6 +13,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 . "$(dirname -- "$0")/lib.sh"
 
 MAKEFILE="$ROOT/Makefile"
+WORKFLOW="$ROOT/.github/workflows/build.yml"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -253,6 +254,69 @@ test_acl_covers_every_backend_script() {
 		esac
 	done
 	assert_eq "" "$(printf '%s' "$_ts_bad" | sed 's/^ //')" "every backend script is in the ACL"
+}
+
+# ---------------------------------------------------------------------------
+# What a release publishes (sections 62 and 93)
+#
+# Sections 62 and 93 name the assets a release carries: luci-app-fcc's own
+# packages. The SDK builds the whole dependency chain alongside them, and the
+# difference between "we publish our package" and "we publish sixty upstream
+# packages as well" is one glob — which is exactly the kind of thing that
+# changes without anyone noticing, because nothing downstream complains.
+# ---------------------------------------------------------------------------
+
+# The collect step of the build job, up to the step that follows it.
+collect_step() {
+	sed -n '/- name: Collect artifacts/,/- name: Verify the artifacts/p' "$WORKFLOW"
+}
+
+# The release job, from its name to the end of the file.
+release_job() {
+	sed -n '/^  release:/,$p' "$WORKFLOW"
+}
+
+test_the_build_collects_only_our_packages() {
+	_ts_c="$(collect_step)"
+	assert_ne "" "$_ts_c" "the build job has a collect step"
+	# The glob that collects the entire chain. Spelled out literally so that an
+	# edit reinstating it is caught rather than quietly republishing upstream
+	# packages under this project's name.
+	case "$_ts_c" in
+		*'-name "*.${{ matrix.ext }}"'*)
+			fail "the collect step copies every package the SDK built" ;;
+		*) pass ;;
+	esac
+	for _ts_p in 'luci-app-fcc[-_]*' 'luci-i18n-fcc-*'; do
+		assert_contains "$_ts_c" "$_ts_p" "the collect step is scoped to $_ts_p"
+	done
+}
+
+test_the_release_does_not_merge_architectures_blindly() {
+	# All four artifacts carry the same two packages — section 92's PKGARCH=all
+	# makes them architecture-independent — so merging them lets one copy
+	# overwrite another with nothing said. Two SDKs disagreeing about the same
+	# package is worth failing on, not resolving by arrival order.
+	_ts_r="$(release_job)"
+	assert_ne "" "$_ts_r" "the workflow has a release job"
+	case "$_ts_r" in
+		*'merge-multiple: true'*)
+			fail "the release job merges artifacts, so duplicates overwrite silently" ;;
+		*) pass ;;
+	esac
+	assert_contains "$_ts_r" 'cmp -s' "the release job compares the copies it received"
+}
+
+test_the_release_publishes_only_our_packages() {
+	_ts_r="$(release_job)"
+	assert_contains "$_ts_r" 'luci-app-fcc*|luci-i18n-fcc*' \
+		"the release job filters the assets it publishes"
+	# The publish list must be the collected directory, not the raw download:
+	# artifacts/ is what the job received, release/ is what it decided to ship,
+	# and only the second one has been filtered.
+	_ts_gh="$(printf '%s\n' "$_ts_r" | sed -n '/gh release create/,$p')"
+	assert_contains "$_ts_gh" 'release/*' "the release publishes the filtered directory"
+	assert_not_contains "$_ts_gh" 'artifacts/' "the release does not publish the raw download"
 }
 
 tests_main
