@@ -54,13 +54,13 @@ msgstr ""
 msgid "Bind address"
 msgstr ""
 
+msgid "CPU"
+msgstr ""
+
 msgid "Check for updates"
 msgstr ""
 
 msgid "Checking…"
-msgstr ""
-
-msgid "Choose which agents to install. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unchecked rather than failing the install."
 msgstr ""
 
 msgid "Clean up finished sessions"
@@ -258,6 +258,9 @@ msgstr ""
 msgid "Settings saved."
 msgstr ""
 
+msgid "Size / RAM"
+msgstr ""
+
 msgid "Start"
 msgstr ""
 
@@ -312,6 +315,9 @@ msgstr ""
 msgid "This log is empty."
 msgstr ""
 
+msgid "Tick the agents to install, then install the runtime. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unticked rather than failing the install."
+msgstr ""
+
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr ""
 
@@ -361,6 +367,12 @@ msgid "about %d MB"
 msgstr ""
 
 msgid "available"
+msgstr ""
+
+msgid "core"
+msgstr ""
+
+msgid "cores"
 msgstr ""
 
 msgid "free"

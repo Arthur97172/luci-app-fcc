@@ -52,14 +52,17 @@ msgstr "基本信息"
 msgid "Bind address"
 msgstr "绑定地址"
 
+msgid "CPU"
+msgstr "处理器"
+
 msgid "Check for updates"
 msgstr "检查更新"
 
 msgid "Checking…"
 msgstr "正在检查…"
 
-msgid "Choose which agents to install. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unchecked rather than failing the install."
-msgstr "选择要安装的 Agent。默认选项会根据本机内存和可用空间挑选；放不下的 Agent 会保持未勾选，而不是让安装失败。"
+msgid "Tick the agents to install, then install the runtime. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unticked rather than failing the install."
+msgstr "勾选要安装的 Agent，然后安装运行时。默认选项会根据本机内存和可用空间挑选；放不下的 Agent 会保持未勾选，而不是让安装失败。"
 
 msgid "Clean up finished sessions"
 msgstr "清理已结束的会话"
@@ -256,6 +259,9 @@ msgstr "设置"
 msgid "Settings saved."
 msgstr "设置已保存。"
 
+msgid "Size / RAM"
+msgstr "体积 / 内存"
+
 msgid "Start"
 msgstr "启动"
 
@@ -360,6 +366,12 @@ msgstr "约 %d MB"
 
 msgid "available"
 msgstr "可用"
+
+msgid "core"
+msgstr "核"
+
+msgid "cores"
+msgstr "核"
 
 msgid "free"
 msgstr "空闲"
