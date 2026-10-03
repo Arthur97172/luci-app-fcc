@@ -380,6 +380,17 @@
 			.then(function (ids) { agentRecommended = ids; });
 	}
 
+	/* The install script prints PRECHECK_FAILED as the machine-readable verdict
+	 * for "the compatibility gate refused this". It is the one line in a job's
+	 * output that is a decision rather than progress, which is what makes it
+	 * worth matching on: everything else in that log is the work that led to it
+	 * or the work that follows. */
+	function jobWasBlocked(lines) {
+		return (lines || []).some(function (l) {
+			return String(l).indexOf('PRECHECK_FAILED') !== -1;
+		});
+	}
+
 	function startJobWatch(lock, log) {
 		jobStart = Date.now();
 		var panel = FCC.$('#fcc-job');
@@ -412,6 +423,18 @@
 						clearInterval(jobTimer);
 						jobTimer = null;
 						if (bar) { bar.style.width = '100%'; }
+						/* A job that stopped because the compatibility gate
+						 * refused it has already written the failing checks —
+						 * with their current values and the fix for each — into
+						 * the log shown above. What it has not done is say so in
+						 * the page's own words, and a log that simply stops
+						 * scrolling looks like a crash. Section 3.6.4 wants the
+						 * reason on screen, so the one-line summary goes beside
+						 * the log that carries the detail. */
+						if (jobWasBlocked(r.lines)) {
+							FCC.notice(FCC.$('#fcc-config-status'), 'fail',
+								FCC._('Installation is blocked until the failed checks pass.'));
+						}
 						refreshAll();
 					}
 				})

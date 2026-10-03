@@ -30,14 +30,20 @@ agent_running() {
 	_ar_cmd="$(fcc_agent_command "$1")" || return 1
 	[ -n "$_ar_cmd" ] || return 1
 	command -v tmux >/dev/null 2>&1 || return 1
-	tmux list-panes -a -F '#{session_name}' 2>/dev/null | grep -q "^fcc-$1-[0-9][0-9][0-9]$"
+	# Same reasoning as fcc_valid_agent(): match on the captured output rather
+	# than on the far end of a pipe, so nothing is left writing into a reader
+	# that has already walked away.
+	_ar_panes="$(tmux list-panes -a -F '#{session_name}' 2>/dev/null)"
+	printf '%s\n' "$_ar_panes" | grep -q "^fcc-$1-[0-9][0-9][0-9]$"
 }
 
 # The pid of the first live session belonging to an agent, or empty.
 agent_session_pid() {
 	command -v tmux >/dev/null 2>&1 || return 1
+	# awk reads the whole list and prints the first match at the end. `exit` on
+	# the match would be shorter, but it closes the pipe on tmux mid-write.
 	tmux list-panes -a -F '#{session_name} #{pane_pid}' 2>/dev/null \
-		| awk -v p="fcc-$1-" 'index($1,p)==1{print $2; exit}'
+		| awk -v p="fcc-$1-" 'index($1,p)==1 && !pid { pid=$2 } END { if (pid) print pid }'
 }
 
 # Detect a single agent's version. Prints the version or nothing.

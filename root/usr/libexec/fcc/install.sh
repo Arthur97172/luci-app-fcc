@@ -104,6 +104,20 @@ precheck_ok() {
 	printf '%s' "$_po_rep" | grep -q '"install_allowed":[[:space:]]*true'
 }
 
+precheck_failures() {
+	# Section 3.6.4: a blocked install has to say which check failed, what it
+	# found, what it needed and what to do — "precheck failed" is none of those.
+	#
+	# This runs the doctor a second time, which repeats its DNS and HTTPS probes.
+	# That is deliberate and it is affordable: it happens only on the failure
+	# path, after the install has already stopped, where the answer is the entire
+	# point of the message. Caching the first report would mean either parsing
+	# JSON in shell or keeping a temp file alive across the check, and both cost
+	# more than the few seconds this takes on a router that is about to refuse
+	# the install anyway.
+	"${FCC_LIBDIR:-/usr/libexec/fcc}/doctor.sh" --blocking 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
 # Run the installer, honouring a requested agent set when possible.
 # ---------------------------------------------------------------------------
@@ -414,6 +428,19 @@ cmd_runtime() {
 	if ! precheck_ok; then
 		fcc_lock_release "$_cr_lock"
 		fcc_log "$LOG" "install aborted: compatibility precheck failed"
+		_cr_blocked="$(precheck_failures)"
+		# The report goes into the log and nowhere else. When this runs as a job
+		# its stdout *is* that same file, so echoing it here as well would print
+		# the whole thing twice; and the log is where both readers look — the job
+		# panel tails it, and it is what a person opens when the install stops.
+		# One fcc_log call per line, so each keeps its own timestamp and gets
+		# redacted like every other entry.
+		if [ -n "$_cr_blocked" ]; then
+			printf '%s\n' "$_cr_blocked" | while IFS= read -r _cr_line; do
+				fcc_log "$LOG" "$_cr_line"
+			done
+		fi
+		# stdout keeps the single machine-readable token the callers match on.
 		printf 'PRECHECK_FAILED\n'
 		return 1
 	fi

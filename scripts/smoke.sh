@@ -431,6 +431,108 @@ smoke_sh '/usr/bin/fcc-env version >/dev/null 2>&1' || _sm_rc=$?
 smoke_check "fcc-env version reports an absent runtime" 1 "$_sm_rc"
 
 # ---------------------------------------------------------------------------
+# A blocked install explains itself (section 3.6.4)
+#
+# The gate is forced shut with a storage requirement no machine can meet, so
+# this asserts the report rather than whatever the container's network happens
+# to be doing at the time.
+#
+# The install path is left at the package's own default rather than pointed
+# somewhere disposable, because with the package installed it is UCI that
+# decides where the runtime goes: FCC_DEFAULT_BASE is only the fallback for a
+# router that has never saved a setting, so overriding it here would have
+# tested a path the user's own device never takes. /opt/fcc is removed again
+# afterwards, so the container is left as this run found it.
+#
+# It runs with SIGPIPE ignored, which is what uhttpd hands its children and so
+# what every job really runs under: without it a pipeline whose reader walks
+# away dies silently, and busybox's EPIPE complaint — the one that used to
+# appear in the install log next to an unrelated failure — never shows up.
+# Asserting silence on stderr under that disposition is the only way this is
+# visible at all; under an ordinary shell the check would pass either way.
+# ---------------------------------------------------------------------------
+
+smoke_note "a blocked install explains itself"
+_sm_blocked_out=/tmp/fcc-smoke-blocked.out
+_sm_rc=0
+docker exec "$SMOKE_NAME" sh -c '
+	trap "" PIPE
+	FCC_REQUIRED_FREE_MB=999999999 /usr/libexec/fcc/agent.sh install claude 2>&1
+' > "$_sm_blocked_out" 2>&1 || _sm_rc=$?
+smoke_check "a blocked agent install exits non-zero" 1 "$_sm_rc"
+
+if grep -q 'PRECHECK_FAILED' "$_sm_blocked_out"; then
+	smoke_ok "the job reports the block to its caller"
+else
+	smoke_bad "the job did not report the block: $(head -c 200 "$_sm_blocked_out")"
+fi
+
+if grep -q 'Broken pipe' "$_sm_blocked_out"; then
+	smoke_bad "the blocked install wrote a broken-pipe complaint: $(grep 'Broken pipe' "$_sm_blocked_out")"
+else
+	smoke_ok "nothing was left writing into a closed pipe"
+fi
+
+# The log is what the page tails, so the reason has to reach it and not just
+# stdout. Each line carries its own timestamp, which is what makes it a log
+# entry rather than a blob dropped into the file.
+#
+# fcc_log falls back to /tmp/fcc-logs when the install path cannot be written,
+# and the controller applies the same fallback when it goes looking for a job's
+# output, so both are read here. The `|| true` is for `set -e`, which would
+# otherwise end the run on a missing file instead of reporting it.
+_sm_blocked_log="$(docker exec "$SMOKE_NAME" sh -c '
+	cat /opt/fcc/logs/fcc-runtime.log 2>/dev/null \
+		|| cat /tmp/fcc-logs/fcc-runtime.log 2>/dev/null || true')"
+
+if [ -z "$_sm_blocked_log" ]; then
+	smoke_bad "no install log was written at all"
+	docker exec "$SMOKE_NAME" sh -c \
+		'ls -ld /opt /opt/fcc /tmp/fcc-logs 2>&1' >&2 || true
+fi
+for _sm_want in 'install aborted' '[FAIL] Storage' 'Current:' 'Required:' 'Suggestion:'; do
+	if printf '%s' "$_sm_blocked_log" | grep -qF "$_sm_want"; then
+		smoke_ok "the log carries $_sm_want"
+	else
+		smoke_bad "the log is missing $_sm_want: $(printf '%s' "$_sm_blocked_log" | head -c 300)"
+	fi
+done
+
+# Section 3.6.4 asks for all four parts of the report on the failing check,
+# not a summary of it: what was checked, what it found, what it wanted and what
+# to do. "precheck failed" on its own was the bug.
+if printf '%s' "$_sm_blocked_log" | grep -q '999999999 MB'; then
+	smoke_ok "the requirement shown is the one that was applied"
+else
+	smoke_bad "the log does not name the requirement that blocked the install"
+fi
+
+docker exec "$SMOKE_NAME" rm -rf /opt/fcc >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# The CPU rate on a board with no cpufreq
+#
+# OpenWrt 24.10 builds the Airoha EN7581 cpufreq driver but leaves
+# CONFIG_CPUFREQ_DT off, and that driver's whole job is to register a cpufreq-dt
+# platform device — so nothing binds, no policy is created, and on an AN7581
+# neither /sys/devices/system/cpu/cpu0/cpufreq nor cpufreq/policy0 exists. The
+# device tree's operating-points-v2 table is then the only clock figure on the
+# system, and without it the page showed a dash on a router that was running
+# perfectly well.
+#
+# The board is reproduced rather than described: a tmpfs goes over /sys so the
+# cpufreq attributes are genuinely absent, and the real AN7581 OPP values are
+# put where the kernel exposes them. The container is already privileged for
+# procd's sake, and the mount is taken down again below.
+#
+# This runs here rather than on the host because this rootfs is the point: its
+# busybox has no od at all, so the hexdump branch is the only branch, and a
+# developer machine — where od is always present — cannot tell whether that
+# branch works. The first two checks say so out loud, so that a rootfs which
+# gains od is noticed rather than quietly changing what is under test.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # The translation, which ships inside the package rather than beside it
 # ---------------------------------------------------------------------------
 

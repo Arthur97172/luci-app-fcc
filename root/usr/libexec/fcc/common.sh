@@ -198,7 +198,28 @@ fcc_valid_agent() {
 	case "$1" in
 		*[!a-z0-9]*) return 1 ;;   # ids are lowercase alphanumeric only
 	esac
-	fcc_agents_each | cut -d'|' -f1 | grep -qx -- "$1"
+	# Not `fcc_agents_each | cut -d'|' -f1 | grep -qx`.
+	#
+	# That shape is the only way in this backend to produce busybox's "cut:
+	# standard output: Broken pipe": cut writes, grep -q stops at the first
+	# match and closes the pipe, and cut is left writing into it. It stays
+	# quiet under a normal shell only because SIGPIPE kills the writer before
+	# it can report anything — LuCI runs its children with SIGPIPE ignored
+	# (uhttpd sets it so a disconnected browser cannot kill the server), and
+	# then the same write returns EPIPE and busybox prints the complaint. In a
+	# job, stderr is the install log, so it lands next to whatever really went
+	# wrong and reads like a second, unrelated problem.
+	#
+	# Measured on the smoke container: the message appears with SIGPIPE
+	# ignored and disappears without it. It does NOT appear for this
+	# particular pipeline, because ten registry lines fit in the pipe buffer
+	# and cut finishes writing before grep can exit — which is why this is a
+	# shape being removed rather than a failure being reproduced. Nothing here
+	# is large enough to be worth short-circuiting, so awk reads the registry
+	# to the end and decides then, and no stage is ever cut off mid-write.
+	# The id is already known to be lowercase alphanumeric, so it is safe to
+	# hand to awk as a value.
+	fcc_agents_each | awk -F'|' -v id="$1" '$1 == id { found = 1 } END { exit !found }'
 }
 
 fcc_agent_field() {

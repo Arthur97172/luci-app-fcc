@@ -117,6 +117,29 @@ test_agent_grammar() {
 	assert_no "a glob"                     sh_common 'fcc_valid_agent "*"'
 }
 
+test_valid_agent_is_silent_on_stderr() {
+	setup_sandbox
+	# The regression behind "cut: standard output: Broken pipe" in the install
+	# log. The id used to be matched with `... | cut -d'|' -f1 | grep -qx`, and
+	# grep -q stops at the first match and closes the pipe while cut is still
+	# writing into it. busybox reports that on stderr, so a log that was already
+	# explaining why an install had stopped gained a second line that looked
+	# like a second, unrelated failure.
+	#
+	# The exit status was never wrong, so that is not what is asserted here —
+	# stderr is captured on its own, because the noise is the entire bug. GNU
+	# cut dies from SIGPIPE without a word, so this is a weaker check off
+	# busybox than on it; scripts/smoke.sh repeats it where the shell really is
+	# busybox ash.
+	for _va_id in claude dsh nosuch Claude a-b '' 'a b' '*'; do
+		_va_err="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+			FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+			sh -c '. "$1/common.sh"; fcc_valid_agent "$2"' _ "$LIBEXEC" "$_va_id" \
+			2>&1 >/dev/null)"
+		assert_eq "" "$_va_err" "fcc_valid_agent [$_va_id] writes nothing to stderr"
+	done
+}
+
 test_agent_fields() {
 	setup_sandbox
 	assert_eq "Claude Code" "$(sh_common 'fcc_agent_name claude')"  "the friendly name is read"
@@ -1504,6 +1527,44 @@ EOF
 	# agent must never be what blocks an install.
 	assert_not_contains "$_dw_ghost" '"status": "FAIL"' \
 		"a missing agent never blocks the install"
+}
+
+test_doctor_blocking_names_what_failed_and_what_to_do() {
+	setup_sandbox
+	# Section 3.6.4's other half: when an install is blocked, the report has to
+	# carry the check, its current value, what was required and how to fix it.
+	# The install log used to say "precheck failed" and stop there, which is
+	# none of the four — the reader could see that they were stuck but not what
+	# they were stuck on.
+	#
+	# The failure is forced by asking for more free space than any machine has.
+	# That is the real check failing on a real filesystem rather than a stubbed
+	# one, so this also asserts the wiring between the two: if --blocking ever
+	# stops reading the same accumulator the verdict comes from, it would print
+	# nothing here while --json still said install_allowed=false.
+	_db_out="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_REQUIRED_FREE_MB=999999999 \
+		sh "$LIBEXEC/doctor.sh" --blocking 2>&1)"
+
+	assert_contains "$_db_out" '[FAIL] Storage' "the failing check is named"
+	assert_contains "$_db_out" 'Current:' "the report carries what was found"
+	assert_contains "$_db_out" 'Required:' "the report carries what was required"
+	assert_contains "$_db_out" 'Suggestion:' "the report carries what to do about it"
+	assert_contains "$_db_out" '999999999 MB' "the requirement is the one that was applied"
+
+	# Only failures. Someone reading this has an install that has already
+	# stopped; the checks that passed are not why they are here.
+	assert_not_contains "$_db_out" '[OK]' "passing checks are left out"
+	assert_not_contains "$_db_out" '[WARN]' "warnings are left out"
+
+	# The same run in JSON still blocks, so the two forms agree about the
+	# verdict even though they show different amounts of it.
+	assert_contains "$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_REQUIRED_FREE_MB=999999999 \
+		sh "$LIBEXEC/doctor.sh" --json 2>&1)" \
+		'"install_allowed": false' "and the verdict it comes from still blocks"
 }
 
 tests_main

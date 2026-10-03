@@ -4,15 +4,27 @@
 # Usage:
 #   doctor.sh            Human-readable report ([OK]/[WARN]/[FAIL] lines)
 #   doctor.sh --json     Machine-readable report (used by the LuCI UI)
+#   doctor.sh --blocking Only what failed, and what to do about it
 #
 # The JSON form always contains "install_allowed": true|false. A FAIL on a
 # critical check blocks installation (DESIGN_SPEC.md section 3.6.4).
+#
+# --blocking exists because of the second half of that section: a blocked
+# install MUST show the check, its current value, what was required and how to
+# fix it. The install log used to carry the words "precheck failed" and nothing
+# else, which satisfies none of the four — the person reading it could see that
+# they were stuck but not what they were stuck on. It reads the same accumulator
+# the other two forms do, so there is no second opinion about what failed.
 
 set -u
 . "${FCC_LIBDIR:-/usr/libexec/fcc}/common.sh"
 
 JSON=0
-[ "${1:-}" = "--json" ] && JSON=1
+BLOCKING=0
+case "${1:-}" in
+	--json)     JSON=1 ;;
+	--blocking) BLOCKING=1 ;;
+esac
 
 ROOT="$(fcc_root)"
 REQUIRED_FREE_MB="${FCC_REQUIRED_FREE_MB:-400}"
@@ -161,7 +173,13 @@ fi
 # Port availability.
 _port="$(fcc_uci_get main port 8082)"
 if command -v netstat >/dev/null 2>&1; then
-	if netstat -ltn 2>/dev/null | grep -q ":$_port[[:space:]]"; then
+		# Read the table first, then match. netstat is a busybox applet, and a
+		# `grep -q` at the far end of the pipe stops reading at the first match
+		# and leaves netstat writing into a closed pipe — which busybox reports
+		# as "netstat: standard output: Broken pipe", in the middle of an
+		# install log that is already trying to explain a failure.
+		_net_listen="$(netstat -ltn 2>/dev/null)"
+		if printf '%s\n' "$_net_listen" | grep -q ":$_port[[:space:]]"; then
 		add_result WARN "Port $_port" "in use" "free" "Another process is listening."
 	else
 		add_result OK "Port $_port" "free" "free" ""
@@ -230,6 +248,20 @@ fi
 # ---------------------------------------------------------------------------
 install_allowed=true
 [ "$fail_count" -gt 0 ] && install_allowed=false
+
+if [ "$BLOCKING" -eq 1 ]; then
+	# Only the FAILs: this output is read by someone whose install just stopped,
+	# and the passing checks are not why they are here. The label is the "result"
+	# of the section 3.6.4 quartet; the three indented lines are the rest of it.
+	printf '%s' "$RESULTS" | while IFS='|' read -r st name val req hint; do
+		[ "$st" = FAIL ] || continue
+		printf '[FAIL] %s\n' "$name"
+		printf '  Current:    %s\n' "$val"
+		printf '  Required:   %s\n' "$req"
+		[ -n "$hint" ] && printf '  Suggestion: %s\n' "$hint"
+	done
+	exit 0
+fi
 
 if [ "$JSON" -eq 1 ]; then
 	printf '{\n'
