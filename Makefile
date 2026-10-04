@@ -19,11 +19,19 @@ PKG_NAME:=luci-app-fcc
 PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
 # Bumped rather than PKG_VERSION: the package's contents changed while its
 # upstream version did not. Section 62 names the release and its tag after both
-# numbers — the release carrying luci-app-fcc_0.1.1-r2_all.ipk is called
-# 0.1.1-r2 — so 0.1.1-r1 stays the package that was already published and this
-# one is a new release rather than the same name over different bytes. Bumping
-# this number is what cuts the next release.
-PKG_RELEASE:=2
+# numbers — the release carrying luci-app-fcc_0.1.1-r3_all.ipk is called
+# 0.1.1-r3 — so a release number is never reused, and every push is a new
+# release rather than the same name over different bytes. Bumping this number is
+# what cuts the next release.
+#
+# 版本约定：每次提交 PKG_RELEASE +1（0.1.1-r1 ~ r9）；
+# 达到 r10 时 PKG_VERSION 末位 +1（0.1.1 -> 0.1.2），PKG_RELEASE 重置为 1。
+#
+# PKG_VERSION is the ./VERSION file, so "PKG_VERSION 末位 +1" means editing that
+# file and setting this back to 1. scripts/version.sh composes the two into the
+# package name, the git tag and the release name at once, which is why the
+# number may not be reused.
+PKG_RELEASE:=3
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
