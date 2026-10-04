@@ -30,6 +30,18 @@ FCC_HZ="${FCC_HZ:-100}"                 # clock ticks per second (OpenWrt defaul
 FCC_VERSION_CACHE_TTL="${FCC_VERSION_CACHE_TTL:-60}"
 FCC_SESSION_PREFIX="fcc-"
 
+# The free space, in MB, that an install must have. Two gates apply it and they
+# are two views of one requirement — is there room for the FCC runtime and the
+# agents on top of it — so the number lives in one place rather than being typed
+# into each of them, where the two would eventually disagree. doctor.sh applies
+# it before an install is allowed to start (section 3.6.4); install.sh applies
+# it again immediately before it writes (section 23 step 3).
+#
+# TEMPORARY, at the project owner's request: relaxed so the runtime can be
+# exercised on a device with 233 MB free. The enforced floor is to become
+# 512 MB once that testing is done — this is the one number to change.
+FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-64}"
+
 fcc_die() { printf '%s\n' "fcc: $*" >&2; return 1; }
 
 # ---------------------------------------------------------------------------

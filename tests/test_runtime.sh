@@ -1508,10 +1508,17 @@ test_insufficient_space_reports_section_54s_message() {
 		*) skip "precheck does not pass here — cannot reach the disk preflight"; return 0 ;;
 	esac
 
+	# Both space gates read the same floor (FCC_MIN_FREE_MB in common.sh), so
+	# raising it on its own would trip the doctor's compatibility precheck first
+	# and this test would see section 3.6.4's message instead of the one it is
+	# about. The doctor is therefore told to require nothing, which leaves
+	# install.sh's own check as the one that fires — the path this test exists to
+	# cover. The doctor's message has a test of its own.
 	FCC_MIN_FREE_MB=999999999
-	export FCC_MIN_FREE_MB
+	FCC_REQUIRED_FREE_MB=0
+	export FCC_MIN_FREE_MB FCC_REQUIRED_FREE_MB
 	_out="$(sh_install 'cmd_runtime')"
-	unset FCC_MIN_FREE_MB
+	unset FCC_MIN_FREE_MB FCC_REQUIRED_FREE_MB
 
 	assert_contains "$_out" "Not enough storage space." \
 		"section 54's wording is used verbatim"

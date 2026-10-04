@@ -26,8 +26,9 @@ FCC_AGENT_ORDER="claude codex pi opencode cline hermes dsh grok muse aider"
 # DESIGN_SPEC.md section 23 step 3: refuse to start an update that cannot
 # finish. A Python toolchain plus the runtime is a few hundred MB; running out
 # of space midway leaves a half-written runtime, which is worse than not
-# starting. Overridable so a test or a deliberately tight box can adjust it.
-FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-300}"
+# starting. The floor is FCC_MIN_FREE_MB from common.sh, shared with the doctor
+# so the two gates agree on what "enough room" means; it is overridable there
+# for a test or a deliberately tight box.
 
 # Section 49: how long to wait for the server to answer after a restart before
 # calling the update unhealthy. Generous, because the first start after an

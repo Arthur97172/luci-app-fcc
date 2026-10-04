@@ -27,7 +27,12 @@ case "${1:-}" in
 esac
 
 ROOT="$(fcc_root)"
-REQUIRED_FREE_MB="${FCC_REQUIRED_FREE_MB:-400}"
+# The floor comes from common.sh, shared with install.sh: the report this script
+# prints and the gate install.sh applies are then the same number, so the report
+# can never describe a requirement the installer does not enforce.
+# FCC_REQUIRED_FREE_MB remains as the override the tests and the smoke test use
+# to force this check to fail.
+REQUIRED_FREE_MB="${FCC_REQUIRED_FREE_MB:-$FCC_MIN_FREE_MB}"
 MIN_RAM_MB="${FCC_MIN_RAM_MB:-256}"
 # Scratch space in /tmp, which on OpenWrt is a tmpfs carved out of RAM rather
 # than part of the flash the storage check above measures.
