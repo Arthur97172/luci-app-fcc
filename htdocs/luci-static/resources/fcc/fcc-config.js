@@ -335,6 +335,10 @@
 	 * which knows each agent's size and memory floor, but the boxes stay
 	 * editable — the recommendation is a guess about this device, not a rule.
 	 *
+	 * The server recommends a single agent (see luci.fcc.agents.default_ids),
+	 * so this is normally one ticked box rather than a set: the rest are there
+	 * to be chosen, not to be spent by default.
+	 *
 	 * An empty selection is meaningful and is sent as such: the API takes an
 	 * absent `agents` field to mean "use the defaults" and an empty one to mean
 	 * "install none", so the picker must not fall back to defaults when the
@@ -369,10 +373,19 @@
 
 		/* If the policy endpoint is unreachable, fall back to the registry's own
 		 * default flags rather than leaving every box unticked — an install must
-		 * not be blocked by a nicety. */
-		var fallback = Object.keys(agentRegistry).filter(function (id) {
-			return agentRegistry[id] && agentRegistry[id].default;
-		});
+		 * not be blocked by a nicety. Only the first one, though: the endpoint
+		 * recommends a single agent, and a fallback that ticked every default
+		 * would quietly recommend a far larger set than the page ever shows.
+		 * The status document lists the registry in file order, so the first
+		 * default here is the agent the endpoint would have picked. */
+		var fallback = [];
+		var ids = Object.keys(agentRegistry);
+		for (var i = 0; i < ids.length; i++) {
+			if (agentRegistry[ids[i]] && agentRegistry[ids[i]].default) {
+				fallback = [ids[i]];
+				break;
+			}
+		}
 
 		return FCC.api('agent_defaults', params, { method: 'GET' })
 			.then(function (r) { return (r && r.ids) || fallback; })

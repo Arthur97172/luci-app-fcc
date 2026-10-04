@@ -55,30 +55,36 @@ end
 -- set. The registry's own `default` flag says which agents upstream installs;
 -- this narrows that set to what the device can actually hold.
 --
--- The two budgets are optional and independent. With neither, the registry
--- defaults come back unchanged, so a caller that has no resource data still
--- gets a usable answer instead of an empty list.
+-- It narrows it to exactly one. The answer here is a recommendation, and a
+-- recommendation is a starting point rather than a shopping list: pre-ticking
+-- several agents spends the device's free space on agents the user never asked
+-- for, and the agents at the back of the list are the ones a tight device can
+-- least afford. So this returns the first agent in registry order that upstream
+-- installs by default and that the device can hold — Claude Code on any device
+-- that can run it, and the next agent down only when it cannot.
 --
--- Order matters: agents are taken in registry order while they fit, so the
--- result is deterministic and the first agents in the registry are the ones a
--- tight device keeps.
+-- The two budgets are optional and independent, and neither narrows the answer
+-- to nothing on its own: with no budget at all the first default agent is still
+-- the answer, because "unknown device" is not "no room".
+--
+-- Order matters: the registry order is the priority order, so the result is
+-- deterministic and does not depend on which budget was supplied.
 function default_ids(ram_mb, free_mb)
 	local ram  = tonumber(ram_mb)
 	local free = tonumber(free_mb)
-	local ids, used = {}, 0
 	for _, a in ipairs(load()) do
 		if a.default then
 			-- A 0 in the registry means "not known", not "needs nothing", so it
 			-- is never what excludes an agent.
 			local fits_ram = (ram == nil) or (a.min_ram_mb == 0) or (a.min_ram_mb <= ram)
-			local fits_disk = (free == nil) or ((used + a.size_mb) <= free)
+			local fits_disk = (free == nil) or (a.size_mb <= free)
 			if fits_ram and fits_disk then
-				ids[#ids + 1] = a.id
-				used = used + a.size_mb
+				return { a.id }
 			end
 		end
 	end
-	return ids
+	-- Nothing fits, and that is a real answer: an empty list, not the full set.
+	return {}
 end
 
 --- Is this id in the registry?

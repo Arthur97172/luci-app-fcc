@@ -408,31 +408,37 @@ end
 check("agents/launchers_are_fcc_prefixed", bad_launcher == nil, bad_launcher)
 check("agents/probes_never_are_launchers", bad_probe == nil, bad_probe)
 
-eq("agents/default_ids", table.concat(agents.default_ids(), ","),
-	"claude,codex,pi,opencode,hermes,dsh,grok,muse,aider")
+-- The recommendation is a single agent, not the whole upstream default set:
+-- Claude Code, the first entry the registry marks as installed by default.
+eq("agents/default_ids", table.concat(agents.default_ids(), ","), "claude")
 check("agents/cline_not_default", agents.get("cline").default == false)
 
--- Section 3.6.5: the preselected set has to shrink to fit the device. Both
+-- Section 3.6.5: the preselected agent has to be one the device can hold. Both
 -- budgets are optional and independent, and the registry order is the priority
--- order, so the assertions below are about which agents survive, not just how
+-- order, so the assertions below are about which agent survives, not just how
 -- many.
 eq("agents/default_ids_no_budgets", table.concat(agents.default_ids(nil, nil), ","),
 	table.concat(agents.default_ids(), ","))
 eq("agents/default_ids_generous", table.concat(agents.default_ids(99999, 99999), ","),
-	"claude,codex,pi,opencode,hermes,dsh,grok,muse,aider")
+	"claude")
 
--- A 150 MB ceiling drops claude (180), codex (160), opencode (160) and dsh (180).
+-- A 150 MB RAM ceiling rules out claude (180) and codex (160), so the answer
+-- moves down the registry to pi (140) rather than going empty.
 eq("agents/default_ids_by_ram", table.concat(agents.default_ids(150, nil), ","),
-	"pi,hermes,grok,muse,aider")
+	"pi")
 
--- 300 MB of flash holds claude (140) and codex (120) and nothing else: every
--- later agent would push the running total over.
+-- 300 MB of flash holds claude (140), so nothing further down is considered.
 eq("agents/default_ids_by_disk", table.concat(agents.default_ids(nil, 300), ","),
-	"claude,codex")
+	"claude")
 
 -- Both at once, which is the case that matters on a real router.
 eq("agents/default_ids_by_both", table.concat(agents.default_ids(150, 300), ","),
-	"pi,hermes,grok")
+	"pi")
+
+-- A real device: 233 MB free, which is enough for claude (140) and no reason to
+-- look further. This is the shape the configuration page shows.
+eq("agents/default_ids_real_device", table.concat(agents.default_ids(512, 233), ","),
+	"claude")
 
 -- Nothing fits, and that is a real answer: an empty list, not the full set.
 eq("agents/default_ids_starved", table.concat(agents.default_ids(0, 0), ","), "")
@@ -441,6 +447,14 @@ eq("agents/default_ids_starved", table.concat(agents.default_ids(0, 0), ","), ""
 eq("agents/default_ids_nan_is_unknown",
 	table.concat(agents.default_ids("abc", nil), ","),
 	table.concat(agents.default_ids(), ","))
+
+-- Whatever the budget, the answer is at most one agent: the recommendation
+-- pre-ticks boxes, and a box the user did not ask for spends their space.
+check("agents/default_ids_is_never_a_set",
+	#agents.default_ids(99999, 99999) <= 1 and
+	#agents.default_ids(150, nil) <= 1 and
+	#agents.default_ids(nil, 300) <= 1 and
+	#agents.default_ids(512, 233) <= 1)
 
 -- Cline is not a default at any budget.
 check("agents/default_ids_never_includes_non_defaults",
