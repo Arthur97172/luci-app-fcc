@@ -342,6 +342,38 @@ check("spawn_detached/refuses_an_empty_command",
 check("spawn_detached/refuses_a_nil_command",
 	util.spawn_detached(nil, {}, "/dev/null") == nil)
 
+-- The reason, which is the part that reaches a person. "could not start the job"
+-- used to be the whole message, and it is true of four different situations with
+-- four different fixes: the script is not installed, it is not executable, the
+-- shell could not be forked, the shell forked but said nothing. Only the last of
+-- those is a problem with the machine rather than with the request, and only the
+-- first two can be fixed by the reader.
+local function spawn_reason(cmd, args)
+	local pid, why = util.spawn_detached(cmd, args, "/dev/null")
+	return pid, (why or "")
+end
+
+local _sr_pid, _sr_why = spawn_reason("/nonexistent/fcc-not-here")
+check("spawn_detached/reason_names_the_missing_path",
+	_sr_pid == nil and _sr_why:find("/nonexistent/fcc-not-here", 1, true) ~= nil,
+	"got " .. tostring(_sr_why))
+
+local _sr2_pid, _sr2_why = spawn_reason("fcc-no-such-applet")
+check("spawn_detached/reason_names_the_missing_name",
+	_sr2_pid == nil and _sr2_why:find("fcc-no-such-applet", 1, true) ~= nil,
+	"got " .. tostring(_sr2_why))
+
+local _sr3_pid, _sr3_why = spawn_reason("")
+check("spawn_detached/reason_says_when_no_command_was_given",
+	_sr3_pid == nil and _sr3_why ~= "",
+	"got " .. tostring(_sr3_why))
+
+-- And they must differ from each other. One message for all of them is the
+-- message that was there before this returned a reason at all.
+check("spawn_detached/reasons_are_distinguishable",
+	_sr_why ~= _sr3_why and _sr2_why ~= _sr3_why and _sr_why ~= _sr2_why,
+	_sr_why .. " | " .. _sr2_why .. " | " .. _sr3_why)
+
 -- ---------------------------------------------------------------------------
 -- paths
 -- ---------------------------------------------------------------------------

@@ -21,7 +21,6 @@ set -u
 . "${FCC_LIBDIR:-/usr/libexec/fcc}/common.sh"
 
 FCC_INSTALLER_URL="${FCC_INSTALLER_URL:-https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh}"
-FCC_AGENT_ORDER="claude codex pi opencode cline hermes dsh grok muse aider"
 
 # DESIGN_SPEC.md section 23 step 3: refuse to start an update that cannot
 # finish. A Python toolchain plus the runtime is a few hundred MB; running out
@@ -44,22 +43,27 @@ LOG="fcc-runtime.log"
 # ---------------------------------------------------------------------------
 apply_runtime_env() {
 	# Export the environment that redirects every upstream artefact under the
-	# runtime root. Called in this process, which then execs the installer as a
+	# runtime root. Called in this process, which then runs the installer as a
 	# child, so the variables are inherited (and discarded when we exit).
-	HOME="$ROOT/data"
-	UV_INSTALL_DIR="$ROOT/bin"
-	UV_TOOL_DIR="$ROOT/runtime/uv-tools"
-	UV_TOOL_BIN_DIR="$ROOT/bin"
-	UV_CACHE_DIR="$ROOT/cache/uv"
-	UV_PYTHON_INSTALL_DIR="$ROOT/runtime/python"
-	XDG_DATA_HOME="$ROOT/data/.local/share"
-	XDG_CACHE_HOME="$ROOT/cache"
-	XDG_BIN_HOME="$ROOT/bin"
-	XDG_CONFIG_HOME="$ROOT/data/.config"
+	#
+	# The names and the values both come from common.sh rather than being
+	# written out here. There is a second consumer — the terminal that drives
+	# the installer's agent chooser — and it has to export exactly this set: a
+	# terminal that starts with a different HOME installs a second runtime into
+	# root's home directory, silently, and nothing notices until the flash chip
+	# fills up. Two hand-maintained lists would drift; one cannot.
+	#
+	# `export "$name=$value"` performs the assignment itself, so no shell text
+	# is ever built and nothing is passed to eval — the name is one of a fixed
+	# list and the value is a path this package derived.
+	for _ae_n in $(fcc_runtime_env_names); do
+		export "$_ae_n=$(fcc_runtime_env_value "$ROOT" "$_ae_n")"
+	done
+	# PATH is handled apart because it extends rather than replaces: the
+	# runtime's bin goes first so its launchers win, but the system tools have
+	# to stay reachable — the installer needs curl, tar and a compiler.
 	PATH="$ROOT/bin:$PATH"
-	export HOME UV_INSTALL_DIR UV_TOOL_DIR UV_TOOL_BIN_DIR UV_CACHE_DIR \
-	       UV_PYTHON_INSTALL_DIR XDG_DATA_HOME XDG_CACHE_HOME XDG_BIN_HOME \
-	       XDG_CONFIG_HOME PATH
+	export PATH
 }
 
 # ---------------------------------------------------------------------------
@@ -121,48 +125,265 @@ precheck_failures() {
 
 # ---------------------------------------------------------------------------
 # Run the installer, honouring a requested agent set when possible.
+#
+# The upstream installer chooses its coding agents by *asking*, and only when it
+# has a terminal:
+#
+#     if installer_is_interactive; then choose_coding_agents /dev/tty /dev/tty; fi
+#
+# With no terminal it skips the question and installs its own defaults — nine
+# agents, including the largest ones. That is not a wrong answer to "which
+# agents?" so much as a refusal to hear the question, and on a router it is the
+# difference between one agent and nine.
+#
+# There is no flag, no environment variable and no answer file: the prompts are
+# written to fd4 and the answers read from fd3, both /dev/tty, and the installer
+# is `set -eu` POSIX sh. So the only way to be asked is to *be* a terminal, and
+# the only way to answer is to be the thing on the other end of it.
+#
+# This package already depends on tmux — it is the Web Console's backend — so
+# tmux is the terminal. It is a better one than the `script(1)` this used to
+# reach for, and not only because OpenWrt has no `script`:
+#
+#   * An answer file is positional. Upstream's select_coding_agent() returns 0
+#     *without prompting* when the agent is already installed, so on a box that
+#     already has Claude Code the first answer is consumed by Codex and every
+#     agent after it is installed as its neighbour. Feeding answers by identity
+#     — read the prompt, decide from the launcher it names — cannot desync,
+#     because it never assumes a question was asked.
+#   * The transcript is the installer's own output rather than a replay of it,
+#     so logs/installer.out is the evidence a person needs when it fails.
+#
+# What this does not do is decide *for* the installer. It answers the question
+# that was asked, and everything else about the run — which agents exist, what
+# they are called, what order they come in — stays upstream's business.
 # ---------------------------------------------------------------------------
+FCC_INSTALLER_TIMEOUT="${FCC_INSTALLER_TIMEOUT:-1800}"
+
+installer_session() { printf 'fcc-installer'; }
+
+# Kill a leftover installer session from a run that was interrupted.
+installer_session_cleanup() {
+	command -v tmux >/dev/null 2>&1 || return 0
+	tmux kill-session -t "$(installer_session)" 2>/dev/null
+	return 0
+}
+
+installer_pane_text() {
+	tmux capture-pane -p -t "$(installer_session)" 2>/dev/null
+}
+
+installer_last_line() {
+	# The last line with anything on it. The prompt is written without a
+	# trailing newline, so it is the last thing on the pane — but a redraw can
+	# leave blank rows under it, and "the last line" would then be empty.
+	installer_pane_text | awk 'NF { l = $0 } END { print l }'
+}
+
+installer_finished() {
+	[ -e "$1" ]
+}
+
+installer_exit_status() {
+	# The status the pane recorded. Read from a file rather than from tmux's
+	# #{pane_dead_status}, which does not exist in every tmux OpenWrt ships and
+	# reports nothing at all when the pane is still alive.
+	_ies_rc="$(cat "$1" 2>/dev/null)"
+	case "$_ies_rc" in ''|*[!0-9]*) return 1 ;; esac
+	printf '%s' "$_ies_rc"
+}
+
+# Answer one prompt. Prints the keys to send, or nothing when the line is not a
+# prompt we recognise.
+installer_answer_for() {
+	# installer_answer_for <line> <requested-set> <mode>
+	#
+	# mode is one of:
+	#   set      an explicit selection — answer from the set
+	#   none     --no-agents — decline everything that is still being offered
+	#   default  no opinion — take upstream's own default for each question
+	_iaf_line="$1"
+	_iaf_set=" $2 "
+	_iaf_mode="$3"
+	case "$_iaf_line" in
+		*'Install '*' for fcc-'*'? [Y/n] '*|*'Install '*' for fcc-'*'? [y/N] '*)
+			# "Install Claude Code for fcc-claude? [Y/n] "
+			# Strip through " for " to reach the launcher, then up to the "?".
+			_iaf_launcher="${_iaf_line##* for }"
+			_iaf_launcher="${_iaf_launcher%%\?*}"
+			_iaf_id="$(fcc_agent_by_launcher "$_iaf_launcher")"
+			case "$_iaf_mode" in
+				default)
+					# An empty answer is Enter, and prompt_yes_no() reads that
+					# as "the default" — which is upstream's own decision for
+					# this agent, including the ones it adjusted before asking
+					# (Cline when npm is present, Hermes on a platform that
+					# cannot have it). Reproducing the default is the only way
+					# "no opinion" can mean what it says.
+					printf ''
+					;;
+				set)
+					if [ -n "$_iaf_id" ]; then
+						case "$_iaf_set" in
+							*" $_iaf_id "*) printf 'y' ;;
+							*)               printf 'n' ;;
+						esac
+					else
+						# An agent this package has no id for: decline it rather
+						# than guess, and rather than leave the installer waiting
+						# for an answer that is never coming.
+						printf 'n'
+					fi
+					;;
+				*)
+					printf 'n'
+					;;
+			esac
+			return 0
+			;;
+		*'Enable RTK token optimization'*)
+			# Section 3.6.5 is about coding agents; RTK is a token-saving proxy
+			# the user did not ask for, and its own default is no. Declining is
+			# both the default and the smaller change to the router.
+			printf 'n'
+			return 0
+			;;
+	esac
+	return 1
+}
+
 run_installer() {
 	_ri_script="$1"
 	_ri_agents="$2"      # space separated, empty => upstream defaults
 	# Section 3.6.5: the user may uncheck every agent. That is a decision,
 	# not the absence of one, and it must not silently become "defaults".
 	_ri_none="${3:-0}"
-	_ri_use_pty=0
-	command -v script >/dev/null 2>&1 && _ri_use_pty=1
 
 	mkdir -p "$ROOT/cache" "$ROOT/logs" 2>/dev/null
-	_ri_ansfile="$ROOT/cache/installer-answers"
-	: > "$_ri_ansfile" 2>/dev/null
-	if [ -n "$_ri_agents" ] || [ "$_ri_none" = 1 ]; then
-		for _ri_a in $FCC_AGENT_ORDER; do
-			case " $_ri_agents " in
-				*" $_ri_a "*) printf 'y\n' >> "$_ri_ansfile" ;;
-				*)            printf 'n\n' >> "$_ri_ansfile" ;;
-			esac
-		done
-		# Trailing answers for any extra prompt (e.g. RTK); "n" is the safe default.
-		printf 'n\nn\nn\n' >> "$_ri_ansfile"
+	_ri_env="$ROOT/cache/installer-env.sh"
+	_ri_out="$ROOT/logs/installer.out"
+	_ri_rc="$ROOT/cache/installer-rc"
+	_ri_gate="$ROOT/cache/installer-go"
+
+	if [ "$_ri_none" = 1 ]; then
+		_ri_mode=none
+		_ri_label="<none>"
+	elif [ -n "$_ri_agents" ]; then
+		_ri_mode=set
+		_ri_label="$_ri_agents"
+	else
+		_ri_mode=default
+		_ri_label="<defaults>"
 	fi
 
-	_ri_label="$_ri_agents"
-	[ "$_ri_none" = 1 ] && _ri_label="<none>"
-	[ -n "$_ri_label" ] || _ri_label="<defaults>"
-	fcc_log "$LOG" "running upstream installer (agents='$_ri_label', pty=$_ri_use_pty)"
+	if ! command -v tmux >/dev/null 2>&1; then
+		# Without tmux there is no terminal, and without a terminal the agent
+		# question is never asked. Running anyway would install upstream's
+		# nine-agent default set and report success — a wrong result presented
+		# as a right one, on a box whose free space is the reason the set was
+		# chosen in the first place. Section 103: say why, and stop.
+		fcc_log "$LOG" "installer cannot run: tmux is not installed, so the agent selection cannot be answered"
+		printf 'tmux is required to install the FCC runtime.\n'
+		printf 'The upstream installer only asks which coding agents to install when it has a terminal,\n'
+		printf 'and this package drives that question through tmux. Without it the install would\n'
+		printf 'silently install every default agent instead of the ones selected.\n'
+		printf '%s\n' "$(fcc_pkg_install_hint tmux)"
+		printf 'TMUX_MISSING\n'
+		return 1
+	fi
+
+	fcc_log "$LOG" "running upstream installer (agents='$_ri_label', terminal=tmux)"
 	apply_runtime_env
 
-	if [ "$_ri_use_pty" -eq 1 ]; then
-		# `script` gives the installer a controlling tty so its prompts are read
-		# from /dev/tty; our answers are fed through script's stdin.
-		script -q -c "sh '$_ri_script'" /dev/null < "$_ri_ansfile" >> "$ROOT/logs/installer.out" 2>&1
-		_ri_rc=$?
-	else
-		{ [ -n "$_ri_agents" ] || [ "$_ri_none" = 1 ]; } && \
-			fcc_log "$LOG" "WARN: no 'script' helper; installer runs non-interactively with upstream default agents"
-		sh "$_ri_script" >> "$ROOT/logs/installer.out" 2>&1
-		_ri_rc=$?
+	# The terminal must start with this environment, and a tmux session inherits
+	# the *server's* environment rather than the environment of whatever asked
+	# for the session — so a session created against a server that is already
+	# running for the Web Console would start with the console's HOME, not this
+	# one, and install a second runtime into it. Sourcing a file is what makes
+	# the environment certain rather than likely.
+	fcc_runtime_env_exports "$ROOT" > "$_ri_env" 2>/dev/null || {
+		fcc_log "$LOG" "failed to write the installer environment"
+		return 1
+	}
+
+	: > "$_ri_out" 2>/dev/null
+	rm -f "$_ri_rc" "$_ri_gate" 2>/dev/null
+	installer_session_cleanup
+
+	# The pane runs the installer directly — no pipeline, no wrapper — so that
+	# stdout is the terminal itself. That is not cosmetic: installer_is_interactive()
+	# tests `[ -t 1 ]`, and anything between the installer and the pane (a pipe
+	# to tee, say) would make it false and take the question away again.
+	#
+	# The gate file is the one piece of sequencing here. pipe-pane attaches to a
+	# session that must already exist, so the transcript cannot be set up before
+	# the session — and a session created running the installer could finish and
+	# exit before pipe-pane ever attached, losing exactly the output a fast
+	# failure produces. The pane therefore waits for a file this process creates
+	# only after the transcript is attached. The trailing sleep keeps the pane
+	# alive after the installer exits so the last screen can be read; the session
+	# is killed below, and if this process dies instead the sleep ends and the
+	# session goes with it.
+	_ri_cmd=". $(fcc_shquote "$_ri_env"); \
+		while [ ! -e $(fcc_shquote "$_ri_gate") ]; do sleep 1; done; \
+		sh $(fcc_shquote "$_ri_script"); printf '%s\n' \"\$?\" > $(fcc_shquote "$_ri_rc"); \
+		sleep 300"
+
+	tmux new-session -d -s "$(installer_session)" -x 200 -y 50 "$_ri_cmd" 2>/dev/null || {
+		fcc_log "$LOG" "failed to start the installer terminal"
+		installer_session_cleanup
+		return 1
+	}
+	tmux pipe-pane -o -t "$(installer_session)" "cat >> $(fcc_shquote "$_ri_out")" 2>/dev/null
+	: > "$_ri_gate" 2>/dev/null
+
+	# --- answer the agent prompts -----------------------------------------
+	#
+	# Identity, not position: the question names the launcher, and the answer
+	# follows from whether that agent was asked for. A question we have already
+	# answered coming round again means the installer rejected every answer and
+	# looped — upstream prints "Select at least one coding agent." and asks the
+	# whole list again — which happens when nothing selected is installable, so
+	# it is reported rather than answered a second time.
+	_ri_answered=""
+	_ri_deadline=$(( $(date +%s) + FCC_INSTALLER_TIMEOUT ))
+	_ri_stuck=0
+	while :; do
+		installer_finished "$_ri_rc" && break
+		if [ "$(date +%s)" -ge "$_ri_deadline" ]; then
+			fcc_log "$LOG" "installer timed out after ${FCC_INSTALLER_TIMEOUT}s"
+			break
+		fi
+		_ri_line="$(installer_last_line)"
+		if _ri_ans="$(installer_answer_for "$_ri_line" "$_ri_agents" "$_ri_mode")"; then
+			case "$_ri_answered" in
+				*"|$_ri_line|"*)
+					_ri_stuck=1
+					fcc_log "$LOG" "installer re-asked a question already answered; no selected agent can be installed"
+					break
+					;;
+			esac
+			_ri_answered="$_ri_answered|$_ri_line|"
+			fcc_log "$LOG" "installer prompt answered: $_ri_line -> $_ri_ans"
+			tmux send-keys -t "$(installer_session)" "$_ri_ans" Enter 2>/dev/null
+		fi
+		sleep 1
+	done
+
+	# One more capture so the log ends with the installer's final screen rather
+	# than one line short of it.
+	tmux capture-pane -p -S - -t "$(installer_session)" 2>/dev/null >> "$_ri_out"
+	installer_session_cleanup
+
+	if _ri_status="$(installer_exit_status "$_ri_rc")"; then
+		return "$_ri_status"
 	fi
-	return "$_ri_rc"
+	# No status file: the pane never got as far as running the installer (it
+	# could not source the environment, or tmux refused the session), or the
+	# run was cut short by the timeout above.
+	[ "$_ri_stuck" = 1 ] && printf 'AGENT_SELECTION_REJECTED\n'
+	fcc_log "$LOG" "installer did not report an exit status; see logs/installer.out"
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -357,6 +578,30 @@ rollback_runtime() {
 	_rb_dir="$1"
 	_rb_was="$2"
 
+	# A first install is not an update, and section 79's two messages are both
+	# about an update: "FCC Server remains stopped" says the server was running
+	# and now is not, and "Previous FCC version restored" names a version that
+	# never existed here. Reporting either of them for a first install sends the
+	# reader looking for a previous version to repair, and hides the actual
+	# question, which is whether anything was written at all.
+	#
+	# runtime.json is the discriminator: it is written only after a successful
+	# install, and an update copies it into the backup before touching anything,
+	# so it is absent exactly when nothing has ever been installed here.
+	if [ -z "$_rb_dir" ] && [ ! -f "$ROOT/runtime.json" ]; then
+		# runtime/ and bin/ are what the installer writes, and a partial one is
+		# worse than none: the status page would report an install that cannot
+		# run. They are the same two directories the update path removes, so the
+		# destructive surface is unchanged. data/ is left alone — it is not this
+		# installer's to discard, and on a reinstall attempt it may hold provider
+		# credentials the user entered through FCC's own admin page.
+		rm -rf "$ROOT/runtime" "$ROOT/bin" 2>/dev/null
+		fcc_cache_set fcc_version ""
+		fcc_log "$LOG" "Install failed. Nothing was installed before, so there was no version to restore."
+		printf 'INSTALL_FAILED\n'
+		return 1
+	fi
+
 	if [ -n "$_rb_dir" ] && [ -d "$_rb_dir" ]; then
 		# Discard whatever the failed install left, then put the previous tree
 		# back exactly where it was.
@@ -425,6 +670,34 @@ cmd_runtime() {
 
 	# --- section 23 step 1: what is being replaced ------------------------
 	_cr_before="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
+	_cr_installed="$(fcc_installed_agents "$ROOT")"
+
+	# Section 3.6.5 lets the user uncheck every agent, and the flag that says so
+	# is honoured below. But upstream's chooser refuses to accept an empty set —
+	# it prints "Select at least one coding agent." and asks the whole list
+	# again, forever — so on a box with no agents installed there is no answer
+	# that produces the requested result. Saying so is the whole of section 103:
+	# the alternative is to start, install something nobody asked for, and let
+	# the user discover it from the agent list.
+	if [ "$_cr_none" = 1 ] && [ -z "$_cr_installed" ]; then
+		fcc_lock_release "$_cr_lock"
+		fcc_log "$LOG" "aborted: no agents requested and none installed; upstream requires at least one"
+		printf 'The FCC runtime needs at least one coding agent.\n'
+		printf 'The upstream installer will not accept an empty selection — it re-asks until one is chosen —\n'
+		printf 'and this is a first install, so there is nothing already present to keep.\n'
+		printf 'Select one agent and install again.\n'
+		printf 'NO_AGENTS\n'
+		return 1
+	fi
+
+	# The pre-install checks reason about a set of agents, and which set depends
+	# on what was asked for here: an explicit list, all of them declined, or no
+	# opinion. Handing the doctor the same three-way answer it would get from
+	# the UI is what keeps the report and the install from disagreeing — the
+	# bash requirement in particular, which applies to five of the ten agents.
+	FCC_AGENT_SELECTION="$_cr_agents"
+	FCC_AGENT_NONE="$_cr_none"
+	export FCC_AGENT_SELECTION FCC_AGENT_NONE
 
 	if ! precheck_ok; then
 		fcc_lock_release "$_cr_lock"

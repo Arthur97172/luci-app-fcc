@@ -151,10 +151,69 @@ _node="$(fcc_detect_version node --version 2>/dev/null || true)"
 if [ -n "$_node" ]; then add_result OK "Node.js" "$_node" "if required by agents" ""
 else add_result WARN "Node.js" "not found" "if required by agents" "Some agents need Node.js."; fi
 
-# tmux — required for the Web Console session backend.
+# tmux — required for the Web Console, and for the runtime installer.
+#
+# A FAIL rather than a warning, and it used to be a warning. tmux is not only
+# the console's backend: it is also the terminal the upstream installer's agent
+# chooser is driven through, because that chooser reads /dev/tty and refuses to
+# run without one. On a box with no tmux the install therefore does not merely
+# lose a feature, it fails — and a check that says "warning" in front of a
+# guaranteed failure is worse than no check, because it teaches the reader to
+# ignore the one line that mattered.
+#
+# In practice this is nearly invisible: tmux is a hard dependency of this
+# package, so it is present on every box that installed the package normally.
+# The check fires when it has been removed, or when the package files were
+# copied in by hand.
 _tmux="$(fcc_detect_version tmux -V 2>/dev/null || true)"
-if [ -n "$_tmux" ]; then add_result OK "tmux" "$_tmux" "required for Web Console" ""
-else add_result WARN "tmux" "not found" "required for Web Console" "Install the tmux package for the terminal."; fi
+if [ -n "$_tmux" ]; then
+	add_result OK "tmux" "$_tmux" "required" ""
+else
+	add_result FAIL "tmux" "not found" "required" \
+		"$(fcc_pkg_install_hint tmux) — the Web Console and the runtime installer both need it."
+fi
+
+# bash — required by five of the ten agents, and absent from every stock image.
+#
+# The upstream installer hands Claude Code, OpenCode, Hermes, Grok Build and
+# Muse Code to their own installers, which are bash scripts, and stops with
+# "bash is required. Install it first, then rerun this installer." when it
+# cannot find one. OpenWrt ships busybox ash as /bin/sh and no bash at all, so
+# before this check existed the install failed several minutes in, after the
+# download, with the reason buried in logs/installer.out.
+#
+# Which agents count is not fixed. FCC_AGENT_SELECTION carries the set the user
+# asked for, FCC_AGENT_NONE says the user unchecked all of them, and neither
+# being set means upstream's defaults, which include Claude Code. In every case
+# the effective set is that set *plus what is already installed* — upstream's
+# chooser keeps an already-present agent without asking, so an agent that is
+# installed is in the set whatever was requested.
+_selection="${FCC_AGENT_SELECTION:-}"
+if [ "${FCC_AGENT_NONE:-0}" = 1 ]; then
+	_bash_set="$(fcc_installed_agents "$ROOT")"
+elif [ -n "$_selection" ]; then
+	_bash_set="$(fcc_effective_agents "$_selection" "$ROOT")"
+else
+	_bash_set="$(fcc_default_agents) $(fcc_installed_agents "$ROOT")"
+fi
+_bash_req="needed by: $(printf '%s' "$FCC_BASH_AGENTS" | tr ' ' ',')"
+_bash_names=""
+for _ba_id in $FCC_BASH_AGENTS; do
+	case " $_bash_set " in
+		*" $_ba_id "*) _bash_names="$_bash_names, $(fcc_agent_name "$_ba_id")" ;;
+	esac
+done
+_bash_names="${_bash_names#, }"
+_bash_v="$(fcc_detect_version bash --version 2>/dev/null || true)"
+if [ -n "$_bash_v" ]; then
+	add_result OK "bash" "$_bash_v" "$_bash_req" ""
+elif [ -n "$_bash_names" ]; then
+	add_result FAIL "bash" "not found" "$_bash_req" \
+		"$(fcc_pkg_install_hint bash) — required by $_bash_names. Or select only agents that do not need it."
+else
+	add_result WARN "bash" "not found" "$_bash_req" \
+		"Not needed by the selected agents; add it before selecting one that needs it."
+fi
 
 # FCC runtime present?
 if [ -x "$ROOT/bin/fcc-server" ]; then

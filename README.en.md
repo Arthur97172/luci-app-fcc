@@ -60,6 +60,14 @@ hand — the page fetches the official installer over HTTPS, records its SHA-256
 and runs it. Python, `uv` and the runtime itself are installed under the
 configured install path (`/opt/fcc` by default), never into this package.
 
+The installer then asks which coding agents to install, and that conversation
+only reads `/dev/tty` — there is no flag or environment variable that skips it.
+So this package does not guess at the answers: the installer is run inside a
+`tmux` session, answered question by question according to the agents ticked on
+the *Configuration* page, and the whole terminal is written to
+`<install_path>/logs/installer.out`. When an install fails, that transcript is
+where the reason is — and the first place to look.
+
 **2. Configure.** On the *Configuration* page, set the address and port, then
 **Open FCC Admin** to add provider credentials. API keys are entered in FCC's
 own admin UI and are never stored in UCI — this package has nowhere to put them.
@@ -104,6 +112,17 @@ directory renames — and busybox already provides `/bin/tar` on every image.
 Depending on the GNU `tar` package would also make this package unselectable on
 25.12, where upstream's tar carries a variant gate (`TAR_XZ` on, `xz-utils` off
 by default) that the metadata generator copies onto every dependent.
+
+`bash` is deliberately *not* in that list. Upstream's installer hands five of the
+ten agents — Claude Code, OpenCode, Hermes, Grok Build and Muse Code — to their
+own bash installers, and OpenWrt images ship busybox ash and no bash at all.
+Depending on it would mean dragging a shell onto every router that only wanted to
+look at the status page, so it is required only when one of those agents is
+selected, and the *Configuration* page's diagnostics report it: a FAIL with the
+install command when the selected set needs it, a WARN when it does not. Without
+that check the install failed after the download and the build, with nothing in
+the log but upstream's `bash is required. Install it first, then rerun this
+installer.`
 
 `luci-compat` is the other load-bearing one, and less obviously so. OpenWrt
 24.10 and 25.12 moved LuCI's core to ucode: `luci-base` no longer ships
@@ -280,8 +299,19 @@ tarball in the release.
 * **Agent versions are probed, not guaranteed.** A version is read from the
   underlying CLI with a 5-second timeout and cached for 60 seconds. An agent
   whose CLI changes its output format will show an unfamiliar string.
-* **The console needs `tmux`.** Without it the other two pages still work; the
-  console reports the missing dependency instead of failing silently.
+* **The console and the runtime installer both need `tmux`.** Without it the other
+  two pages still work, but the console reports the missing dependency instead of
+  failing silently and an install is refused before it starts. The diagnostics
+  report calls tmux a FAIL rather than a WARN: a warning in front of a guaranteed
+  failure only teaches the reader to ignore the one line that mattered.
+* **Five agents need `bash`.** See *Requirements*. Selecting them on a box with
+  no bash fails after the download rather than before it; the *Configuration*
+  page's diagnostics report it up front.
+* **A first install cannot select zero agents.** Upstream's chooser refuses an
+  empty set and re-asks the whole list, so "no agents" cannot be completed on a
+  fresh install. This package refuses it outright and says why, rather than
+  letting the installer spin. Selecting none is allowed once agents are already
+  installed: upstream keeps the ones it finds.
 * **A rolled-back update costs a second runtime's worth of disk while it runs.**
   Rollback works by renaming the previous runtime aside rather than copying it,
   which is free on one filesystem — but the new runtime still has to be written

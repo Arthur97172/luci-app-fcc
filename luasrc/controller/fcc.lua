@@ -244,8 +244,13 @@ function start_job(argv, logname, lockname)
 
 	local log = job_log_dir() .. "/" .. logname
 
-	local pid = util.spawn_detached(script, rest, log)
-	if not pid then return fail("could not start the job") end
+	local pid, why = util.spawn_detached(script, rest, log)
+	if not pid then
+		-- The reason, not just the verdict. This message is the whole of what
+		-- the person sees, and the four ways it can happen — not installed, not
+		-- executable, no shell, no pid — are fixed differently.
+		return fail("could not start the job" .. (why and (": " .. why) or ""))
+	end
 	json_out('{"ok":true,"started":true,"pid":' .. pid ..
 		',"lock":' .. util.json_encode(lockname) ..
 		',"log":' .. util.json_encode(logname) .. '}')

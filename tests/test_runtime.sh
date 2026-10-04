@@ -1488,6 +1488,73 @@ test_rollback_reports_when_the_server_cannot_be_restarted() {
 		"the files are restored even though the server will not start"
 }
 
+# Section 79's two messages are both about an *update*: one names a previous
+# version, the other says the server "remains stopped", which is only meaningful
+# if it was running. A first install that fails has neither, and reporting
+# either of them sends the reader looking for a previous version to repair.
+test_rollback_reports_a_failed_first_install_honestly() {
+	setup_sandbox
+	_ri_root="$SANDBOX/opt/fcc"
+	# The state a failed first install leaves: a partial runtime, partial
+	# launchers, no runtime.json (that is written only on success), and no backup
+	# — because backup_runtime found nothing to back up.
+	mkdir -p "$_ri_root/runtime" "$_ri_root/bin" "$_ri_root/data"
+	printf 'half-written interpreter\n' > "$_ri_root/runtime/marker"
+	printf '#!/bin/sh\nexit 1\n'       > "$_ri_root/bin/fcc-server"
+	chmod +x "$_ri_root/bin/fcc-server"
+	printf 'provider settings\n'        > "$_ri_root/data/providers.json"
+
+	make_uci_shim
+	_out="$(sh_install 'rollback_runtime "" false; echo "rc=$?"')"
+	_log="$(cat "$_ri_root/logs/fcc-runtime.log" 2>/dev/null)"
+
+	assert_contains "$_out" "INSTALL_FAILED" "a failed first install says so"
+	assert_contains "$_out" "rc=1" "and fails"
+	assert_not_contains "$_out" "ROLLBACK_FAILED" \
+		"rather than reporting a rollback that never happened"
+	assert_not_contains "$_log" "remains stopped" \
+		"and never claims a server that never ran remains stopped"
+	assert_contains "$_log" "no version to restore" "the log says why there was nothing to restore"
+
+	# The half-written runtime goes: the status page reads fcc-server to decide
+	# whether a runtime is installed, and a partial one would be reported as a
+	# working install that cannot start.
+	assert_no "the partial runtime is removed" test -d "$_ri_root/runtime"
+	assert_no "the partial launchers go with it" test -d "$_ri_root/bin"
+	# data/ is not this installer's to discard — on a reinstall attempt it may
+	# hold provider credentials entered through FCC's own admin page.
+	assert_ok "but the data is left alone" test -f "$_ri_root/data/providers.json"
+}
+
+# Section 3.6.5 lets the user uncheck every agent. Upstream's chooser will not
+# accept that on a first install — it re-asks until one is chosen — so the
+# request cannot be honoured and is refused before anything is downloaded.
+test_no_agents_is_refused_on_a_first_install() {
+	setup_sandbox
+	mkdir -p "$SANDBOX/opt/fcc" "$SANDBOX/none-bin"
+	# A PATH without the agents: "is anything installed?" is answered by looking
+	# for the launchers, and a development machine that has them would answer
+	# yes and make this assertion about nothing.
+	for _na_t in sh cat rm mkdir rmdir sed awk grep cut tr date df; do
+		_na_p="$(command -v "$_na_t" 2>/dev/null)" || continue
+		ln -sf "$_na_p" "$SANDBOX/none-bin/$_na_t"
+	done
+
+	_na_out="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		UCI_SHIM_DIR="$SANDBOX/uci" PATH="$SANDBOX/none-bin" \
+		sh -c '. "$1"; cmd_runtime runtime --no-agents; echo "rc=$?"' \
+		_ "$(install_lib)" 2>&1)"
+
+	assert_contains "$_na_out" "NO_AGENTS" "an empty selection on a first install is refused"
+	assert_contains "$_na_out" "at least one coding agent" "and says why"
+	assert_contains "$_na_out" "rc=1" "and fails rather than installing something else"
+	# The refusal is the point: nothing was downloaded, so nothing was installed.
+	assert_no "no installer was downloaded" test -e "$SANDBOX/opt/fcc/cache/fcc-install-$$.sh"
+	assert_eq "" "$(cat "$SANDBOX/opt/fcc/cache/installer-hashes.log" 2>/dev/null)" \
+		"and no installer hash was recorded"
+}
+
 # ---------------------------------------------------------------------------
 # Runtime metadata (DESIGN_SPEC.md sections 42 and 81).
 #
@@ -1815,63 +1882,308 @@ test_server_wrapper_logs_the_server_and_replaces_itself() {
 }
 
 # Section 3.6.5: which agents get installed is decided before the install
-# starts, and the answers file is the only channel that carries that decision
-# to the upstream installer — so what it contains *is* the feature.
+# starts, and the answer has to reach the upstream installer's agent chooser.
 #
-# The three cases below are the whole point of the flag: a named subset, no
-# opinion at all, and an explicit "none". The last two both arrive as an empty
-# agent list and must not collapse into each other.
-test_installer_answers_carry_the_agent_selection() {
+# The chooser asks, one agent at a time, on /dev/tty — there is no flag and no
+# answer file — so this package answers the prompts themselves. The decision for
+# each prompt is a pure function of the prompt and the selection, which is what
+# these assertions pin down. The protocol around it is exercised separately, in
+# test_installer_drives_the_agent_prompts_through_a_terminal.
+#
+# The property that matters is *identity*: the answer follows the agent the
+# question names, not the position of the question. Upstream skips the prompt
+# entirely for an agent that is already installed, so a positional answer file
+# answers the wrong question the moment one agent is already present.
+test_installer_answers_follow_the_agent_that_was_asked_about() {
 	setup_sandbox
 
-	_ia_fake="$SANDBOX/opt/fake-installer.sh"
-	mkdir -p "$SANDBOX/opt"
-	printf '#!/bin/sh\nexit 0\n' > "$_ia_fake"
-	chmod +x "$_ia_fake"
-	_ia_ans="$SANDBOX/opt/fcc/cache/installer-answers"
+	# An explicit selection: yes for the agents in it, no for the others.
+	assert_eq "y" \
+		"$(sh_install 'installer_answer_for "Install Claude Code for fcc-claude? [Y/n] " "claude aider" set')" \
+		"a selected agent is answered yes"
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Install Codex for fcc-codex? [Y/n] " "claude aider" set')" \
+		"an agent that was not selected is answered no"
+	# The prompt carries the launcher, and the launcher is the contract; the
+	# friendly name in front of it is display text upstream may reword.
+	assert_eq "y" \
+		"$(sh_install 'installer_answer_for "Install Aider for fcc-aider? [y/N] " "aider" set')" \
+		"a [y/N] prompt is answered from the set too"
+	assert_eq "y" \
+		"$(sh_install 'installer_answer_for "Install DeepSeek Harness for fcc-dsh? [Y/n] " "dsh" set')" \
+		"the launcher is what identifies the agent, not the friendly name"
 
-	# run_installer prefers util-linux `script` to give the installer a tty.
-	# The answers file is written before that call, so a stand-in that just runs
-	# the command keeps the test hermetic — no tty, no timing, no hang.
-	mkdir -p "$SANDBOX/ptybin"
-	printf '#!/bin/sh\n# stand-in for `script`: run the command with our stdin\nexec sh -c "$3"\n' \
-		> "$SANDBOX/ptybin/script"
-	chmod +x "$SANDBOX/ptybin/script"
-	_ia_path="$SANDBOX/ptybin:$PATH"
+	# --no-agents: everything still being offered is declined.
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Install Pi for fcc-pi? [Y/n] " "" none')" \
+		"an explicit empty selection declines every agent"
 
-	_ia_order="$(sh_install 'printf "%s\n" $FCC_AGENT_ORDER')"
-	_ia_n="$(printf '%s\n' "$_ia_order" | grep -c .)"
-	if [ "$_ia_n" -lt 2 ]; then
-		fail "the registry lists agents to answer for" "got $_ia_n"
-		return 0
-	fi
+	# No opinion: an empty answer is Enter, which the installer reads as its own
+	# default. Answering yes or no here would silently override upstream's
+	# defaults — including the ones it adjusted before asking.
+	assert_eq "" \
+		"$(sh_install 'installer_answer_for "Install Claude Code for fcc-claude? [Y/n] " "" default')" \
+		"no opinion leaves the choice to upstream"
 
-	# A named subset: exactly those agents are answered yes.
-	PATH="$_ia_path" sh_install \
-		'run_installer "$FCC_DEFAULT_BASE/fake-installer.sh" "claude aider" 0' >/dev/null 2>&1
-	assert_eq 2 "$(grep -c '^y$' "$_ia_ans" 2>/dev/null)" \
-		"only the two requested agents are answered yes"
-	assert_eq "$_ia_n" "$(head -n "$_ia_n" "$_ia_ans" | grep -c '^[yn]$')" \
-		"one answer per registered agent"
-	# The installer asks about more than agents (RTK, and whatever it grows
-	# next); those answers are appended after the agent block.
-	assert_eq 3 "$(tail -n +$((_ia_n + 1)) "$_ia_ans" | grep -c '^[yn]$')" \
-		"the trailing answers for non-agent prompts are still written"
+	# RTK is not a coding agent, and its own default is no. Declining is both
+	# the default and the smaller change to the router.
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Enable RTK token optimization globally for the selected coding agents? [y/N] " "claude" set')" \
+		"the RTK prompt is declined"
 
-	# No opinion: the file stays empty, so the installer's own defaults apply.
-	PATH="$_ia_path" sh_install \
-		'run_installer "$FCC_DEFAULT_BASE/fake-installer.sh" "" 0' >/dev/null 2>&1
-	assert_eq 0 "$(wc -c < "$_ia_ans" | tr -d ' ')" \
-		"an absent selection leaves the answers to upstream"
+	# An agent this package has no id for is declined rather than guessed at,
+	# and rather than left waiting for an answer that is never coming.
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Install Some New Agent for fcc-brandnew? [Y/n] " "claude" set')" \
+		"an unknown launcher is declined"
 
-	# An explicit "none": every agent answered no. This is the case that must
-	# not be mistaken for the previous one.
-	PATH="$_ia_path" sh_install \
-		'run_installer "$FCC_DEFAULT_BASE/fake-installer.sh" "" 1' >/dev/null 2>&1
-	assert_eq 0 "$(grep -c '^y$' "$_ia_ans" 2>/dev/null)" \
-		"an explicit empty selection installs no agent"
-	assert_eq "$_ia_n" "$(head -n "$_ia_n" "$_ia_ans" | grep -c '^n$')" \
-		"every agent is answered no"
+	# Anything that is not a prompt is not answered. Answering a progress line
+	# would send a stray keystroke into whatever asks next.
+	assert_eq "rc=1" \
+		"$(sh_install 'installer_answer_for "==> Checking installation prerequisites" "claude" set >/dev/null; echo "rc=$?"')" \
+		"a line that is not a prompt is not answered"
+	assert_eq "" \
+		"$(sh_install 'installer_answer_for "==> Checking installation prerequisites" "claude" set')" \
+		"and produces no keystrokes"
+}
+
+# The protocol itself, against a stand-in for tmux.
+#
+# The real thing cannot run here: this suite is deliberately host-only — no
+# Docker, no OpenWrt, no root — and the parts that need a router are covered by
+# scripts/smoke.sh instead. What is testable here is the *conversation*: that
+# the terminal is started with the runtime environment, that each prompt is
+# answered from the pane's own text, and that the exit status the pane recorded
+# is the status the caller is given. A stand-in for tmux that keeps its "screen"
+# in a file exercises all three without a terminal.
+test_installer_drives_the_agent_prompts_through_a_terminal() {
+	setup_sandbox
+	_ia_s="$SANDBOX/tmux-state"
+	mkdir -p "$_ia_s" "$SANDBOX/bin" "$SANDBOX/opt"
+	: > "$_ia_s/answers"
+
+	# tmux, reduced to the five subcommands run_installer uses.
+	cat > "$SANDBOX/bin/tmux" <<-'EOF'
+	#!/bin/sh
+	S="$FAKE_TMUX_DIR"
+	case "$1" in
+	new-session)
+		shift
+		# The command is the last argument. run_installer ends it with a long
+		# sleep so the final screen survives to be read; there is no screen
+		# here, and leaving a five-minute sleeper behind after every run is
+		# rude, so the hold is dropped.
+		for a in "$@"; do cmd="$a"; done
+		cmd="$(printf '%s' "$cmd" | sed 's/; *sleep 300$//')"
+		( sh -c "$cmd" ) >/dev/null 2>&1 &
+		;;
+	pipe-pane)    printf '%s\n' "$*" >> "$S/pipe-pane" ;;
+	capture-pane) cat "$S/pane" 2>/dev/null ;;
+	send-keys)
+		# send-keys -t <name> <keys...>; the trailing Enter is the newline.
+		shift; shift; shift
+		for a in "$@"; do
+			if [ "$a" = Enter ]; then printf '\n' >> "$S/answers"
+			else printf '%s' "$a" >> "$S/answers"; fi
+		done
+		;;
+	kill-session) : ;;
+	esac
+	exit 0
+	EOF
+	chmod +x "$SANDBOX/bin/tmux"
+
+	# The installer, reduced to what the protocol sees: it puts a prompt on the
+	# "screen", waits for the answer to that prompt, and moves on.
+	#
+	# ask() must run in this shell, not in a command substitution: the counter
+	# that says which question is being asked lives here, and a subshell would
+	# throw it away — leaving every question waiting on, and reading, the first
+	# answer. The answer is therefore written to a file and read back.
+	cat > "$SANDBOX/opt/fake-installer.sh" <<-'EOF'
+	#!/bin/sh
+	S="$FAKE_TMUX_DIR"
+	i=0
+	ask() {
+		i=$(( i + 1 ))
+		printf '%s' "$1" > "$S/pane"
+		while [ "$(wc -l < "$S/answers" | tr -d ' ')" -lt "$i" ]; do sleep 0.1; done
+		sed -n "${i}p" "$S/answers" > "$S/answer-$i"
+	}
+	printf '%s' "$HOME" > "$S/env-home"
+	ask 'Install Claude Code for fcc-claude? [Y/n] '
+	ask 'Install Codex for fcc-codex? [Y/n] '
+	ask 'Enable RTK token optimization globally for the selected coding agents? [y/N] '
+	printf '%s|%s|%s\n' "$(cat "$S/answer-1")" "$(cat "$S/answer-2")" \
+		"$(cat "$S/answer-3")" > "$S/transcript"
+	exit "${FAKE_INSTALLER_RC:-0}"
+	EOF
+	chmod +x "$SANDBOX/opt/fake-installer.sh"
+
+	_ia_run() {
+		# _ia_run <rc> <agents> <none>
+		( export FAKE_TMUX_DIR="$_ia_s" FAKE_INSTALLER_RC="$1"
+		  sh_install "run_installer \"\$FCC_DEFAULT_BASE/fake-installer.sh\" \"$2\" $3; echo \"rc=\$?\"" )
+	}
+	_ia_reset() {
+		: > "$_ia_s/answers"
+		rm -f "$_ia_s/pane" "$_ia_s/transcript" "$_ia_s/pipe-pane" "$_ia_s"/answer-*
+	}
+
+	# A named subset: claude yes, codex no, RTK no — and the installer's own
+	# exit status comes back as the caller's.
+	_ia_reset
+	_ia_out="$(_ia_run 0 "claude" 0)"
+	assert_eq "y|n|n" "$(cat "$_ia_s/transcript" 2>/dev/null)" \
+		"each prompt is answered from the agent it names"
+	assert_contains "$_ia_out" "rc=0" "a successful installer reports success"
+
+	# The terminal is started with the runtime environment. A tmux session
+	# inherits the *server's* environment rather than the caller's, so without
+	# this the installer would put a second runtime in root's home directory.
+	assert_eq "$SANDBOX/opt/fcc/data" "$(cat "$_ia_s/env-home" 2>/dev/null)" \
+		"the terminal starts with the runtime environment"
+
+	# No opinion: Enter for each agent question, so upstream's own defaults
+	# apply. RTK is answered explicitly, and that is not an exception — its own
+	# default is no, so "n" and Enter are the same answer, and the explicit one
+	# says so in the transcript.
+	_ia_reset
+	_ia_run 0 "" 0 >/dev/null
+	assert_eq "||n" "$(cat "$_ia_s/transcript" 2>/dev/null)" \
+		"no opinion sends Enter rather than an answer"
+
+	# --no-agents: everything declined.
+	_ia_reset
+	_ia_run 0 "" 1 >/dev/null
+	assert_eq "n|n|n" "$(cat "$_ia_s/transcript" 2>/dev/null)" \
+		"an explicit empty selection declines every agent"
+
+	# A failing installer must fail the caller, with its own status rather than
+	# a generic one — the status is what the rollback path branches on.
+	_ia_reset
+	_ia_out="$(_ia_run 7 "claude" 0)"
+	assert_contains "$_ia_out" "rc=7" "the installer's exit status is passed through"
+
+	# The transcript is what a person opens when the install fails. The full
+	# transcript comes from tmux's pipe-pane, which the stand-in records rather
+	# than performs; what run_installer does itself is append the last screen
+	# after the terminal closes, so the log ends with what the installer was
+	# showing when it stopped.
+	assert_contains "$(cat "$_ia_s/pipe-pane" 2>/dev/null)" "logs/installer.out" \
+		"the installer's output is wired to logs/installer.out"
+	assert_contains "$(cat "$SANDBOX/opt/fcc/logs/installer.out" 2>/dev/null)" \
+		"Enable RTK token optimization" \
+		"the last screen is appended to logs/installer.out"
+}
+
+# Without a terminal the agent question is never asked, and running anyway would
+# install upstream's nine-agent default set and report success. Section 103: say
+# why, and stop.
+test_installer_refuses_without_a_terminal() {
+	setup_sandbox
+	mkdir -p "$SANDBOX/opt" "$SANDBOX/nomux"
+	printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/opt/fake-installer.sh"
+	chmod +x "$SANDBOX/opt/fake-installer.sh"
+
+	# A PATH with the tools run_installer needs and no tmux — the host has one,
+	# so hiding it is the only way to reach the branch.
+	for _ia_t in sh cat rm mkdir sed awk grep date sleep tr wc; do
+		_ia_p="$(command -v "$_ia_t" 2>/dev/null)" || continue
+		ln -sf "$_ia_p" "$SANDBOX/nomux/$_ia_t"
+	done
+
+	_ia_out="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		UCI_SHIM_DIR="$SANDBOX/uci" PATH="$SANDBOX/nomux" \
+		sh -c '. "$1"; run_installer "$2" "claude" 0; echo "rc=$?"' \
+		_ "$(install_lib)" "$SANDBOX/opt/fake-installer.sh" 2>&1)"
+
+	assert_contains "$_ia_out" "TMUX_MISSING" "a terminal-less install is refused"
+	assert_contains "$_ia_out" "tmux is required" "and says what is missing"
+	assert_contains "$_ia_out" "opkg install tmux" "and names the command for this image"
+	assert_contains "$_ia_out" "rc=1" "and fails rather than reporting success"
+}
+
+# The environment is what keeps the runtime under the install path, and it has
+# three consumers that must agree: this package's installer, the terminal that
+# drives the upstream installer, and fcc-env. One list, rendered three ways.
+test_runtime_env_has_one_source_of_truth() {
+	setup_sandbox
+	_rt_expected="$(sh_install '
+		for n in $(fcc_runtime_env_names); do
+			printf "%s=%s\n" "$n" "$(fcc_runtime_env_value "$ROOT" "$n")"
+		done
+		printf "PATH_HEAD=%s\n" "$ROOT/bin"')"
+	assert_ne "" "$_rt_expected" "the environment has names at all"
+
+	# apply_runtime_env sets exactly that, and nothing else.
+	_rt_applied="$(sh_install '
+		apply_runtime_env
+		for n in $(fcc_runtime_env_names); do
+			eval "printf \"%s=%s\n\" \"\$n\" \"\$$n\""
+		done
+		printf "PATH_HEAD=%s\n" "${PATH%%:*}"')"
+	assert_eq "$_rt_expected" "$_rt_applied" \
+		"apply_runtime_env sets exactly what the renderer describes"
+
+	# And the rendered text, sourced in a clean shell, reproduces it. This is
+	# literally what the installer terminal does, so a quoting mistake that only
+	# shows up in a path with a space in it fails here rather than on a router.
+	_rt_sourced="$(sh_install '
+		mkdir -p "$ROOT/cache"
+		fcc_runtime_env_exports "$ROOT" > "$ROOT/cache/env.sh"
+		( . "$ROOT/cache/env.sh"
+		  for n in $(fcc_runtime_env_names); do
+			eval "printf \"%s=%s\n\" \"\$n\" \"\$$n\""
+		  done
+		  printf "PATH_HEAD=%s\n" "${PATH%%:*}" )')"
+	assert_eq "$_rt_expected" "$_rt_sourced" \
+		"the rendered exports reproduce the environment when sourced"
+}
+
+# The bash gate: five of the ten agents are installed by a bash script, and
+# OpenWrt ships no bash. Which agents count follows the selection, so the check
+# has to reason about the set the install will actually end up with.
+test_bash_requirement_follows_the_agent_set() {
+	setup_sandbox
+	assert_ok "claude needs bash"     sh_common 'fcc_agents_need_bash claude'
+	assert_ok "a comma separated set is understood" sh_common 'fcc_agents_need_bash "pi,grok"'
+	assert_no "pi on its own does not" sh_common 'fcc_agents_need_bash pi'
+	assert_no "an empty set does not"  sh_common 'fcc_agents_need_bash ""'
+	assert_ok "a set with one such agent does" sh_common 'fcc_agents_need_bash "aider muse"'
+
+	# The set upstream installs when it is not told which ones.
+	assert_eq "claude,codex,pi,opencode,hermes,dsh,grok,muse,aider" \
+		"$(sh_common 'fcc_default_agents' | sed 's/^ //;s/ /,/g')" \
+		"the defaults are the registry's default column"
+
+	# The prompt names the launcher; the launcher names the agent.
+	assert_eq "claude" "$(sh_common 'fcc_agent_by_launcher fcc-claude')" \
+		"a launcher maps back to its agent"
+	assert_eq "dsh" "$(sh_common 'fcc_agent_by_launcher fcc-dsh')" \
+		"and for an agent whose name is not its id"
+	assert_eq "" "$(sh_common 'fcc_agent_by_launcher fcc-nope')" \
+		"an unknown launcher maps to nothing"
+
+	# Nothing is installed in the sandbox, so the effective set is the requested
+	# one — and it grows by what is already there once something is.
+	#
+	# The tools are restricted rather than inherited: "which agents are
+	# installed?" is answered by looking for their launchers, and a development
+	# machine that has them on PATH would answer with all ten and quietly make
+	# this assertion about nothing.
+	assert_eq "claude" \
+		"$(sh_common_tools 'grep awk sed cut tr' 'fcc_effective_agents claude' \
+			| tr -s ' ' | sed 's/^ //;s/ $//')" \
+		"an effective set with nothing installed is the requested set"
+	mkdir -p "$SANDBOX/opt/fcc/bin"
+	printf '#!/bin/sh\n' > "$SANDBOX/opt/fcc/bin/fcc-codex"
+	chmod +x "$SANDBOX/opt/fcc/bin/fcc-codex"
+	assert_eq "claude codex" \
+		"$(sh_common_tools 'grep awk sed cut tr' 'fcc_effective_agents claude' \
+			| tr -s ' ' | sed 's/^ //;s/ $//')" \
+		"an installed agent joins the set, because upstream keeps it without asking"
 }
 
 test_runtime_metadata_keeps_installed_at_and_moves_updated_at() {
@@ -1949,6 +2261,121 @@ EOF
 	# agent must never be what blocks an install.
 	assert_not_contains "$_dw_ghost" '"status": "FAIL"' \
 		"a missing agent never blocks the install"
+}
+
+# Run doctor.sh with PATH replaced by a directory holding only the named tools,
+# plus whatever environment assignments are handed in.
+#
+# doctor.sh is almost entirely a list of "is this command present?" questions,
+# so the only way to ask them deliberately is to control PATH. Prepending will
+# not do: the real tool is still found further along, which is exactly the
+# answer being tested against. The agent set matters the same way, so it comes
+# in through the environment rather than from whatever is installed here.
+#   sh_doctor_tools '<tools>' '<VAR=value ...>' [doctor args...]
+sh_doctor_tools() {
+	_dt_tools="$1"; _dt_env="$2"; shift 2
+	rm -rf "$SANDBOX/doctorbin"
+	mkdir -p "$SANDBOX/doctorbin"
+	# sh, because PATH has to hold the shell that is about to be run.
+	for _dt_t in sh $_dt_tools; do
+		_dt_p="$(command -v "$_dt_t" 2>/dev/null)" || continue
+		ln -sf "$_dt_p" "$SANDBOX/doctorbin/$_dt_t"
+	done
+	# shellcheck disable=SC2086  # a test-controlled list of assignments
+	env PATH="$SANDBOX/doctorbin" \
+		FCC_LIBDIR="$LIBEXEC" \
+		FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" \
+		FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		$_dt_env \
+		sh "$LIBEXEC/doctor.sh" "$@" 2>&1
+}
+
+# The tools doctor.sh itself needs, and nothing else. Left out on purpose: bash
+# and tmux, which are what the two checks below are about, and curl and
+# nslookup, which reach the network.
+DOCTOR_TOOLS='sed awk grep cut tr uname dirname df timeout head'
+
+# The bash check, which exists because the upstream installer hands five of the
+# ten agents to bash installers and OpenWrt ships no bash at all. Before it
+# existed the install failed several minutes in, after the download, with the
+# reason buried in logs/installer.out.
+#
+# All three outcomes are produced deliberately here — the check reads PATH and
+# the agent set, so leaving either to the machine running the tests would mean
+# asserting whatever this host happens to have.
+test_doctor_bash_check_follows_the_agent_set() {
+	setup_sandbox
+
+	# A selected agent that needs bash, with no bash to be found: a failure, and
+	# one that says which package to install and which agent wants it. That pair
+	# is the whole point of the check — "bash is missing" is not actionable on a
+	# system whose package manager the reader has to guess at.
+	_dbc_line="$(sh_doctor_tools "$DOCTOR_TOOLS" 'FCC_AGENT_SELECTION=claude' --json |
+		grep '"name": "bash"')"
+	assert_contains "$_dbc_line" '"status": "FAIL"' \
+		"a selected bash agent with no bash is a failure"
+	assert_contains "$_dbc_line" 'opkg install bash' \
+		"and the report says how to install bash"
+	assert_contains "$_dbc_line" 'Claude Code' \
+		"and names the agent that needs it"
+
+	# The same box with only bash-free agents selected: a warning. The runtime
+	# installs perfectly well without bash, so this must not be what stops it.
+	_dbc_warn="$(sh_doctor_tools "$DOCTOR_TOOLS" 'FCC_AGENT_SELECTION=codex' --json |
+		grep '"name": "bash"')"
+	assert_contains "$_dbc_warn" '"status": "WARN"' \
+		"an agent that does not need bash does not fail the check"
+	assert_contains "$_dbc_warn" 'Not needed by the selected agents' \
+		"and the report says why it is only a warning"
+
+	# bash present: OK, whatever is selected.
+	_dbc_ok="$(sh_doctor_tools "$DOCTOR_TOOLS bash" 'FCC_AGENT_SELECTION=claude' --json |
+		grep '"name": "bash"')"
+	assert_contains "$_dbc_ok" '"status": "OK"' "bash present is OK"
+	assert_not_contains "$_dbc_ok" 'not found' "and the report does not claim it is missing"
+
+	# An already-installed agent counts even when the user asked for none of
+	# them, because upstream's chooser keeps an installed agent without asking.
+	# This is the case that used to desynchronise the answers: the installer
+	# went straight past the Claude Code question, and every answer after it was
+	# given to the wrong question.
+	mkdir -p "$SANDBOX/opt/fcc/bin"
+	: > "$SANDBOX/opt/fcc/bin/fcc-claude"
+	chmod +x "$SANDBOX/opt/fcc/bin/fcc-claude"
+	_dbc_inst="$(sh_doctor_tools "$DOCTOR_TOOLS" 'FCC_AGENT_NONE=1' --json |
+		grep '"name": "bash"')"
+	assert_contains "$_dbc_inst" '"status": "FAIL"' \
+		"an installed bash agent is in the set even with --no-agents"
+	assert_contains "$_dbc_inst" 'Claude Code' "and the report names it"
+	rm -rf "$SANDBOX/opt/fcc"
+}
+
+# tmux is a hard requirement, not a convenience. It is the Web Console's backend
+# and it is also the terminal the upstream installer's agent chooser is driven
+# through, because that chooser reads /dev/tty and refuses to run without one.
+# The check used to be a warning, which put the word "warning" in front of a
+# guaranteed failure and taught the reader to ignore the line that mattered.
+test_doctor_tmux_is_required_not_optional() {
+	setup_sandbox
+
+	_dtm_line="$(sh_doctor_tools "$DOCTOR_TOOLS" '' --json | grep '"name": "tmux"')"
+	assert_contains "$_dtm_line" '"status": "FAIL"' \
+		"a missing tmux is a failure, not a warning"
+	assert_contains "$_dtm_line" 'opkg install tmux' \
+		"and the report says which package to install"
+	assert_contains "$_dtm_line" '"requirement": "required"' \
+		"and that it is required rather than optional"
+
+	_dtm_ok="$(sh_doctor_tools "$DOCTOR_TOOLS tmux" '' --json | grep '"name": "tmux"')"
+	assert_contains "$_dtm_ok" '"status": "OK"' "tmux present is OK"
+	assert_not_contains "$_dtm_ok" 'not found' "and the report does not claim it is missing"
+
+	# The blocking form is what someone reads after an install has already
+	# stopped, so it has to carry the suggestion too, not just the verdict.
+	_dtm_blk="$(sh_doctor_tools "$DOCTOR_TOOLS" '' --blocking)"
+	assert_contains "$_dtm_blk" '[FAIL] tmux' "the blocking report names tmux"
+	assert_contains "$_dtm_blk" 'Suggestion:' "and what to do about it"
 }
 
 test_doctor_blocking_names_what_failed_and_what_to_do() {

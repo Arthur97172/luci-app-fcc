@@ -196,6 +196,71 @@ fcc_json_str_or_null() {
 }
 
 # ---------------------------------------------------------------------------
+# The runtime environment
+#
+# The FCC runtime keeps its Python, its tools and its data under the install
+# root instead of $HOME/.local, and it decides where by reading these
+# variables. Three things have to set them and all three must set the *same*
+# values: this package's installer, the terminal that drives the upstream
+# installer, and `fcc-env`'s `eval` form for an administrator over SSH. A
+# terminal that starts without them does not fail loudly — it installs a second
+# runtime into root's home directory, which is the kind of bug that is found
+# months later on a full flash chip. So the list is written once, here, and the
+# consumers render it rather than repeat it.
+#
+# The root is passed in rather than read from fcc_root() so a caller that has
+# already resolved it — and a test pointing at a sandbox — cannot end up
+# exporting a different one than it is installing into.
+# ---------------------------------------------------------------------------
+fcc_runtime_env_names() {
+	printf '%s\n' HOME UV_INSTALL_DIR UV_TOOL_DIR UV_TOOL_BIN_DIR UV_CACHE_DIR \
+		UV_PYTHON_INSTALL_DIR XDG_DATA_HOME XDG_CACHE_HOME XDG_BIN_HOME \
+		XDG_CONFIG_HOME
+}
+
+fcc_runtime_env_value() {
+	# fcc_runtime_env_value <root> <name> -> the value that name takes there
+	case "$2" in
+		HOME)                  printf '%s' "$1/data" ;;
+		UV_INSTALL_DIR)        printf '%s' "$1/bin" ;;
+		UV_TOOL_DIR)           printf '%s' "$1/runtime/uv-tools" ;;
+		UV_TOOL_BIN_DIR)       printf '%s' "$1/bin" ;;
+		UV_CACHE_DIR)          printf '%s' "$1/cache/uv" ;;
+		UV_PYTHON_INSTALL_DIR) printf '%s' "$1/runtime/python" ;;
+		XDG_DATA_HOME)         printf '%s' "$1/data/.local/share" ;;
+		XDG_CACHE_HOME)        printf '%s' "$1/cache" ;;
+		XDG_BIN_HOME)          printf '%s' "$1/bin" ;;
+		XDG_CONFIG_HOME)       printf '%s' "$1/data/.config" ;;
+		*) return 1 ;;
+	esac
+}
+
+fcc_shquote() {
+	# Single-quote a value for a shell command line.
+	#
+	# Only ever called with values this package derived itself — paths built
+	# from the install root — never with anything a user typed, so it is a
+	# quoting convenience and not a sanitiser. It exists because the install
+	# root is configurable and a path with a space in it would otherwise split
+	# the export into two words and put the runtime somewhere unintended.
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+fcc_runtime_env_exports() {
+	# fcc_runtime_env_exports <root> -> `export NAME='value'` lines.
+	# Evaluable by a POSIX shell: `eval "$(fcc_runtime_env_exports /opt/fcc)"`.
+	_fre_root="$1"
+	for _fre_n in $(fcc_runtime_env_names); do
+		printf 'export %s=%s\n' "$_fre_n" \
+			"$(fcc_shquote "$(fcc_runtime_env_value "$_fre_root" "$_fre_n")")"
+	done
+	# PATH keeps whatever the caller already had: the runtime's bin goes first
+	# so its launchers win, but the system tools stay reachable — the installer
+	# itself needs curl, tar and a compiler from the system.
+	printf 'export PATH=%s:"$PATH"\n' "$(fcc_shquote "$_fre_root/bin")"
+}
+
+# ---------------------------------------------------------------------------
 # Agent registry
 # ---------------------------------------------------------------------------
 fcc_agents_each() {
@@ -248,6 +313,119 @@ fcc_agent_field() {
 fcc_agent_command() { fcc_agent_field "$1" 3; }
 fcc_agent_name()    { fcc_agent_field "$1" 2; }
 fcc_agent_probe()   { fcc_agent_field "$1" 7; }
+
+fcc_agent_by_launcher() {
+	# fcc_agent_by_launcher <launcher> -> the id of the agent that launcher
+	# belongs to, or nothing.
+	#
+	# Needed to read the upstream installer's agent prompt, which names the
+	# agent by its launcher ("Install Claude Code for fcc-claude?") rather than
+	# by the id this package uses. Matching on the launcher rather than on the
+	# friendly name is deliberate: the name is display text that upstream is
+	# free to reword, while the launcher is the contract — it is what the
+	# installer actually creates and what the Web Console actually runs.
+	#
+	# awk reads the registry to the end rather than exiting on the match; see
+	# the note in fcc_valid_agent() about busybox and broken pipes.
+	fcc_agents_each | awk -F'|' -v c="$1" '$3 == c { id = $1 } END { if (id) print id }'
+}
+
+# ---------------------------------------------------------------------------
+# Which agents are actually installed
+#
+# An agent is installed when its FCC launcher resolves. The launcher is written
+# into <root>/bin, which is on PATH only for a process that has already applied
+# the runtime environment; the doctor runs *before* that, so the directory is
+# probed directly as well. Reading the directory rather than trusting a marker
+# file means the answer stays true if someone removes a launcher by hand, which
+# is exactly when a stale marker would be believed.
+# ---------------------------------------------------------------------------
+fcc_agent_installed() {
+	# fcc_agent_installed <id> [root] -> 0 if that agent's launcher resolves
+	_fai_cmd="$(fcc_agent_command "$1" 2>/dev/null || true)"
+	[ -n "$_fai_cmd" ] || return 1
+	command -v "$_fai_cmd" >/dev/null 2>&1 && return 0
+	[ -n "${2:-}" ] && [ -x "$2/bin/$_fai_cmd" ] && return 0
+	return 1
+}
+
+fcc_installed_agents() {
+	# Prints the installed agents as a space-separated set (leading space, so
+	# callers can match with `case " $set " in`).
+	_fia_root="${1:-$(fcc_root)}"
+	_fia_out=""
+	while IFS='|' read -r _fia_id _fia_rest; do
+		case "$_fia_id" in ''|\#*) continue ;; esac
+		fcc_agent_installed "$_fia_id" "$_fia_root" && _fia_out="$_fia_out $_fia_id"
+	done <<-EOF
+	$(fcc_agents_each)
+	EOF
+	printf '%s' "$_fia_out"
+}
+
+fcc_effective_agents() {
+	# The set an install ends up with: what was asked for, plus what is already
+	# there. Not a convenience — upstream's select_coding_agent() returns 0
+	# *without prompting* when the launcher already resolves, so an agent that
+	# is present stays present whatever answer its prompt would have received.
+	# Any decision made from "the requested set" alone is therefore made about
+	# the wrong set on a box that already has agents.
+	printf '%s %s' "$(printf '%s' "${1:-}" | tr ',' ' ')" \
+		"$(fcc_installed_agents "${2:-$(fcc_root)}")"
+}
+
+fcc_default_agents() {
+	# The agents upstream installs when nobody tells it which ones — the
+	# registry's default_install column, which mirrors the installer's own
+	# defaults. Needed because "no selection" is not "no agents": it is a
+	# decision to take upstream's set, and that set is what the pre-install
+	# checks have to reason about.
+	_fda_out=""
+	while IFS='|' read -r _fda_id _fda_name _fda_cmd _fda_def _fda_rest; do
+		case "$_fda_id" in ''|\#*) continue ;; esac
+		[ "$_fda_def" = 1 ] && _fda_out="$_fda_out $_fda_id"
+	done <<-EOF
+	$(fcc_agents_each)
+	EOF
+	printf '%s' "$_fda_out"
+}
+
+# ---------------------------------------------------------------------------
+# bash: a prerequisite of five agents, and not a part of OpenWrt
+# ---------------------------------------------------------------------------
+# The upstream installer hands five of the ten agents to their own installers,
+# which are bash scripts: it calls `require_command bash` first and stops with
+# "bash is required. Install it first, then rerun this installer." when it
+# cannot find one. OpenWrt ships busybox ash as /bin/sh and no bash at all, so
+# an install including any of these cannot succeed on a stock image until the
+# package is added — which is worth saying *before* the download rather than
+# after the failure.
+#
+# The set is upstream's condition, not a guess: it is exactly the agents named
+# in that `if`. pi, cline, dsh and aider are not in it and install without bash.
+FCC_BASH_AGENTS="claude opencode hermes grok muse"
+
+fcc_agents_need_bash() {
+	# fcc_agents_need_bash "<id[,id...]|id id...>" -> 0 if any of them needs bash
+	_anb_set="$(printf '%s' "$1" | tr ',' ' ')"
+	for _anb_a in $FCC_BASH_AGENTS; do
+		case " $_anb_set " in
+			*" $_anb_a "*) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+fcc_pkg_install_hint() {
+	# fcc_pkg_install_hint <package> -> the command that installs it *here*.
+	# 24.10 uses opkg and 25.12 uses apk; the hint is a command the user types,
+	# so it has to name the one their image actually has.
+	if command -v apk >/dev/null 2>&1; then
+		printf 'apk add %s' "$1"
+	else
+		printf 'opkg install %s' "$1"
+	fi
+}
 
 # ---------------------------------------------------------------------------
 # Version detection

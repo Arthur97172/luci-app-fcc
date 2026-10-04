@@ -296,6 +296,9 @@
 		FCC.api(action, { id: id }, { method: 'POST' }).then(function () {
 			startJobWatch('install', 'fcc-runtime.log');
 		}).catch(function (err) {
+			/* Same reasoning as runJobAction: the log is where a refusal explains
+			 * itself, so the panel opens either way. */
+			startJobWatch('install', 'fcc-runtime.log');
 			FCC.notice(FCC.$('#fcc-agent-status'), 'fail', err.message);
 		});
 	}
@@ -462,6 +465,14 @@
 		FCC.api(action, params || {}, { method: 'POST' }).then(function () {
 			startJobWatch(lock, log);
 		}).catch(function (err) {
+			/* The request failed, so no job was started — but the panel is still
+			 * the right place to be, because the two things that explain a
+			 * refusal are the lock and the log: a previous run that never
+			 * released the lock, or a job that started and stopped before the
+			 * response was read. Watching costs nothing when there is nothing to
+			 * watch, and it means the failure is never a single sentence with
+			 * the evidence hidden behind it. */
+			startJobWatch(lock, log);
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 	}

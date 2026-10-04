@@ -119,9 +119,21 @@ end
 -- the lock it holds and the log it writes. The caller gets a pid as soon as
 -- the process exists, which is what it asked for.
 --
--- @return pid (number) on success, nil on failure
+-- When it cannot be started at all, the *reason* is returned alongside the nil
+-- rather than left to be inferred. "could not start the job" is true of four
+-- different situations — the script is not installed, it is not executable, the
+-- shell cannot be forked, the shell forked but said nothing — and each has a
+-- different fix. The message a person reads is the only part of this that
+-- reaches them.
+--
+-- @return pid (number) on success; nil plus a reason string on failure
 function spawn_detached(cmd, args, logfile)
-	if not runnable(cmd) then return nil end
+	if type(cmd) ~= "string" or cmd == "" then
+		return nil, "no command was given"
+	end
+	if not runnable(cmd) then
+		return nil, cmd .. " is missing or not executable"
+	end
 
 	local parts = { shell_quote(cmd) }
 	for _, a in ipairs(args or {}) do
@@ -134,9 +146,21 @@ function spawn_detached(cmd, args, logfile)
 	if setsid then job = shell_quote(setsid) .. " " .. job end
 
 	local fh = io.popen(job .. " & echo $!")
-	if not fh then return nil end
-	local pid = tonumber((fh:read("*a") or ""):match("%d+"))
+	if not fh then
+		-- popen failed before any shell existed: out of memory, or the process
+		-- table is full. Distinct from every failure below, and the only one
+		-- where nothing was written to the log.
+		return nil, "the shell could not be started"
+	end
+	local out = fh:read("*a") or ""
 	fh:close()
+
+	local pid = tonumber(out:match("%d+"))
+	if not pid then
+		local said = out:gsub("%s+$", "")
+		return nil, "the shell reported no process id" ..
+			(said ~= "" and (": " .. said) or "")
+	end
 	return pid
 end
 
