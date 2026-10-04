@@ -206,23 +206,24 @@ shell 后端遵循一条容易踩到的规则：POSIX `sh` 只有一个被所有
 
 版本由两个文件合成：`VERSION` 是上游版本（Makefile 用它做 `PKG_VERSION`，
 *基本信息*页面显示它），Makefile 里的 `PKG_RELEASE` 是发布号。两者合起来才是
-软件包的版本，也就是构建出来的文件名——`luci-app-fcc_0.1.1-r2_all.ipk`。
-Release 和 tag 必须与这个完整版本一致，`scripts/version.sh` 是唯一合成它的地方：
+软件包的版本，而这一个字符串会被用三次——文件名、tag、Release 名。
+发布 `luci-app-fcc_0.1.1-r2_all.ipk` 的 Release 就叫 `0.1.1-r2`，
+tag 也是 `0.1.1-r2`。`scripts/version.sh` 是唯一合成它的地方：
 
 ```sh
-# 不要手敲版本号：合成规则只写在 scripts/version.sh 里
-git tag "$(sh scripts/version.sh --tag)"
-git push origin "$(sh scripts/version.sh --tag)"
+sh scripts/version.sh    # 0.1.1-r2
 ```
 
-发布号是版本的一部分，因为它是软件包的一部分：同一个 `VERSION` 下重新构建的包
-要递增 `PKG_RELEASE`，所以 `0.1.1-r1` 和 `0.1.1-r2` 是两个不同的包，也就必须是
-两个不同的 tag。只写前半段的 tag 会把两个不同的包放在同一个名字下面。
+不需要手动打 tag。推送到 `main` 会先跑静态检查，再在四个架构上构建并各跑一次
+安装冒烟测试，全部通过才发布；tag 由 workflow 自己创建，取自与构建软件包时
+完全相同的那两个文件。要发下一版，改 `PKG_RELEASE` 就够了。
 
-推一个 `v*` tag 会先跑静态检查，再在四个架构上构建并各跑一次安装冒烟测试，
-全部通过后才发布。发布的第一步就是拿 tag 和这个完整版本比对：对不上立即失败，
-不会出现名为 v0.1.2-r1、包却叫 0.1.1-r2 的 Release。标题同样取自版本文件而非 tag，
-两者无法各自漂移。
+发布号是名字的一部分，因为它是软件包的一部分：同一个 `VERSION` 下重新构建的包
+要递增 `PKG_RELEASE`，所以 `0.1.1-r1` 和 `0.1.1-r2` 是两个不同的包，也就必须是
+两个不同的 tag。只写前半段的名字会把两个不同的包放在同一个 tag 下面。
+
+用同一个版本再次发布是**替换**而不是新增——发布前会先删掉该版本的 Release 和
+tag——所以同一个版本重跑是幂等的，不会因为 tag 已存在而失败。PR 永远不会触发发布。
 
 资产只有本软件包——`luci-app-fcc_<version>-r<release>_all.ipk`、
 `luci-app-fcc-<version>-r<release>.apk` 和 `SHA256SUMS`。四个架构构建的是同一个

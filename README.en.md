@@ -234,27 +234,30 @@ and `tests/test_shell.sh` enforces it.
 The version is composed from two files: `VERSION` is the upstream version (the
 Makefile reads it for `PKG_VERSION`, the *Basic Information* page displays it)
 and `PKG_RELEASE` in the Makefile is the release number. Together they are the
-package's version, which is what the built file is named after —
-`luci-app-fcc_0.1.1-r2_all.ipk`. The release and its tag have to agree with that
-whole string, and `scripts/version.sh` is the one place that composes it:
+package's version, and that one string is used three times — it is the file
+name, the tag and the release name. The release carrying
+`luci-app-fcc_0.1.1-r2_all.ipk` is called `0.1.1-r2` and is tagged `0.1.1-r2`.
+`scripts/version.sh` is the one place that composes it:
 
 ```sh
-# Do not retype the version: the rule for composing it lives in version.sh.
-git tag "$(sh scripts/version.sh --tag)"
-git push origin "$(sh scripts/version.sh --tag)"
+sh scripts/version.sh    # 0.1.1-r2
 ```
 
-The release number is part of the version because it is part of the package: a
-rebuild under the same `VERSION` takes a new `PKG_RELEASE`, so `0.1.1-r1` and
-`0.1.1-r2` are different packages and have to be different tags. A tag naming
-only the first half would put two different packages under one name.
+There is no tag to push. A push to `main` runs the static checks, builds all four
+architectures and install-smoke-tests every one of them, and publishes only if
+all of them pass; the workflow creates the tag itself, from the same two files
+the packages are stamped with. Bumping `PKG_RELEASE` is what cuts the next
+release.
 
-Pushing a `v*` tag runs the static checks, then builds and install-smoke-tests
-all four architectures, and only publishes once every one of them passes. The
-first step of the release is the comparison against that whole version: a
-mismatch fails immediately rather than publishing a release named v0.1.2-r1
-carrying packages called 0.1.1-r2. The title comes from the version files too,
-not from the tag, so the two cannot drift apart.
+The release number is part of the name because it is part of the package: a
+rebuild under the same `VERSION` takes a new `PKG_RELEASE`, so `0.1.1-r1` and
+`0.1.1-r2` are different packages and have to be different tags. A name carrying
+only the first half would put two different packages under one tag.
+
+Publishing under a version that already has a release replaces it — the job
+deletes the previous release and its tag first — so re-running for the same
+version is idempotent rather than a failure on a tag that already exists. A pull
+request never publishes.
 
 The assets are this package alone — `luci-app-fcc_<version>-r<release>_all.ipk`,
 `luci-app-fcc-<version>-r<release>.apk` and `SHA256SUMS`. All four architectures

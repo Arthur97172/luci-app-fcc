@@ -12,7 +12,10 @@
 # manifest and the Lua module paths are right in a real buildroot rather than
 # only in the static checks.
 #
-# On a v* tag the same run also publishes a GitHub release (section 62).
+# A push to main also publishes a GitHub release (section 62), named after the
+# version in ./VERSION and the Makefile's PKG_RELEASE. There is no tag to push
+# and none to get wrong: the workflow creates the tag itself, so the release,
+# its tag and the packages under it are one string from one source.
 #
 # --- why the official SDK tarball and not a container ------------------------
 #
@@ -39,16 +42,19 @@ name: Build
 on:
   push:
     branches: [main, master]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Serialise runs for the same ref rather than cancelling them. Two runs racing
+# to delete and recreate the same tag would collide, and a run cancelled
+# between the delete and the publish leaves the release missing entirely — so
+# the newer push waits for the older one to finish instead of taking its place.
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -458,45 +464,49 @@ jobs:
             dist
 
   # ---------------------------------------------------------------------------
-  # Release (section 62). Only on a v* tag, and only after every architecture
-  # has built and every one of them has installed cleanly, so a tag can never
-  # publish a package that does not install.
+  # Release (section 62). A push to main or a manual run publishes; a pull
+  # request never does. It runs only after every architecture has built and
+  # every one of them has installed cleanly, so a release can never carry a
+  # package that does not install.
+  #
+  # The guard is the pull request alone, and deliberately not `!cancelled()`:
+  # that would let this job run when a build or smoke leg had failed, which is
+  # the one thing it must never do — a release carrying a package that did not
+  # install. `needs` is what enforces the rest.
   # ---------------------------------------------------------------------------
   release:
     name: Publish release
     needs: [build, smoke]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the tag against the package version
-        # Section 62: the tag is v<version>-r<release>, the same string the
-        # package file is named after — luci-app-fcc_0.1.1-r2_all.ipk is
-        # released under the tag v0.1.1-r2. The release number is part of the
+      - name: Read the package version
+        id: version
+        # Section 62: the tag, the release name and the package file name are
+        # one string — the release for luci-app-fcc_0.1.1-r2_all.ipk is called
+        # 0.1.1-r2 and is tagged 0.1.1-r2. The release number is part of the
         # name because it is part of the version: a rebuilt package keeps
-        # VERSION and takes a new PKG_RELEASE, and a tag that named only the
-        # first half would put two different packages under one name.
+        # VERSION and takes a new PKG_RELEASE, and a name carrying only the
+        # first half would put two different packages under one tag.
         #
         # scripts/version.sh composes it from ./VERSION and the Makefile's
         # PKG_RELEASE, which are the two places the version lives — the
         # Makefile stamps the package with them and the app displays the first
-        # (section 37). The tag is checked here, first, so a mistyped one fails
-        # in seconds rather than after the download and the comparison.
+        # (section 37). Reading it rather than taking it from the ref is what
+        # keeps the release and the packages under it from drifting apart:
+        # there is no tag to compare against, because this is the tag.
         run: |
           set -eu
           full="$(sh scripts/version.sh)" || {
             echo "::error::scripts/version.sh could not read the package version"
             exit 1
           }
-          expected="v$full"
-          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match the package version ($full) — expected $expected"
-            exit 1
-          fi
-          echo "tag $GITHUB_REF_NAME matches the package version $full"
+          echo "PKGVER=$full" >> "$GITHUB_OUTPUT"
+          echo "package version: $full"
 
       - name: Download every artifact
         uses: actions/download-artifact@v4
@@ -517,7 +527,7 @@ jobs:
         # one would otherwise be published as if it were ours.
         run: |
           set -eu
-          full="$(sh scripts/version.sh)"
+          full="${{ steps.version.outputs.PKGVER }}"
           mkdir -p release
           for f in artifacts/*/*; do
             [ -f "$f" ] || continue
@@ -526,12 +536,13 @@ jobs:
               luci-app-fcc*) : ;;
               *) echo "::warning::not publishing $b"; continue ;;
             esac
-            # The tag says which version is being released; the file name is
-            # what the build actually produced. Comparing them here is the
+            # The version read above says which release this is; the file name
+            # is what the build actually produced. Comparing them here is the
             # check that the two agree — a release whose assets are named
-            # 0.1.1-r2 while the tag says v0.1.2-r2 is a packaging mistake that
-            # no other step would catch. The whole string is compared, release
-            # number included: 0.1.1-r1 and 0.1.1-r2 are different packages.
+            # 0.1.1-r2 while the version says 0.1.2-r2 is a packaging mistake
+            # that no other step would catch. The whole string is compared,
+            # release number included: 0.1.1-r1 and 0.1.1-r2 are different
+            # packages.
             case "$b" in
               *"$full"*) : ;;
               *) echo "::error::$b does not carry version $full"; exit 1 ;;
@@ -558,18 +569,34 @@ jobs:
           set -eu
           cd release && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
 
+      - name: Delete any release and tag carrying this version
+        # A published release is immutable, so a rerun under the same version
+        # has to drop the previous one first. Bumping PKG_RELEASE is a
+        # deliberate act, so the same version twice means the same release
+        # rebuilt — not a second one — and this makes that rerun idempotent
+        # instead of failing on a tag that already exists. `--cleanup-tag`
+        # removes the tag with the release; the API call catches a tag that was
+        # left behind without one. Both are allowed to find nothing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ver="${{ steps.version.outputs.PKGVER }}"
+          [ -n "$ver" ] || { echo "::error::no version to delete"; exit 1; }
+          gh release delete "$ver" -y --cleanup-tag 2>/dev/null || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$ver" 2>/dev/null || true
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          # The tag has already been checked against the package version, so
-          # this is the same string by construction. It is written from the
-          # version files rather than from the ref so that the release name and
-          # the packages it carries cannot drift apart — the release is named
-          # luci-app-fcc v0.1.1-r2, tag and package alike.
-          full="$(sh scripts/version.sh)"
-          gh release create "$GITHUB_REF_NAME" \
-            --title "luci-app-fcc v$full" \
+          # Tag and release name are the same string, and it is the package's
+          # version rather than the ref: 0.1.1-r2, carrying
+          # luci-app-fcc_0.1.1-r2_all.ipk. Nothing here retypes it.
+          ver="${{ steps.version.outputs.PKGVER }}"
+          [ -n "$ver" ] || { echo "::error::no version to release"; exit 1; }
+          gh release create "$ver" \
+            --title "$ver" \
             --generate-notes \
             release/*

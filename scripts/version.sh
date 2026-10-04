@@ -2,22 +2,19 @@
 # luci-app-fcc — print the package's full version: <VERSION>-r<PKG_RELEASE>.
 #
 # The version is two files' worth of truth. ./VERSION holds the upstream
-# version: the Makefile reads it for PKG_VERSION, the app displays it (section
-# 37), and the release job checks the tag against it. The Makefile holds
-# PKG_RELEASE. Together they are what the built file is named after —
-# luci-app-fcc_0.1.1-r1_all.ipk — and section 62 requires the release and its
-# tag to carry that whole string rather than the half of it that ./VERSION
-# holds on its own.
+# version: the Makefile reads it for PKG_VERSION and the app displays it
+# (section 37). The Makefile holds PKG_RELEASE. Together they are what the
+# built file is named after — luci-app-fcc_0.1.1-r2_all.ipk — and section 62
+# requires the release and its tag to carry that whole string rather than the
+# half of it that ./VERSION holds on its own.
 #
-# Composing it in one place is the point. The workflow, the README and the
-# tests would otherwise each have their own idea of what the version is, and
-# the tag is the one that is expensive to get wrong: a tag is public and
-# permanent, and a tag that disagrees with the packages under it cannot be
-# taken back.
+# This string is the tag, the release name and the package name: one value
+# with three uses, composed here so the three cannot disagree. The workflow
+# tags and publishes under whatever this prints, so bumping PKG_RELEASE is
+# what cuts the next release — there is no tag to type and none to mistype.
 #
 # Usage:
-#   sh scripts/version.sh          -> 0.1.1-r1
-#   sh scripts/version.sh --tag    -> v0.1.1-r1
+#   sh scripts/version.sh    -> 0.1.1-r2
 
 set -u
 
@@ -51,7 +48,7 @@ if [ -z "$_ve_ver" ] || [ -z "$_ve_rel" ]; then
 fi
 
 case "${1:-}" in
-	'')    printf '%s-r%s\n' "$_ve_ver" "$_ve_rel" ;;
-	--tag) printf 'v%s-r%s\n' "$_ve_ver" "$_ve_rel" ;;
-	*)     printf 'usage: %s [--tag]\n' "$0" >&2; exit 2 ;;
+	'') printf '%s-r%s\n' "$_ve_ver" "$_ve_rel" ;;
+	*)  printf 'usage: %s\n' "$0" >&2; exit 2 ;;
 esac
+

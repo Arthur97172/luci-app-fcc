@@ -359,41 +359,105 @@ test_the_release_publishes_only_our_package() {
 	assert_not_contains "$_ts_gh" 'artifacts/' "the release does not publish the raw download"
 }
 
-test_the_release_tag_must_match_the_version_file() {
-	# Section 62: the tag is v<version>-r<release>, and the two halves live in
-	# ./VERSION and the Makefile's PKG_RELEASE — the Makefile stamps the package
-	# with them and the app displays the first (section 37). Without the check a
-	# v0.2.0-r1 tag would publish packages named 0.1.1-r2, and nothing
-	# downstream would notice.
+test_the_release_is_named_after_the_package_version() {
+	# Section 62: the tag, the release name and the package file name are one
+	# string, composed from ./VERSION and the Makefile's PKG_RELEASE. The
+	# release carrying luci-app-fcc_0.1.1-r2_all.ipk is called 0.1.1-r2 and is
+	# tagged 0.1.1-r2 — with no v, because the name is the version rather than
+	# a tag-shaped spelling of it.
 	_ts_r="$(release_job)"
-	assert_contains "$_ts_r" 'does not match the package version' \
-		"the release compares the tag with the package version"
-	assert_contains "$_ts_r" 'expected="v$full"' \
-		"the expected tag is the package version with a v"
 	assert_contains "$_ts_r" 'full="$(sh scripts/version.sh)"' \
-		"and that version comes from the one script that composes it"
+		"the release reads the version from the one script that composes it"
+	assert_contains "$_ts_r" 'PKGVER=$full' \
+		"and hands it to the rest of the job as the version"
 
-	# The assets are stamped from the same two files, so this is where "the tag
-	# matches what was actually built" is verified rather than assumed. The
-	# whole string is compared: 0.1.1-r1 and 0.1.1-r2 are different packages.
+	# The assets are stamped from the same two files, so this is where "the
+	# release carries what was actually built" is verified rather than assumed.
+	# The whole string is compared: 0.1.1-r1 and 0.1.1-r2 are different packages.
 	assert_contains "$_ts_r" 'does not carry version $full' \
 		"the release checks each asset carries that version"
 
-	# The title is written from the version files rather than from the ref. Both
-	# are the same string by the time this step runs — the tag was checked above
-	# — but writing it from the ref would make the release name follow a typo
-	# rather than the packages, which is the drift this test exists to prevent.
-	assert_contains "$_ts_r" '--title "luci-app-fcc v$full"' \
-		"the release title is built from the version files, not from the ref"
-	assert_not_contains "$_ts_r" '--title "$GITHUB_REF_NAME"' \
-		"the release title does not come from the tag"
+	# Tag and title are both the version itself. Taking either from the ref is
+	# what this replaced: a tag is typed by hand and can name a version the
+	# packages were not built from, and the release would follow the typo.
+	assert_contains "$_ts_r" 'gh release create "$ver"' \
+		"the release is tagged with the version"
+	assert_contains "$_ts_r" '--title "$ver"' \
+		"and named with the same string"
+	assert_not_contains "$_ts_r" 'GITHUB_REF_NAME' \
+		"neither of them comes from the ref"
+	case "$_ts_r" in
+		*'v$full'*|*'v$ver'*)
+			fail "the release name is the version with a v put in front of it" ;;
+		*) pass ;;
+	esac
+}
+
+test_the_release_runs_on_a_push_and_never_on_a_pull_request() {
+	# The tag is created by this job, so there is no tag to push and nothing to
+	# mistype. What starts a release is a push to the default branch.
+	_ts_on="$(sed -n '/^on:/,/^permissions:/p' "$WORKFLOW")"
+	assert_ne "" "$_ts_on" "the workflow has a trigger block"
+	case "$_ts_on" in
+		*tags:*) fail "the workflow still triggers on a tag" ;;
+		*) pass ;;
+	esac
+	assert_contains "$_ts_on" 'branches: [main, master]' \
+		"a push to the default branch is what publishes"
+
+	# A pull request must never be able to cut a release.
+	_ts_r="$(release_job)"
+	assert_contains "$_ts_r" "github.event_name != 'pull_request'" \
+		"a pull request never publishes a release"
+
+	# And the guard must not be one that overrides `needs`. `!cancelled()` and
+	# `always()` both make a job run after a job it needs has failed, which here
+	# would publish a package whose install smoke test failed — the one outcome
+	# the release job exists to prevent. Comments are stripped first, because
+	# the job explains at length why those two are not used.
+	assert_contains "$_ts_r" 'needs: [build, smoke]' \
+		"the release waits for every build and every smoke test"
+	_ts_code="$(printf '%s\n' "$_ts_r" | grep -v '^[[:space:]]*#')"
+	case "$_ts_code" in
+		*'!cancelled()'*|*'always()'*)
+			fail "the release guard runs the job even when a build or smoke leg failed" ;;
+		*) pass ;;
+	esac
+}
+
+test_the_release_replaces_the_one_for_the_same_version() {
+	# A published release is immutable, so a rerun under the same version has to
+	# drop the previous one first — otherwise a push that changed nothing about
+	# the version would fail on a tag that already exists. Bumping PKG_RELEASE
+	# is the deliberate act that cuts a new release; the same version twice
+	# means the same release rebuilt.
+	_ts_r="$(release_job)"
+	assert_contains "$_ts_r" 'gh release delete "$ver"' \
+		"the release job deletes the previous release for this version"
+	assert_contains "$_ts_r" '--cleanup-tag' \
+		"and takes the tag with it"
+	assert_contains "$_ts_r" 'git/refs/tags/$ver' \
+		"and a tag left behind without a release"
+
+	# Order matters: deleting after creating would throw away the release that
+	# was just published, which is worse than not publishing at all.
+	_ts_del="$(printf '%s\n' "$_ts_r" | grep -n 'gh release delete' | head -1 | cut -d: -f1)"
+	_ts_new="$(printf '%s\n' "$_ts_r" | grep -n 'gh release create' | head -1 | cut -d: -f1)"
+	assert_ne "" "$_ts_del" "the job deletes a release"
+	assert_ne "" "$_ts_new" "and creates one"
+	if [ -n "$_ts_del" ] && [ -n "$_ts_new" ] && [ "$_ts_del" -lt "$_ts_new" ]; then
+		pass
+	else
+		fail "the release is deleted after it is created"
+	fi
 }
 
 test_the_version_script_composes_the_package_version() {
 	# One place composes the version, and this is it. The workflow, the README
 	# and this suite all ask it rather than each reading VERSION and deciding
-	# for themselves what the release is called — a tag is public and permanent,
-	# and one that disagrees with the packages under it cannot be taken back.
+	# for themselves what the release is called — the tag is public and
+	# permanent, and one that disagrees with the packages under it cannot be
+	# taken back.
 	_ts_ver="$(tr -d ' \t\r\n' < "$ROOT/VERSION")"
 	_ts_rel="$(sed -n 's/^PKG_RELEASE[ \t]*:=[ \t]*\([0-9][0-9]*\).*/\1/p' "$MAKEFILE")"
 	assert_ne "" "$_ts_ver" "VERSION holds a version"
@@ -401,12 +465,18 @@ test_the_version_script_composes_the_package_version() {
 
 	assert_eq "$_ts_ver-r$_ts_rel" "$(sh "$ROOT/scripts/version.sh")" \
 		"the script composes VERSION and PKG_RELEASE into the package version"
-	assert_eq "v$_ts_ver-r$_ts_rel" "$(sh "$ROOT/scripts/version.sh" --tag)" \
-		"and --tag is that version with the v section 62 asks for"
 
-	# The version the release job checks a tag against is the version the
-	# package file is named after, so the two are asserted to be the same
-	# string rather than assumed to be.
+	# It is the tag as well as the package name, so it must not be spelled like
+	# a tag: a v here would be a v in the tag, in the release name and in the
+	# file name, and the release for 0.1.1-r2 is called 0.1.1-r2.
+	case "$(sh "$ROOT/scripts/version.sh")" in
+		v*) fail "the package version carries a v prefix" ;;
+		*) pass ;;
+	esac
+
+	# The version the release is named after is the version the package file is
+	# named after, so the two are asserted to be the same string rather than
+	# assumed to be.
 	assert_contains "$_ts_ver-r$_ts_rel" "$_ts_ver" \
 		"the package version carries the file's version"
 	assert_contains "$_ts_ver-r$_ts_rel" "r$_ts_rel" \
@@ -414,6 +484,8 @@ test_the_version_script_composes_the_package_version() {
 
 	assert_no "an option it does not know is refused" \
 		sh "$ROOT/scripts/version.sh" --nonsense
+	assert_no "--tag went with the tags it was there for" \
+		sh "$ROOT/scripts/version.sh" --tag
 }
 
 tests_main
