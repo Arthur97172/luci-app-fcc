@@ -452,6 +452,32 @@ test_the_release_replaces_the_one_for_the_same_version() {
 	fi
 }
 
+test_the_release_notes_carry_what_section_93_lists() {
+	# Section 93 lists what a release's notes have to contain, and gh's own
+	# --generate-notes is a list of commits rather than any of it. Two of the
+	# six are read from the files that define them — the version from
+	# scripts/version.sh, the agents from the registry section 33 makes the
+	# single source of truth — so a new agent reaches the notes without an edit
+	# to the workflow.
+	_ts_r="$(release_job)"
+	assert_contains "$_ts_r" 'release-notes.md' \
+		"the release builds its own notes"
+	assert_contains "$_ts_r" '--notes-file release-notes.md' \
+		"and hands those to gh rather than the generated commit list"
+	assert_contains "$_ts_r" 'ver="${{ steps.version.outputs.PKGVER }}"' \
+		"the notes carry the version the release is named after"
+	assert_contains "$_ts_r" 'root/usr/share/luci-app-fcc/agents.conf' \
+		"the agent list comes from the registry"
+	assert_contains "$_ts_r" '24.10' "the notes name the release the .ipk is for"
+	assert_contains "$_ts_r" '25.12' "and the one the .apk is for"
+	assert_contains "$_ts_r" 'Architecture' \
+		"the notes say which architectures the package fits"
+	assert_contains "$_ts_r" 'not shipped and not pinned' \
+		"and that the runtime is installed on demand rather than pinned here"
+	assert_contains "$_ts_r" 'Known limitations' \
+		"the notes list the known limitations"
+}
+
 test_the_version_script_composes_the_package_version() {
 	# One place composes the version, and this is it. The workflow, the README
 	# and this suite all ask it rather than each reading VERSION and deciding

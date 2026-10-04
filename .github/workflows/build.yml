@@ -586,6 +586,39 @@ jobs:
           gh release delete "$ver" -y --cleanup-tag 2>/dev/null || true
           gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$ver" 2>/dev/null || true
 
+      - name: Release notes
+        # Section 93 lists what the notes carry: the version, the supported
+        # OpenWrt releases, the architectures, the runtime, the agents and the
+        # known limitations. The version and the agent list are read from the
+        # files that define them, so neither can go stale here — an agent added
+        # to agents.conf turns up in the next release's notes with no edit to
+        # this step.
+        #
+        # printf rather than a heredoc: this is markdown and full of backticks,
+        # which an unquoted heredoc would run as command substitutions.
+        run: |
+          set -eu
+          ver="${{ steps.version.outputs.PKGVER }}"
+          {
+            printf '**luci-app-fcc %s**\n\n' "$ver"
+            printf '| | |\n| --- | --- |\n'
+            printf '| Version | `%s` |\n' "$ver"
+            printf '| OpenWrt | 24.10 and earlier — `.ipk` (opkg) · 25.12 and later — `.apk` (apk) |\n'
+            printf '| Architecture | `all` — pure Lua, JavaScript and shell, so one artifact fits ARM, x86 and MIPS |\n'
+            printf '| FCC runtime | not shipped and not pinned — installed on demand from upstream |\n\n'
+            printf '**Agents**\n\n'
+            awk -F'|' '/^[a-z]/ { printf "- %s (`%s`)\n", $2, $3 }' \
+              root/usr/share/luci-app-fcc/agents.conf
+            printf '\n**Known limitations**\n\n'
+            printf -- '- The console has no WebSocket transport; it long-polls an HTTP byte stream.\n'
+            printf -- '- `hermes` has no version probe, so its version reads as unknown.\n'
+            printf -- '- Agent versions are probed with a 5-second timeout and cached for 60 seconds.\n'
+            printf -- '- The console needs `tmux`; the other two pages do not.\n\n'
+            printf 'Install and configuration: see the [README](https://github.com/%s#readme).\n' \
+              "$GITHUB_REPOSITORY"
+          } > release-notes.md
+          cat release-notes.md
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -598,5 +631,5 @@ jobs:
           [ -n "$ver" ] || { echo "::error::no version to release"; exit 1; }
           gh release create "$ver" \
             --title "$ver" \
-            --generate-notes \
+            --notes-file release-notes.md \
             release/*
