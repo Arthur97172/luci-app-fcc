@@ -134,7 +134,7 @@ FastAPI 和 Uvicorn。那是运行时自己的事，不是本包的：安装 `lu
 
 ```
 Makefile                  显式的 Package/ 定义（不用 luci.mk）
-VERSION                   软件包版本的唯一来源
+VERSION                   上游版本（发布号在 Makefile 的 PKG_RELEASE）
 luasrc/controller/fcc.lua LuCI 调度器与 JSON API
 luasrc/fcc/               util.lua、agents.lua、paths.lua
 luasrc/view/fcc/          三个页面
@@ -143,7 +143,7 @@ root/etc/init.d/fcc       FCC 服务器的 procd 服务
 root/usr/libexec/fcc/     shell 后端
 root/usr/share/luci-app-fcc/agents.conf   Agent 注册表
 po/                       翻译目录
-scripts/                  gen-po.sh、package-check.sh、smoke.sh、test.sh
+scripts/                  gen-po.sh、package-check.sh、smoke.sh、test.sh、version.sh
 tests/                    检查套件
 ```
 
@@ -204,25 +204,31 @@ shell 后端遵循一条容易踩到的规则：POSIX `sh` 只有一个被所有
 
 ### 发布
 
-版本只有一个来源：`VERSION`。Makefile 用它给软件包打版本，*基本信息*页面显示它，
-Release 的 tag 也必须与它一致。
+版本由两个文件合成：`VERSION` 是上游版本（Makefile 用它做 `PKG_VERSION`，
+*基本信息*页面显示它），Makefile 里的 `PKG_RELEASE` 是发布号。两者合起来才是
+软件包的版本，也就是构建出来的文件名——`luci-app-fcc_0.1.1-r2_all.ipk`。
+Release 和 tag 必须与这个完整版本一致，`scripts/version.sh` 是唯一合成它的地方：
 
 ```sh
-# tag 就是 VERSION 前面加个 v，所以直接读出来，不要手敲
-version="$(tr -d ' \t\r\n' < VERSION)"
-git tag "v$version"
-git push origin "v$version"
+# 不要手敲版本号：合成规则只写在 scripts/version.sh 里
+git tag "$(sh scripts/version.sh --tag)"
+git push origin "$(sh scripts/version.sh --tag)"
 ```
 
+发布号是版本的一部分，因为它是软件包的一部分：同一个 `VERSION` 下重新构建的包
+要递增 `PKG_RELEASE`，所以 `0.1.1-r1` 和 `0.1.1-r2` 是两个不同的包，也就必须是
+两个不同的 tag。只写前半段的 tag 会把两个不同的包放在同一个名字下面。
+
 推一个 `v*` tag 会先跑静态检查，再在四个架构上构建并各跑一次安装冒烟测试，
-全部通过后才发布。发布的第一步就是拿 tag 和 `VERSION` 比对：对不上立即失败，
-不会出现名为 v0.2.0、包却叫 0.1.0 的 Release。标题同样取自 `VERSION` 而非 tag，
+全部通过后才发布。发布的第一步就是拿 tag 和这个完整版本比对：对不上立即失败，
+不会出现名为 v0.1.2-r1、包却叫 0.1.1-r2 的 Release。标题同样取自版本文件而非 tag，
 两者无法各自漂移。
 
-资产只有本软件包——`luci-app-fcc_<version>-r1_all.ipk`、`luci-app-fcc-<version>-r1.apk`
-和 `SHA256SUMS`。四个架构构建的是同一个文件（`PKGARCH:=all`），收到后是逐一
-比对而不是合并，两个 SDK 对同一个包给出不同结果会直接失败。FCC 运行时是按需
-联网安装的，所以 Release 里没有预构建的运行时压缩包。
+资产只有本软件包——`luci-app-fcc_<version>-r<release>_all.ipk`、
+`luci-app-fcc-<version>-r<release>.apk` 和 `SHA256SUMS`。四个架构构建的是同一个
+文件（`PKGARCH:=all`），收到后是逐一比对而不是合并，两个 SDK 对同一个包给出不同
+结果会直接失败。FCC 运行时是按需联网安装的，所以 Release 里没有预构建的运行时
+压缩包。
 
 ---
 

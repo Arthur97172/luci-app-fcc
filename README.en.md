@@ -158,7 +158,7 @@ noticeable; for a full-screen TUI redraw it can be. See *Known limitations*.
 
 ```
 Makefile                  explicit Package/ definitions (no luci.mk)
-VERSION                   single source of the package version
+VERSION                   the upstream version (the release number is PKG_RELEASE)
 luasrc/controller/fcc.lua the LuCI dispatcher and the JSON API
 luasrc/fcc/               util.lua, agents.lua, paths.lua
 luasrc/view/fcc/          the three pages
@@ -167,7 +167,7 @@ root/etc/init.d/fcc       procd service for the FCC server
 root/usr/libexec/fcc/     the shell backend
 root/usr/share/luci-app-fcc/agents.conf   the agent registry
 po/                       translation catalogues
-scripts/                  gen-po.sh, package-check.sh, smoke.sh, test.sh
+scripts/                  gen-po.sh, package-check.sh, smoke.sh, test.sh, version.sh
 tests/                    the check suite
 ```
 
@@ -231,29 +231,37 @@ and `tests/test_shell.sh` enforces it.
 
 ### Releases
 
-The version has one source: `VERSION`. The Makefile stamps the package with it,
-the *Basic Information* page displays it, and a release tag has to agree with it.
+The version is composed from two files: `VERSION` is the upstream version (the
+Makefile reads it for `PKG_VERSION`, the *Basic Information* page displays it)
+and `PKG_RELEASE` in the Makefile is the release number. Together they are the
+package's version, which is what the built file is named after —
+`luci-app-fcc_0.1.1-r2_all.ipk`. The release and its tag have to agree with that
+whole string, and `scripts/version.sh` is the one place that composes it:
 
 ```sh
-# The tag is VERSION with a v in front of it, so read it rather than retyping it.
-version="$(tr -d ' \t\r\n' < VERSION)"
-git tag "v$version"
-git push origin "v$version"
+# Do not retype the version: the rule for composing it lives in version.sh.
+git tag "$(sh scripts/version.sh --tag)"
+git push origin "$(sh scripts/version.sh --tag)"
 ```
+
+The release number is part of the version because it is part of the package: a
+rebuild under the same `VERSION` takes a new `PKG_RELEASE`, so `0.1.1-r1` and
+`0.1.1-r2` are different packages and have to be different tags. A tag naming
+only the first half would put two different packages under one name.
 
 Pushing a `v*` tag runs the static checks, then builds and install-smoke-tests
 all four architectures, and only publishes once every one of them passes. The
-first step of the release is the comparison against `VERSION`: a mismatch fails
-immediately rather than publishing a release named v0.2.0 carrying packages
-called 0.1.0. The title comes from `VERSION` too, not from the tag, so the two
-cannot drift apart.
+first step of the release is the comparison against that whole version: a
+mismatch fails immediately rather than publishing a release named v0.1.2-r1
+carrying packages called 0.1.1-r2. The title comes from the version files too,
+not from the tag, so the two cannot drift apart.
 
-The assets are this package alone — `luci-app-fcc_<version>-r1_all.ipk`,
-`luci-app-fcc-<version>-r1.apk` and `SHA256SUMS`. All four architectures build the
-same file (`PKGARCH:=all`), and the copies are compared rather than merged: two
-SDKs disagreeing about the same package fails the release. The FCC runtime is
-installed on demand over the network, so there is no prebuilt runtime tarball in
-the release.
+The assets are this package alone — `luci-app-fcc_<version>-r<release>_all.ipk`,
+`luci-app-fcc-<version>-r<release>.apk` and `SHA256SUMS`. All four architectures
+build the same file (`PKGARCH:=all`), and the copies are compared rather than
+merged: two SDKs disagreeing about the same package fails the release. The FCC
+runtime is installed on demand over the network, so there is no prebuilt runtime
+tarball in the release.
 
 ---
 

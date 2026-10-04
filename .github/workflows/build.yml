@@ -472,23 +472,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the tag against VERSION
-        # Section 62: the tag is v<version>. ./VERSION is the one place the
-        # version lives — the Makefile reads it, the package is stamped with
-        # it, and the app displays it (section 37) — so a tag that disagrees
-        # with it would publish packages labelled one thing under a release
-        # named another. Checked first, so a mistyped tag fails in seconds
-        # rather than after the download and the comparison.
+      - name: Check the tag against the package version
+        # Section 62: the tag is v<version>-r<release>, the same string the
+        # package file is named after — luci-app-fcc_0.1.1-r2_all.ipk is
+        # released under the tag v0.1.1-r2. The release number is part of the
+        # name because it is part of the version: a rebuilt package keeps
+        # VERSION and takes a new PKG_RELEASE, and a tag that named only the
+        # first half would put two different packages under one name.
+        #
+        # scripts/version.sh composes it from ./VERSION and the Makefile's
+        # PKG_RELEASE, which are the two places the version lives — the
+        # Makefile stamps the package with them and the app displays the first
+        # (section 37). The tag is checked here, first, so a mistyped one fails
+        # in seconds rather than after the download and the comparison.
         run: |
           set -eu
-          version="$(tr -d ' \t\r\n' < VERSION)"
-          test -n "$version" || { echo "::error::VERSION is empty"; exit 1; }
-          expected="v$version"
+          full="$(sh scripts/version.sh)" || {
+            echo "::error::scripts/version.sh could not read the package version"
+            exit 1
+          }
+          expected="v$full"
           if [ "$GITHUB_REF_NAME" != "$expected" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match VERSION ($version) — expected $expected"
+            echo "::error::tag $GITHUB_REF_NAME does not match the package version ($full) — expected $expected"
             exit 1
           fi
-          echo "tag $GITHUB_REF_NAME matches VERSION $version"
+          echo "tag $GITHUB_REF_NAME matches the package version $full"
 
       - name: Download every artifact
         uses: actions/download-artifact@v4
@@ -509,7 +517,7 @@ jobs:
         # one would otherwise be published as if it were ours.
         run: |
           set -eu
-          version="$(tr -d ' \t\r\n' < VERSION)"
+          full="$(sh scripts/version.sh)"
           mkdir -p release
           for f in artifacts/*/*; do
             [ -f "$f" ] || continue
@@ -521,11 +529,12 @@ jobs:
             # The tag says which version is being released; the file name is
             # what the build actually produced. Comparing them here is the
             # check that the two agree — a release whose assets are named
-            # 0.1.0 while the tag says v0.2.0 is a packaging mistake that no
-            # other step would catch.
+            # 0.1.1-r2 while the tag says v0.1.2-r2 is a packaging mistake that
+            # no other step would catch. The whole string is compared, release
+            # number included: 0.1.1-r1 and 0.1.1-r2 are different packages.
             case "$b" in
-              *"$version"*) : ;;
-              *) echo "::error::$b does not carry version $version"; exit 1 ;;
+              *"$full"*) : ;;
+              *) echo "::error::$b does not carry version $full"; exit 1 ;;
             esac
             if [ -e "release/$b" ]; then
               cmp -s "$f" "release/$b" || {
@@ -554,12 +563,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          # The tag has already been checked against VERSION, so this is the
-          # same string by construction. It is written from VERSION rather than
-          # from the ref so that the release name and the packages it carries
-          # cannot drift apart.
-          version="$(tr -d ' \t\r\n' < VERSION)"
+          # The tag has already been checked against the package version, so
+          # this is the same string by construction. It is written from the
+          # version files rather than from the ref so that the release name and
+          # the packages it carries cannot drift apart — the release is named
+          # luci-app-fcc v0.1.1-r2, tag and package alike.
+          full="$(sh scripts/version.sh)"
           gh release create "$GITHUB_REF_NAME" \
-            --title "luci-app-fcc v$version" \
+            --title "luci-app-fcc v$full" \
             --generate-notes \
             release/*

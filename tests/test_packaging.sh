@@ -360,26 +360,60 @@ test_the_release_publishes_only_our_package() {
 }
 
 test_the_release_tag_must_match_the_version_file() {
-	# Section 62: the tag is v<version>, and ./VERSION is the one place the
-	# version lives — the Makefile stamps the package with it and the app
-	# displays it (section 37). Without the check a v0.2.0 tag would publish
-	# packages named 0.1.0, and nothing downstream would notice.
+	# Section 62: the tag is v<version>-r<release>, and the two halves live in
+	# ./VERSION and the Makefile's PKG_RELEASE — the Makefile stamps the package
+	# with them and the app displays the first (section 37). Without the check a
+	# v0.2.0-r1 tag would publish packages named 0.1.1-r2, and nothing
+	# downstream would notice.
 	_ts_r="$(release_job)"
-	assert_contains "$_ts_r" 'does not match VERSION' "the release compares the tag with VERSION"
-	assert_contains "$_ts_r" 'expected="v$version"' "the expected tag is VERSION with a v"
-	# The assets are stamped from the same file, so this is where "the tag
-	# matches what was actually built" is verified rather than assumed.
-	assert_contains "$_ts_r" 'does not carry version' \
+	assert_contains "$_ts_r" 'does not match the package version' \
+		"the release compares the tag with the package version"
+	assert_contains "$_ts_r" 'expected="v$full"' \
+		"the expected tag is the package version with a v"
+	assert_contains "$_ts_r" 'full="$(sh scripts/version.sh)"' \
+		"and that version comes from the one script that composes it"
+
+	# The assets are stamped from the same two files, so this is where "the tag
+	# matches what was actually built" is verified rather than assumed. The
+	# whole string is compared: 0.1.1-r1 and 0.1.1-r2 are different packages.
+	assert_contains "$_ts_r" 'does not carry version $full' \
 		"the release checks each asset carries that version"
 
-	# The title is written from VERSION rather than from the ref. Both are the
-	# same string by the time this step runs — the tag was checked above — but
-	# writing it from the ref would make the release name follow a typo rather
-	# than the packages, which is the drift this test exists to prevent.
-	assert_contains "$_ts_r" '--title "luci-app-fcc v$version"' \
-		"the release title is built from VERSION, not from the ref"
+	# The title is written from the version files rather than from the ref. Both
+	# are the same string by the time this step runs — the tag was checked above
+	# — but writing it from the ref would make the release name follow a typo
+	# rather than the packages, which is the drift this test exists to prevent.
+	assert_contains "$_ts_r" '--title "luci-app-fcc v$full"' \
+		"the release title is built from the version files, not from the ref"
 	assert_not_contains "$_ts_r" '--title "$GITHUB_REF_NAME"' \
 		"the release title does not come from the tag"
+}
+
+test_the_version_script_composes_the_package_version() {
+	# One place composes the version, and this is it. The workflow, the README
+	# and this suite all ask it rather than each reading VERSION and deciding
+	# for themselves what the release is called — a tag is public and permanent,
+	# and one that disagrees with the packages under it cannot be taken back.
+	_ts_ver="$(tr -d ' \t\r\n' < "$ROOT/VERSION")"
+	_ts_rel="$(sed -n 's/^PKG_RELEASE[ \t]*:=[ \t]*\([0-9][0-9]*\).*/\1/p' "$MAKEFILE")"
+	assert_ne "" "$_ts_ver" "VERSION holds a version"
+	assert_ne "" "$_ts_rel" "the Makefile holds a numeric PKG_RELEASE"
+
+	assert_eq "$_ts_ver-r$_ts_rel" "$(sh "$ROOT/scripts/version.sh")" \
+		"the script composes VERSION and PKG_RELEASE into the package version"
+	assert_eq "v$_ts_ver-r$_ts_rel" "$(sh "$ROOT/scripts/version.sh" --tag)" \
+		"and --tag is that version with the v section 62 asks for"
+
+	# The version the release job checks a tag against is the version the
+	# package file is named after, so the two are asserted to be the same
+	# string rather than assumed to be.
+	assert_contains "$_ts_ver-r$_ts_rel" "$_ts_ver" \
+		"the package version carries the file's version"
+	assert_contains "$_ts_ver-r$_ts_rel" "r$_ts_rel" \
+		"and the release number with it"
+
+	assert_no "an option it does not know is refused" \
+		sh "$ROOT/scripts/version.sh" --nonsense
 }
 
 tests_main

@@ -17,7 +17,12 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fcc
 PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
-PKG_RELEASE:=1
+# Bumped rather than PKG_VERSION: the package's contents changed while its
+# upstream version did not. Section 62 names the release and its tag after both
+# numbers — v0.1.1-r2, carrying luci-app-fcc_0.1.1-r2_all.ipk — so 0.1.1-r1
+# stays the package that was already published and this one is a new release
+# rather than the same name over different bytes.
+PKG_RELEASE:=2
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
