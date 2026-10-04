@@ -202,6 +202,9 @@ msgstr "在新标签页中打开 FCC 管理页面。"
 msgid "PID"
 msgstr "进程 ID"
 
+msgid "Platform"
+msgstr "平台"
+
 msgid "Port"
 msgstr "端口"
 

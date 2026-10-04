@@ -201,6 +201,9 @@ msgstr ""
 msgid "PID"
 msgstr ""
 
+msgid "Platform"
+msgstr ""
+
 msgid "Port"
 msgstr ""
 

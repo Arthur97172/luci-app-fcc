@@ -130,6 +130,22 @@ st_used_b=$(( st_used_k * 1024 ))
 
 arch="$(uname -m 2>/dev/null)"
 
+# Hardware platform (section 15's System list). The OpenWrt target names the
+# platform the firmware was built for — "airoha/an7581" on an Airoha AN7581
+# board, "armsr/armv8" on a generic arm64 image — which is the thing that tells
+# two devices with the same `arch` apart, so it is a reading of its own rather
+# than something `arch` can be stretched to say.
+#
+# Read in a subshell: /etc/openwrt_release is a shell fragment, and sourcing it
+# into this script would let it assign over the readings above it.
+platform="$( ( . "$(fcc_openwrt_release)" 2>/dev/null; printf '%s' "${DISTRIB_TARGET:-}" ) 2>/dev/null )"
+# A device whose image carries no openwrt_release still knows its board.
+[ -n "$platform" ] || platform="$(cat "$(fcc_sysinfo_dir)/board_name" 2>/dev/null)"
+# The board's own name for itself. The target covers a family of boards, so this
+# is the only place the specific one is named. /tmp/sysinfo is written at boot,
+# which is why it is absent from an image that has never been started.
+platform_model="$(cat "$(fcc_sysinfo_dir)/model" 2>/dev/null)"
+
 # ---------------------------------------------------------------------------
 # CPU model, frequency and cores
 #
@@ -316,12 +332,14 @@ COMM_MAP="$(build_comm_map)"
 	case "$session_count" in ''|*[!0-9]*) session_count=0 ;; esac
 	printf '  "sessions": {"active": %s},\n' "$session_count"
 
-	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s, "cpu_model": %s, "cpu_mhz": %s, "cpu_mhz_max": %s, "cpu_cores": %s},\n' \
+	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s, "platform": %s, "platform_model": %s, "cpu_model": %s, "cpu_mhz": %s, "cpu_mhz_max": %s, "cpu_cores": %s},\n' \
 		"$(fcc_json_num_or_null "$mem_total")" \
 		"$(fcc_json_num_or_null "$mem_avail")" \
 		"$st_total_b" "$st_free_b" "$st_used_b" \
 		"$(fcc_json_str "$storage_path")" \
 		"$(fcc_json_str "$arch")" \
+		"$(fcc_json_str_or_null "$platform")" \
+		"$(fcc_json_str_or_null "$platform_model")" \
 		"$(fcc_json_str_or_null "$cpu_model")" \
 		"$(fcc_json_num_or_null "$cpu_mhz")" \
 		"$(fcc_json_num_or_null "$cpu_mhz_max")" \

@@ -464,6 +464,21 @@ fcc_dt_base() {
 	printf '%s' "${FCC_DT_BASE:-/sys/firmware/devicetree/base}"
 }
 
+fcc_openwrt_release() {
+	# fcc_openwrt_release -> the release file that names the OpenWrt target.
+	# Overridable for the same reason as the paths above: the platform reading
+	# is the target in that file, and a machine that is not OpenWrt has no such
+	# file to read.
+	printf '%s' "${FCC_OPENWRT_RELEASE:-/etc/openwrt_release}"
+}
+
+fcc_sysinfo_dir() {
+	# fcc_sysinfo_dir -> where the boot scripts leave the board's own name.
+	# Written at boot, so it exists on a running device and not in an image that
+	# has never been started.
+	printf '%s' "${FCC_SYSINFO_DIR:-/tmp/sysinfo}"
+}
+
 fcc_hex_dump() {
 	# fcc_hex_dump <file>... -> those files' bytes as lowercase hex, or empty.
 	#

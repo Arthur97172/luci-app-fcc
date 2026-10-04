@@ -664,6 +664,38 @@ smoke_check "and status.sh reports it as the CPU's rate" 1200 "$_sm_rate"
 docker exec "$SMOKE_NAME" umount /sys >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
+# The hardware platform
+#
+# The platform is the OpenWrt target, and it is read from a file that only a
+# real OpenWrt image carries — so this is one of the few readings a developer
+# machine cannot stand in for. The expected value is taken from the image
+# rather than written down here, which is what keeps the check true on both the
+# x86_64 and the arm64 rootfs instead of pinning it to one of them.
+# ---------------------------------------------------------------------------
+
+smoke_note "the hardware platform"
+_sm_target="$(smoke_out '. /etc/openwrt_release 2>/dev/null; printf "%s" "$DISTRIB_TARGET"')"
+if [ -n "$_sm_target" ]; then
+	smoke_ok "this image names a target of its own ($_sm_target)"
+else
+	smoke_bad "this image names a target of its own"
+fi
+
+_sm_plat="$(smoke_out 'sh /usr/libexec/fcc/status.sh' \
+	| sed -n 's/.*"platform": "\([^"]*\)".*/\1/p')"
+smoke_expect "status.sh reports that target as the platform" "$_sm_target" "$_sm_plat"
+
+# The page shows a dash for a missing platform, so a board with no model must
+# report null rather than an empty string — section 44's rule, checked where a
+# real device's sysinfo is what would supply it.
+_sm_platmodel="$(smoke_out 'sh /usr/libexec/fcc/status.sh' \
+	| sed -n 's/.*"platform_model": \([^,]*\).*/\1/p')"
+case "$_sm_platmodel" in
+	null|'"'*) smoke_ok "the board model is null or a quoted string ($_sm_platmodel)" ;;
+	*)         smoke_bad "the board model is null or a quoted string (got '$_sm_platmodel')" ;;
+esac
+
+# ---------------------------------------------------------------------------
 # The translation, which ships inside the package rather than beside it
 # ---------------------------------------------------------------------------
 

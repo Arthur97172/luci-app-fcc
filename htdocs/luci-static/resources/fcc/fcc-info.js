@@ -49,6 +49,12 @@
 		 * only place the name exists on a board whose cpuinfo names no CPU
 		 * (arm64), so a dash here means neither source had one. */
 		box.appendChild(card(FCC._('CPU'), s.cpu_model || '—', cpuDetail(s)));
+		/* What the CPU sits on, then what the build targets. The two are
+		 * different questions and the answers differ: one board's target covers
+		 * a family of boards, and one architecture covers many targets. The
+		 * board's own model is the sub-line because the target cannot name it. */
+		box.appendChild(card(FCC._('Platform'), s.platform || '—', s.platform_model || ''));
+		box.appendChild(card(FCC._('Architecture'), s.arch || '—', s.storage_path || ''));
 		box.appendChild(card(FCC._('Memory'), FCC.fmtKB(total),
 			avail !== null && avail !== undefined
 				? FCC.fmtKB(avail) + ' ' + FCC._('available')
@@ -56,7 +62,6 @@
 		box.appendChild(card(FCC._('Storage'), FCC.fmtBytes(s.storage_total_bytes),
 			FCC.fmtBytes(s.storage_free_bytes) + ' ' + FCC._('free') +
 			' (' + FCC.fmtPercent(s.storage_free_bytes, s.storage_total_bytes) + ')'));
-		box.appendChild(card(FCC._('Architecture'), s.arch || '—', s.storage_path || ''));
 	}
 
 	function renderFcc(d) {

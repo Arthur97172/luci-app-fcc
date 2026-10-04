@@ -695,6 +695,62 @@ test_status_document_reports_the_cpu() {
 	esac
 }
 
+test_status_document_reports_the_platform() {
+	setup_sandbox
+	# Basic Information shows the platform from this document, so the two fields
+	# have to be here and correctly typed.
+	#
+	# The platform is the OpenWrt target, which is what tells two boards with the
+	# same architecture apart. It is read from a file rather than from the
+	# kernel, so the file is pointed at a fixture: the machine running these
+	# tests is not an OpenWrt device and has no target of its own to report.
+	_tr_owrt="$SANDBOX/openwrt_release"
+	_tr_sysinfo="$SANDBOX/sysinfo"
+	mkdir -p "$_tr_sysinfo"
+	printf "DISTRIB_ID='OpenWrt'\nDISTRIB_TARGET='airoha/an7581'\nDISTRIB_ARCH='aarch64_cortex-a53'\n" \
+		> "$_tr_owrt"
+
+	_tr_sys="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_OPENWRT_RELEASE="$_tr_owrt" FCC_SYSINFO_DIR="$_tr_sysinfo" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":')"
+
+	assert_contains "$_tr_sys" '"platform": "airoha/an7581"' \
+		"the platform is the OpenWrt target the firmware was built for"
+
+	# The board's own name is the sub-line, and the target cannot supply it: a
+	# target covers a family of boards.
+	printf 'Airoha AN7581 Evaluation Board\n' > "$_tr_sysinfo/model"
+	_tr_sys="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_OPENWRT_RELEASE="$_tr_owrt" FCC_SYSINFO_DIR="$_tr_sysinfo" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":')"
+	assert_contains "$_tr_sys" '"platform_model": "Airoha AN7581 Evaluation Board"' \
+		"the board's own model comes from the sysinfo the boot scripts wrote"
+
+	# An image with no release file still knows its board, so the target falls
+	# back to the board name rather than going empty.
+	printf 'airoha,an7581-evb\n' > "$_tr_sysinfo/board_name"
+	_tr_sys="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_OPENWRT_RELEASE="$SANDBOX/no-such-release" FCC_SYSINFO_DIR="$_tr_sysinfo" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":')"
+	assert_contains "$_tr_sys" '"platform": "airoha,an7581-evb"' \
+		"a device whose image carries no release file falls back to its board name"
+
+	# Section 44: neither source having an answer is null, not an empty string
+	# and not a guess — the page shows its dash for exactly this.
+	_tr_sys="$(FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_OPENWRT_RELEASE="$SANDBOX/no-such-release" \
+		FCC_SYSINFO_DIR="$SANDBOX/no-such-sysinfo" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":')"
+	assert_contains "$_tr_sys" '"platform": null' \
+		"a board that names its platform nowhere reports null"
+	assert_contains "$_tr_sys" '"platform_model": null' \
+		"and reports no model rather than an empty one"
+}
+
 test_status_reports_why_a_version_is_missing() {
 	setup_sandbox
 	# Section 44: "no version because the agent is not installed" and "no version
