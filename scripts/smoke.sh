@@ -560,7 +560,7 @@ fi
 docker exec "$SMOKE_NAME" rm -rf /opt/fcc >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
-# The CPU rate on a board with no cpufreq
+# The CPU rate and name on a board with no cpufreq
 #
 # OpenWrt 24.10 builds the Airoha EN7581 cpufreq driver but leaves
 # CONFIG_CPUFREQ_DT off, and that driver's whole job is to register a cpufreq-dt
@@ -570,10 +570,16 @@ docker exec "$SMOKE_NAME" rm -rf /opt/fcc >/dev/null 2>&1
 # system, and without it the page showed a dash on a router that was running
 # perfectly well.
 #
+# The name has the same story from the other end. An arm64 /proc/cpuinfo names
+# no CPU at all — mainline prints "model name" only for a 32-bit ELF platform,
+# and has no "Hardware" line, that being arm32 or a vendor tree — so the CPU
+# node's `compatible` is the only name on the board, and without reading it the
+# card showed a dash above a working frequency.
+#
 # The board is reproduced rather than described: a tmpfs goes over /sys so the
-# cpufreq attributes are genuinely absent, and the real AN7581 OPP values are
-# put where the kernel exposes them. The container is already privileged for
-# procd's sake, and the mount is taken down again below.
+# cpufreq attributes are genuinely absent, and the real AN7581 OPP values and
+# CPU node are put where the kernel exposes them. The container is already
+# privileged for procd's sake, and the mount is taken down again below.
 #
 # This runs here rather than on the host because this rootfs is the point: its
 # busybox has no od at all, so the hexdump branch is the only branch, and a
@@ -582,7 +588,7 @@ docker exec "$SMOKE_NAME" rm -rf /opt/fcc >/dev/null 2>&1
 # gains od is noticed rather than quietly changing what is under test.
 # ---------------------------------------------------------------------------
 
-smoke_note "the CPU rate on a board with no cpufreq"
+smoke_note "the CPU rate and name on a board with no cpufreq"
 
 _sm_rc=0
 smoke_sh 'command -v od >/dev/null 2>&1' || _sm_rc=$?
@@ -607,6 +613,14 @@ printf '\000\000\000\000\035\315\145\000' > "$_sm_dt/opp-table/opp-500000000/opp
 printf '\000\000\000\000\073\232\312\000' > "$_sm_dt/opp-table/opp-1000000000/opp-hz"
 printf '\000\000\000\000\107\206\214\000' > "$_sm_dt/opp-table/opp-1200000000/opp-hz"
 
+# The CPU node too. Its `compatible` is where the model comes from on a board
+# whose cpuinfo names no CPU, and it is the property whose shape the reader has
+# to get right: NUL-separated, most specific first, and no trailing newline. One
+# string, as a CPU node has — the two-string case is refused, and that is
+# asserted on the host where a fixture can be built to be wrong on purpose.
+mkdir -p "$_sm_dt/cpus/cpu@0"
+printf 'arm,cortex-a53\000' > "$_sm_dt/cpus/cpu@0/compatible"
+
 # The tar has to be built with the OPP tree at its root, so the paths land
 # directly under the device tree base.
 tar -C "$_sm_dt" -cf "$SMOKE_TMP/dt.tar" .
@@ -623,6 +637,25 @@ smoke_check "a board with no cpufreq anywhere and an OPP table in its device tre
 
 _sm_rate="$(smoke_out '. /usr/libexec/fcc/common.sh; fcc_cpu_dt_opp_hz /sys/firmware/devicetree/base')"
 smoke_check "the highest opp-hz reads through busybox's hexdump" 1200000000 "$_sm_rate"
+
+# The model, from the same tree and through the same busybox. `read` is the
+# part that has to be measured rather than assumed here: this rootfs's shell
+# drops the NUL that separates the strings and carries on, so the reader checks
+# the byte count against what it read before trusting the name.
+_sm_model="$(smoke_out '. /usr/libexec/fcc/common.sh
+	fcc_cpu_dt_model /sys/firmware/devicetree/base/cpus/cpu@0')"
+smoke_check "the CPU node's compatible names the core" "Arm Cortex-A53" "$_sm_model"
+
+# And the same thing through status.sh, as the page reads it. The container's
+# own /proc/cpuinfo is the host's — an x86 one, which names its CPU — so the
+# arm64 file is written here rather than borrowed: the reported bug was a board
+# whose cpuinfo names nothing, and without this the fallback would never be
+# reached on any machine in the test.
+smoke_sh 'printf "processor\t: 0\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\nCPU part\t: 0xd03\n\nprocessor\t: 1\nBogoMIPS\t: 50.00\n" > /tmp/fcc-cpuinfo-arm64'
+_sm_model="$(smoke_out 'FCC_PROC_CPUINFO=/tmp/fcc-cpuinfo-arm64 \
+	FCC_SYS_CPU=/sys/devices/system/cpu FCC_DT_BASE=/sys/firmware/devicetree/base \
+	sh /usr/libexec/fcc/status.sh' | sed -n 's/.*"cpu_model": "\([^"]*\)".*/\1/p')"
+smoke_check "and status.sh reports it as the CPU's model" "Arm Cortex-A53" "$_sm_model"
 
 _sm_rate="$(smoke_out 'FCC_SYS_CPU=/sys/devices/system/cpu FCC_DT_BASE=/sys/firmware/devicetree/base \
 	sh /usr/libexec/fcc/status.sh' | sed -n 's/.*"cpu_mhz": \([^,]*\).*/\1/p')"

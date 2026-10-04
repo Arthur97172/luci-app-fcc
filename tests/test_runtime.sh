@@ -505,6 +505,61 @@ test_cpu_dt_opp_hz_reads_the_an7581_table() {
 		sh_common 'fcc_cpu_dt_opp_hz "" >/dev/null'
 }
 
+test_cpu_dt_model_reads_the_cpu_nodes_compatible() {
+	setup_sandbox
+	# The other half of the arm64 story. /proc/cpuinfo names no CPU there, so
+	# the CPU node in the device tree is the only place the name exists — and
+	# the card showed a dash on a board that knows perfectly well what it is.
+	#
+	# `compatible` is a NUL-separated list with no trailing newline, which is
+	# the shape that makes `read` interesting here: it is asked for one line and
+	# told that hitting end-of-file is not a failure.
+	_tr_node="$SANDBOX/cpus/cpu@0"
+	mkdir -p "$_tr_node"
+	printf 'arm,cortex-a53\000' > "$_tr_node/compatible"
+	assert_eq "Arm Cortex-A53" "$(sh_common "fcc_cpu_dt_model $_tr_node")" \
+		"an arm64 CPU node names its core"
+
+	# A shell variable cannot hold a NUL, so `read` drops it and carries on: a
+	# node naming two things comes back as one run-together word. Measured, not
+	# assumed — "a,b\0c,d\0" reads as "a,bc,d" under dash and under busybox ash
+	# alike. That is not a name, so it is refused rather than shown.
+	printf 'airoha,an7581\000airoha,en7581\000' > "$_tr_node/compatible"
+	assert_no "a node naming two things is refused rather than run together" \
+		sh_common "fcc_cpu_dt_model $_tr_node >/dev/null"
+
+	# The vendor and the part are separate words and each part is capitalised,
+	# so the page shows a CPU name rather than a device tree spelling.
+	printf 'qcom,msm8996pro-1\000' > "$_tr_node/compatible"
+	assert_eq "Qcom Msm8996pro-1" "$(sh_common "fcc_cpu_dt_model $_tr_node")" \
+		"the name is written the way a person reads it"
+
+	printf '\000' > "$_tr_node/compatible"
+	assert_no "a property holding only a NUL is refused" \
+		sh_common "fcc_cpu_dt_model $_tr_node >/dev/null"
+
+	: > "$_tr_node/compatible"
+	assert_no "an empty property is refused" \
+		sh_common "fcc_cpu_dt_model $_tr_node >/dev/null"
+
+	rm -f "$_tr_node/compatible"
+	assert_no "a node with no compatible is refused" \
+		sh_common "fcc_cpu_dt_model $_tr_node >/dev/null"
+	assert_no "a missing node is refused" \
+		sh_common "fcc_cpu_dt_model $SANDBOX/nonexistent >/dev/null"
+	assert_no "an empty argument is refused" \
+		sh_common 'fcc_cpu_dt_model "" >/dev/null'
+
+	# And nothing above may say anything on the way out. status.sh runs this on
+	# every poll, and a board with no such node — every x86 router — is the
+	# ordinary case rather than a fault, so a shell message about a redirection
+	# would be written to the runtime log once a second forever. The shell
+	# prints that message itself, which is why the read redirects stderr before
+	# it opens the file.
+	assert_eq "" "$(sh_common "fcc_cpu_dt_model $SANDBOX/nonexistent")" \
+		"a node that is not there says nothing at all"
+}
+
 test_status_falls_back_to_the_device_tree_for_the_cpu_rate() {
 	setup_sandbox
 	# The AN7581 case, end to end. OpenWrt 24.10 builds the EN7581 cpufreq
@@ -551,6 +606,66 @@ test_status_falls_back_to_the_device_tree_for_the_cpu_rate() {
 	_tr_out="$(_tr_run "$SANDBOX/empty-sys" "$SANDBOX/nonexistent")"
 	assert_contains "$_tr_out" '"cpu_mhz_max": null' \
 		"a board with no rate anywhere reports no maximum"
+}
+
+test_status_names_the_cpu_from_the_device_tree_when_cpuinfo_does_not() {
+	setup_sandbox
+	# The reported bug, end to end. An AN7581's /proc/cpuinfo is mainline arm64
+	# output: no "model name", because mainline prints one only for a 32-bit ELF
+	# platform, and no "Hardware" line, because that one is arm32 or a vendor
+	# tree. The card showed a dash above a frequency that was working.
+	#
+	# FCC_PROC_CPUINFO is what lets this machine — an x86 one, whose cpuinfo
+	# names its CPU perfectly well — run the arm64 path at all.
+	_tr_cpuinfo="$SANDBOX/cpuinfo-arm64"
+	printf 'processor\t: 0\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\nCPU part\t: 0xd03\nCPU revision\t: 4\n\nprocessor\t: 1\nBogoMIPS\t: 50.00\n' > "$_tr_cpuinfo"
+	_tr_dt="$SANDBOX/dtmodel"
+	mkdir -p "$_tr_dt/cpus/cpu@0"
+	printf 'arm,cortex-a53\000' > "$_tr_dt/cpus/cpu@0/compatible"
+	mkdir -p "$SANDBOX/empty-sys"
+	_tr_run() {
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_PROC_CPUINFO="$_tr_cpuinfo" FCC_SYS_CPU="$1" FCC_DT_BASE="$2" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":'
+	}
+	assert_contains "$(_tr_run "$SANDBOX/empty-sys" "$_tr_dt")" \
+		'"cpu_model": "Arm Cortex-A53"' \
+		"the device tree names the CPU when cpuinfo does not"
+
+	# cpu0/of_node is the kernel's own symlink to that node, so where the kernel
+	# provides it that is what is read; the path under the device tree base is
+	# the fallback for a kernel that does not.
+	mkdir -p "$SANDBOX/sys-node/cpu0/of_node"
+	printf 'arm,cortex-a72\000' > "$SANDBOX/sys-node/cpu0/of_node/compatible"
+	assert_contains "$(_tr_run "$SANDBOX/sys-node" "$_tr_dt")" \
+		'"cpu_model": "Arm Cortex-A72"' \
+		"the kernel's own node is preferred over the device tree base"
+
+	# A cpuinfo that does name a CPU still wins. The device tree is asked only
+	# when there is nothing to report, never to correct something — and this
+	# machine's own cpuinfo is the one that names one, so this runner leaves
+	# FCC_PROC_CPUINFO unset.
+	assert_not_contains "$(
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_SYS_CPU="$SANDBOX/sys-node" FCC_DT_BASE="$_tr_dt" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":'
+	)" '"cpu_model": "Arm Cortex-A72"' \
+		"the device tree does not displace a name cpuinfo gave"
+
+	# A board with neither source reports no model at all, and the page shows
+	# its dash. Section 44: an absent reading is not a reading of nothing.
+	mkdir -p "$SANDBOX/no-model"
+	_tr_out="$(
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_PROC_CPUINFO="$_tr_cpuinfo" FCC_SYS_CPU="$SANDBOX/empty-sys" \
+		FCC_DT_BASE="$SANDBOX/no-model" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":'
+	)"
+	assert_contains "$_tr_out" '"cpu_model": null' \
+		"a board that names no CPU anywhere reports null"
 }
 
 test_status_document_reports_the_cpu() {

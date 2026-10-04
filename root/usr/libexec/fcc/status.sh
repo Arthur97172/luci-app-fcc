@@ -162,6 +162,33 @@ case "$cpu_mhz" in
 	''|*[!0-9]*) cpu_mhz="" ;;
 esac
 
+# Where the kernel keeps its per-CPU facts. Needed by the model fallback below
+# and by the cpufreq lookups after it.
+_cpu_sys="$(fcc_sys_cpu)"
+
+# The model, when /proc/cpuinfo names none.
+#
+# arm64 is that case rather than a broken board: mainline prints "model name"
+# only for a 32-bit ELF platform and has no "Hardware" line at all, because
+# that one is arm32 or a vendor tree. On an AN7581 the file therefore names no
+# CPU, and the page showed a dash where the model belongs.
+#
+# The device tree always knows. The CPU node's `compatible` says
+# "arm,cortex-a53" on that board, and cpu0/of_node is the kernel's own symlink
+# to that node, so it is tried first — it avoids guessing the unit address
+# (`cpu@0` on one SoC, `cpu@000` on the next). The path under the device tree
+# base is what a kernel without the symlink leaves, and it is the one the smoke
+# rootfs exercises.
+if [ -z "$cpu_model" ]; then
+	for _cpu_f in \
+		"$_cpu_sys/cpu0/of_node" \
+		"$(fcc_dt_base)/cpus/cpu@0"
+	do
+		cpu_model="$(fcc_cpu_dt_model "$_cpu_f")" || cpu_model=""
+		[ -n "$cpu_model" ] && break
+	done
+fi
+
 # cpufreq, where the kernel has it, answers better than /proc/cpuinfo: it is
 # the rate the CPU is running at now rather than a nominal one.
 #
@@ -170,7 +197,6 @@ esac
 # ARM router on a current kernel has cpufreq/policy0 and no cpu0/cpufreq at
 # all. Both are tried. Current-rate attributes come first in each pair — a rate
 # being read right now beats a maximum the CPU may never be asked to reach.
-_cpu_sys="$(fcc_sys_cpu)"
 _cpu_khz=""
 for _cpu_f in \
 	"$_cpu_sys/cpu0/cpufreq/scaling_cur_freq" \

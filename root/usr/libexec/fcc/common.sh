@@ -387,18 +387,29 @@ fcc_cpu_info() {
 	#
 	# /proc/cpuinfo names the CPU differently on every architecture OpenWrt runs
 	# on: x86 has "model name", 32-bit ARM has "Hardware", MIPS has "cpu model".
-	# The first of those present wins; when none is, the model line comes back
-	# empty and the page shows a dash rather than a board name passed off as a
-	# CPU. The core count is empty too when no "processor" line was seen — the
-	# caller reports null rather than inventing a 1.
+	# The first of those present wins. When none is present the model line comes
+	# back empty — and that is the arm64 case rather than a broken board:
+	# mainline prints "model name" only for a 32-bit ELF platform and has no
+	# "Hardware" line at all, because that one is arm32 or a vendor tree. The
+	# caller then asks the device tree, which is the only other place the answer
+	# lives, and only when that has nothing either does the page show a dash
+	# rather than a board name passed off as a CPU. The core count is empty too
+	# when no "processor" line was seen — the caller reports null rather than
+	# inventing a 1.
 	#
 	# BogoMIPS is deliberately not consulted. It is a calibration constant, not a
 	# clock rate, and printing it as MHz would be a number that looks like an
 	# answer and is not one. The MHz here is what x86 reports; a kernel with
 	# cpufreq answers better, and the caller prefers that.
 	#
+	# The file is a parameter so this can be tested against the cpuinfo of every
+	# architecture rather than the one the test machine happens to have.
+	# FCC_PROC_CPUINFO does the same for the no-argument call, which is how
+	# status.sh is run in the tests as a board whose cpuinfo names no CPU.
+	#
 	# The value is taken from $0 rather than $2 because a model name may itself
 	# contain a colon and $2 would stop at it.
+	_fc_file="${1:-${FCC_PROC_CPUINFO:-/proc/cpuinfo}}"
 	awk -F: '
 		{
 			k = $1
@@ -416,7 +427,7 @@ fcc_cpu_info() {
 			if (model == "") model = hw
 			printf "%s\n%s\n%s\n", model, mhz, cores
 		}
-	' "${1:-/proc/cpuinfo}" 2>/dev/null
+	' "$_fc_file" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -561,6 +572,60 @@ fcc_cpu_dt_opp_hz() {
 	done
 	[ -n "$_dt_best" ] || return 1
 	printf '%s' "$_dt_best"
+}
+
+fcc_cpu_dt_model() {
+	# fcc_cpu_dt_model <cpu-node-dir> -> the CPU model that node names, or
+	# empty.
+	#
+	# The companion to fcc_cpu_dt_opp_hz: the same nodes, a different property.
+	# The clock comes from the operating-points-v2 table and the name from
+	# `compatible`, and on the boards that need either — arm64, whose cpuinfo
+	# names no CPU at all — the device tree is the only place the name exists.
+	#
+	# `compatible` is a NUL-separated list of strings, most specific first, and
+	# it is written without a trailing newline. Two consequences, both of them
+	# about not reporting a name that is not there (section 44):
+	#
+	#   * `read` is asked for one line and told that end-of-file is not an
+	#     error, because that is how every one of these files ends.
+	#   * a shell variable cannot hold a NUL, so `read` drops it and carries on:
+	#     a node naming two things comes back as one run-together word.
+	#     Measured on the smoke rootfs, "a,b\0c,d\0" reads as "a,bc,d". The byte
+	#     count is therefore compared with what was read — one string is exactly
+	#     one byte longer than the string — and anything else is refused. A CPU
+	#     node names one core, so this refuses nothing real; it is here so that a
+	#     node that did name two cannot produce a name that is neither.
+	#
+	# What is left is written the way a person reads it: the vendor and the part
+	# are separate words and each part is capitalised, so "arm,cortex-a53" is
+	# "Arm Cortex-A53" rather than a device tree spelling on a web page.
+	[ -r "$1/compatible" ] || return 1
+	# stderr is redirected before the file is opened, not after: the shell
+	# prints its own "cannot open" message when a redirection fails, and the
+	# redirections are applied left to right, so the other order leaves that
+	# message on the log. The -r test above is what keeps a board without the
+	# node quiet at all.
+	_fcm_v=""
+	IFS= read -r _fcm_v 2>/dev/null < "$1/compatible" || :
+	[ -n "$_fcm_v" ] || return 1
+	_fcm_n="$(wc -c 2>/dev/null < "$1/compatible")" || return 1
+	_fcm_n="${_fcm_n##* }"
+	[ "$_fcm_n" = "$(( ${#_fcm_v} + 1 ))" ] || return 1
+	awk '{
+		out = ""
+		up = 1
+		for (i = 1; i <= length($0); i++) {
+			c = substr($0, i, 1)
+			if (c == ",") { out = out " "; up = 1; continue }
+			if (up) { c = toupper(c); up = 0 }
+			out = out c
+			if (c == "-") up = 1
+		}
+		print out
+	}' <<-EOF
+	$_fcm_v
+	EOF
 }
 
 # ---------------------------------------------------------------------------

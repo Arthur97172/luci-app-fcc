@@ -44,8 +44,10 @@
 		var box = FCC.$('#fcc-info-system');
 		box.innerHTML = '';
 		var total = s.memory_total_kb, avail = s.memory_available_kb;
-		/* Section 44: a device whose /proc/cpuinfo names no model shows a dash
-		 * rather than a board name passed off as a CPU. */
+		/* Section 44: the dash is the last resort, not the first. The backend
+		 * asks /proc/cpuinfo and then the CPU's device tree node, which is the
+		 * only place the name exists on a board whose cpuinfo names no CPU
+		 * (arm64), so a dash here means neither source had one. */
 		box.appendChild(card(FCC._('CPU'), s.cpu_model || '—', cpuDetail(s)));
 		box.appendChild(card(FCC._('Memory'), FCC.fmtKB(total),
 			avail !== null && avail !== undefined
