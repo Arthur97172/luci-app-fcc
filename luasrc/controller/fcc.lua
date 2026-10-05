@@ -234,6 +234,26 @@ local function job_log_dir()
 	return dir
 end
 
+--- Append the marker for a run that is about to start.
+--
+-- Written *before* the fork, deliberately. The child begins writing to the same
+-- file the moment it is spawned and shares nothing with this process, so a marker
+-- appended after spawn_detached() returned can land in the middle of the run's
+-- own output — and the slice in act_job(), which keeps what follows the last
+-- marker, would then discard the beginning of the very run the marker was written
+-- for. Before the fork there is no race, because nothing else has the file open
+-- yet.
+--
+-- The cost is a marker left behind by a job that then failed to start, which
+-- reads as a run that produced nothing. That is what happened, and the reason is
+-- on the page beside it.
+local function write_job_marker(logpath, label)
+	local fh = io.open(logpath, "a")
+	if not fh then return end
+	fh:write(util.job_marker_line(label), "\n")
+	fh:close()
+end
+
 function start_job(argv, logname, lockname)
 	local script = paths.script(argv[1])
 	if not script or not util.file_exists(script) then
@@ -242,7 +262,31 @@ function start_job(argv, logname, lockname)
 	local rest = {}
 	for i = 2, #argv do rest[#rest + 1] = argv[i] end
 
+	-- Refuse here when the job's own lock is already held.
+	--
+	-- The backend refuses as well — fcc_lock_acquire() is a mkdir and the loser
+	-- of that race dies with "another install/update is already running" — but
+	-- only after a shell has been forked, and the sentence reaches the page only
+	-- by way of the job's log. A second click during a running install is an
+	-- ordinary thing to do, and this is the same sentence, delivered before
+	-- anything is started. The page and the log then agree.
+	--
+	-- It also removes the case the page handled worst. Two jobs racing for one
+	-- lock means the loser's shell exits at once, and a job that exits before its
+	-- pid is read back is reported as "could not start the job: the shell
+	-- reported no process id" — a sentence about the wrapper, for a situation
+	-- that only ever meant "something else is already running".
+	--
+	-- Only this job's own lock is checked. The backend also refuses an install
+	-- while an update is running and vice versa (install.sh and update.sh each
+	-- test the other's lock); that rule lives in one place, and the refusal it
+	-- produces goes to the log like any other.
+	if util.job_running(lockname) then
+		return fail("another install/update is already running")
+	end
+
 	local log = job_log_dir() .. "/" .. logname
+	write_job_marker(log, table.concat(argv, " "))
 
 	local pid, why = util.spawn_detached(script, rest, log)
 	if not pid then
@@ -257,14 +301,15 @@ function start_job(argv, logname, lockname)
 end
 
 --- Report whether a background job is still running, plus the tail of its log.
+--
+-- The tail is the current run's, not the file's: the job's log is appended to
+-- across runs, so the window can otherwise open on the previous run's failure.
+-- See util.current_run() for why cutting at the last marker is enough.
 function act_job()
 	local lockname = http.formvalue("lock") or "install"
 	if not lockname:match("^[a-z]+$") then return fail("invalid lock name") end
 
-	local lockdir = "/var/lock"
-	if not util.file_exists(lockdir) then lockdir = "/tmp" end
-	local lockpath = lockdir .. "/fcc-" .. lockname .. ".lock"
-	local running = util.file_exists(lockpath)
+	local running = util.job_running(lockname)
 
 	local logname = http.formvalue("log") or "fcc-runtime.log"
 	if not logname:match("^[A-Za-z0-9_.-]+$") then logname = "fcc-runtime.log" end
@@ -279,6 +324,11 @@ function act_job()
 		for line in (out or ""):gmatch("[^\n]*") do
 			lines[#lines + 1] = line
 		end
+		-- The last element is the empty string gmatch produces after a trailing
+		-- newline, not a line of the log. Dropping it keeps a run that has
+		-- written nothing yet from reporting one blank line of output.
+		if lines[#lines] == "" then lines[#lines] = nil end
+		lines = util.current_run(lines)
 	end
 
 	json_out('{"running":' .. (running and "true" or "false") ..

@@ -1897,44 +1897,55 @@ test_server_wrapper_logs_the_server_and_replaces_itself() {
 test_installer_answers_follow_the_agent_that_was_asked_about() {
 	setup_sandbox
 
+	# The prompts below are written the way the matcher actually receives them:
+	# with no space after "[Y/n]". Upstream's prompt_yes_no() ends with
+	# `printf '%s %s ' "$question" "$prompt" >&4`, so the prompt it writes does
+	# end in a space — and the pane the matcher is handed never has it, because
+	# `tmux capture-pane -p` strips trailing whitespace from every line it prints.
+	# A test that supplied the space was testing a shape the real system does not
+	# produce, and it passed for a year while every real install hung: the matcher
+	# required the space, matched nothing, and waited for a prompt that had
+	# already been asked. The last case here is the one that keeps that from
+	# happening again.
+
 	# An explicit selection: yes for the agents in it, no for the others.
 	assert_eq "y" \
-		"$(sh_install 'installer_answer_for "Install Claude Code for fcc-claude? [Y/n] " "claude aider" set')" \
+		"$(sh_install 'installer_answer_for "Install Claude Code for fcc-claude? [Y/n]" "claude aider" set')" \
 		"a selected agent is answered yes"
 	assert_eq "n" \
-		"$(sh_install 'installer_answer_for "Install Codex for fcc-codex? [Y/n] " "claude aider" set')" \
+		"$(sh_install 'installer_answer_for "Install Codex for fcc-codex? [Y/n]" "claude aider" set')" \
 		"an agent that was not selected is answered no"
 	# The prompt carries the launcher, and the launcher is the contract; the
 	# friendly name in front of it is display text upstream may reword.
 	assert_eq "y" \
-		"$(sh_install 'installer_answer_for "Install Aider for fcc-aider? [y/N] " "aider" set')" \
+		"$(sh_install 'installer_answer_for "Install Aider for fcc-aider? [y/N]" "aider" set')" \
 		"a [y/N] prompt is answered from the set too"
 	assert_eq "y" \
-		"$(sh_install 'installer_answer_for "Install DeepSeek Harness for fcc-dsh? [Y/n] " "dsh" set')" \
+		"$(sh_install 'installer_answer_for "Install DeepSeek Harness for fcc-dsh? [Y/n]" "dsh" set')" \
 		"the launcher is what identifies the agent, not the friendly name"
 
 	# --no-agents: everything still being offered is declined.
 	assert_eq "n" \
-		"$(sh_install 'installer_answer_for "Install Pi for fcc-pi? [Y/n] " "" none')" \
+		"$(sh_install 'installer_answer_for "Install Pi for fcc-pi? [Y/n]" "" none')" \
 		"an explicit empty selection declines every agent"
 
 	# No opinion: an empty answer is Enter, which the installer reads as its own
 	# default. Answering yes or no here would silently override upstream's
 	# defaults — including the ones it adjusted before asking.
 	assert_eq "" \
-		"$(sh_install 'installer_answer_for "Install Claude Code for fcc-claude? [Y/n] " "" default')" \
+		"$(sh_install 'installer_answer_for "Install Claude Code for fcc-claude? [Y/n]" "" default')" \
 		"no opinion leaves the choice to upstream"
 
 	# RTK is not a coding agent, and its own default is no. Declining is both
 	# the default and the smaller change to the router.
 	assert_eq "n" \
-		"$(sh_install 'installer_answer_for "Enable RTK token optimization globally for the selected coding agents? [y/N] " "claude" set')" \
+		"$(sh_install 'installer_answer_for "Enable RTK token optimization globally for the selected coding agents? [y/N]" "claude" set')" \
 		"the RTK prompt is declined"
 
 	# An agent this package has no id for is declined rather than guessed at,
 	# and rather than left waiting for an answer that is never coming.
 	assert_eq "n" \
-		"$(sh_install 'installer_answer_for "Install Some New Agent for fcc-brandnew? [Y/n] " "claude" set')" \
+		"$(sh_install 'installer_answer_for "Install Some New Agent for fcc-brandnew? [Y/n]" "claude" set')" \
 		"an unknown launcher is declined"
 
 	# Anything that is not a prompt is not answered. Answering a progress line
@@ -1945,6 +1956,19 @@ test_installer_answers_follow_the_agent_that_was_asked_about() {
 	assert_eq "" \
 		"$(sh_install 'installer_answer_for "==> Checking installation prerequisites" "claude" set')" \
 		"and produces no keystrokes"
+
+	# A prompt whose text merely mentions an agent is not that agent's question:
+	# the match is anchored on "Install ... for fcc-", so a progress line that
+	# names a launcher cannot be answered as if it were asking about one.
+	assert_eq "rc=1" \
+		"$(sh_install 'installer_answer_for "fcc-claude is already installed; skipping" "claude" set >/dev/null; echo "rc=$?"')" \
+		"a line that only names a launcher is not a prompt"
+
+	# And the shape with the trailing space, for the record: it matches too. The
+	# fix was to stop requiring the space, not to require its absence.
+	assert_eq "y" \
+		"$(sh_install 'installer_answer_for "Install Claude Code for fcc-claude? [Y/n] " "claude" set')" \
+		"the same prompt with the space still matches"
 }
 
 # The protocol itself, against a stand-in for tmux.
@@ -1978,7 +2002,16 @@ test_installer_drives_the_agent_prompts_through_a_terminal() {
 		( sh -c "$cmd" ) >/dev/null 2>&1 &
 		;;
 	pipe-pane)    printf '%s\n' "$*" >> "$S/pipe-pane" ;;
-	capture-pane) cat "$S/pane" 2>/dev/null ;;
+	capture-pane)
+		# The real `capture-pane -p` strips trailing whitespace from every line
+		# it prints, and upstream's prompts end in a space (prompt_yes_no writes
+		# "%s %s " and then blocks on the read, so nothing follows it). That
+		# trim is the whole reason this stand-in is worth having: a fake that
+		# handed back the space let a matcher that *required* one pass here for
+		# a year while every real install hung waiting for an answer it had
+		# already been asked for.
+		sed 's/[[:space:]]*$//' "$S/pane" 2>/dev/null
+		;;
 	send-keys)
 		# send-keys -t <name> <keys...>; the trailing Enter is the newline.
 		shift; shift; shift
@@ -2022,7 +2055,15 @@ test_installer_drives_the_agent_prompts_through_a_terminal() {
 
 	_ia_run() {
 		# _ia_run <rc> <agents> <none>
-		( export FAKE_TMUX_DIR="$_ia_s" FAKE_INSTALLER_RC="$1"
+		#
+		# FCC_INSTALLER_TIMEOUT is the production deadline cut down to something a
+		# test can wait out. It is here so that a matcher which stops matching
+		# fails in twenty seconds rather than hanging the suite for the half hour
+		# the real deadline allows — which is exactly what a matcher requiring the
+		# trailing space did to every real install, and what this test now exists
+		# to catch. The passing path answers every prompt in the first second, so
+		# the deadline never comes into it.
+		( export FAKE_TMUX_DIR="$_ia_s" FAKE_INSTALLER_RC="$1" FCC_INSTALLER_TIMEOUT=20
 		  sh_install "run_installer \"\$FCC_DEFAULT_BASE/fake-installer.sh\" \"$2\" $3; echo \"rc=\$?\"" )
 	}
 	_ia_reset() {
@@ -2075,6 +2116,91 @@ test_installer_drives_the_agent_prompts_through_a_terminal() {
 	assert_contains "$(cat "$SANDBOX/opt/fcc/logs/installer.out" 2>/dev/null)" \
 		"Enable RTK token optimization" \
 		"the last screen is appended to logs/installer.out"
+}
+
+# The same protocol again, against a real tmux.
+#
+# Everything above drives a stand-in, and a stand-in is an assumption written
+# down — the one that mattered here was that `capture-pane -p` strips the
+# trailing space off upstream's prompts. The matcher required that space, the
+# stand-in handed it back, and the two agreed with each other while disagreeing
+# with every real tmux: the loop never answered anything, and every install ran
+# out the full deadline and rolled back. A test that fakes the thing under test
+# cannot catch that, so this one does not fake it. Real tmux server, real pty,
+# and an installer that reads its answers off the terminal exactly as upstream's
+# does.
+test_the_answer_loop_drives_a_real_terminal() {
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "no tmux on this host"
+		return
+	fi
+	setup_sandbox
+	mkdir -p "$SANDBOX/opt" "$SANDBOX/bin"
+
+	# PATH starts with $SANDBOX/bin, where the test above parks its tmux
+	# stand-in, and the sandbox is shared for the whole file. Point that name at
+	# the real binary so this test gets the real one whichever order they run in.
+	ln -sf "$(command -v tmux)" "$SANDBOX/bin/tmux"
+
+	# Upstream's installer, reduced to the part this package talks to:
+	# installer_is_interactive(), prompt_yes_no(), and the agent loop. The
+	# trailing space in prompt_yes_no's printf is upstream's own, and it is the
+	# whole subject of this test.
+	cat > "$SANDBOX/opt/real-installer.sh" <<-'EOF'
+	#!/bin/sh
+	S="$(dirname "$0")"
+	[ -t 1 ] && ( : </dev/tty ) 2>/dev/null || { printf 'not interactive\n' >&2; exit 3; }
+	exec 3</dev/tty 4>/dev/tty
+
+	prompt_yes_no() {
+		_pe_question="$1"
+		_pe_default="${2:-yes}"
+		case "$_pe_default" in
+			yes) _pe_prompt='[Y/n]' ;;
+			no)  _pe_prompt='[y/N]' ;;
+		esac
+		while :; do
+			printf '%s %s ' "$_pe_question" "$_pe_prompt" >&4
+			IFS= read -r _pe_answer <&3 || exit 9
+			case "$_pe_answer" in
+				'') [ "$_pe_default" = yes ] && return 0; return 1 ;;
+				[Yy]|[Yy][Ee][Ss]) return 0 ;;
+				[Nn]|[Nn][Oo]) return 1 ;;
+				*) printf 'Please answer Y or N.\n' >&4 ;;
+			esac
+		done
+	}
+
+	_pe_out=""
+	for _pe_pair in "Claude Code:fcc-claude" "Codex:fcc-codex" "Aider:fcc-aider"; do
+		if prompt_yes_no "Install ${_pe_pair%%:*} for ${_pe_pair##*:}?" yes; then
+			_pe_out="$_pe_out""y"
+		else
+			_pe_out="$_pe_out""n"
+		fi
+	done
+	printf '%s\n' "$_pe_out" > "$S/real-transcript"
+	EOF
+	chmod +x "$SANDBOX/opt/real-installer.sh"
+
+	# A leftover session from an interrupted run would be answered instead of
+	# this one, and the pane read would be its screen.
+	tmux kill-session -t fcc-installer 2>/dev/null
+
+	# The deadline is cut down for the same reason as above: a matcher that stops
+	# matching should fail here in twenty seconds rather than sit on the pane for
+	# the half hour the real deadline allows. Answering all three prompts takes
+	# under a second, so the passing path never reaches it.
+	_ts_out="$(export FCC_INSTALLER_TIMEOUT=20
+		sh_install "run_installer \"\$FCC_DEFAULT_BASE/real-installer.sh\" \"claude aider\" 0; echo \"rc=\$?\"")"
+
+	tmux kill-session -t fcc-installer 2>/dev/null
+
+	# claude and aider were asked for, codex was not: the answer follows the
+	# launcher named in the question, and the question was read off a real pane.
+	assert_eq "yny" "$(cat "$SANDBOX/opt/real-transcript" 2>/dev/null)" \
+		"a real terminal is asked, and answered, for every prompt"
+	assert_contains "$_ts_out" "rc=0" "and the installer's own status comes back"
 }
 
 # Without a terminal the agent question is never asked, and running anyway would

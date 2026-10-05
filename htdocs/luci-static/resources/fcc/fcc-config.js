@@ -429,10 +429,21 @@
 					}
 					// The lock is the authoritative "still working" signal; the
 					// elapsed time only drives the indeterminate bar.
+					/* The bar is an estimate, and an estimate that stops moving
+					 * looks like a hang. The previous formula — a straight three
+					 * seconds per percent, capped at 95 — reached the cap after
+					 * five minutes and then sat there for the rest of the run,
+					 * which is exactly what the person waiting on a ten-minute
+					 * install saw: the work was still going and the bar said it
+					 * had stopped. An asymptote instead: quick at the start,
+					 * slowing as it approaches the cap but never arriving, so it
+					 * is still visibly moving half an hour in. It deliberately
+					 * never reaches 100% — only the lock being released means
+					 * the job ended, and the branch below is what sets that. */
 					var bar = FCC.$('#fcc-job-bar');
 					if (bar && r.running) {
 						var secs = (Date.now() - jobStart) / 1000;
-						bar.style.width = Math.min(95, (secs / 3)) + '%';
+						bar.style.width = (95 * (1 - Math.exp(-secs / 240))).toFixed(1) + '%';
 					}
 
 					if (!r.running) {

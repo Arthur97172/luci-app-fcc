@@ -19,8 +19,8 @@ PKG_NAME:=luci-app-fcc
 PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
 # Bumped rather than PKG_VERSION: the package's contents changed while its
 # upstream version did not. Section 62 names the release and its tag after both
-# numbers — the release carrying luci-app-fcc_0.1.1-r3_all.ipk is called
-# 0.1.1-r3 — so a release number is never reused, and every push is a new
+# numbers — the release carrying luci-app-fcc_0.1.1-r4_all.ipk is called
+# 0.1.1-r4 — so a release number is never reused, and every push is a new
 # release rather than the same name over different bytes. Bumping this number is
 # what cuts the next release.
 #
@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -155,11 +155,28 @@ define Package/luci-app-fcc/install
 	po2lmo ./po/zh_Hans/fcc.po $(1)/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo
 endef
 
+# The uci-defaults script is deliberately NOT sourced here, and neither is
+# /tmp/luci-indexcache removed.
+#
+# Neither package manager runs this text on its own. Both wrap it: the opkg
+# build appends it to a generated `postinst`, and the apk build appends it to a
+# generated `post-install`, and both wrappers call default_postinst() from
+# /lib/functions.sh *before* this block. default_postinst() reads the package's
+# own file list, runs every /etc/uci-defaults/ file the package ships — the
+# whole point of shipping one — and deletes each one after it succeeds, then
+# removes /tmp/luci-indexcache.*. So by the time the lines below run, there is
+# no file left to source:
+#
+#   * /proc/self/fd/7: .: line 10: can't open /etc/uci-defaults/99-fcc: no such file
+#
+# That is the apk wrapper's line 10 — eight lines of wrapper (shebang, two
+# guards, functions.sh, root, pkgname, add_group_and_user, default_postinst)
+# then this block's first line. The opkg wrapper is four lines shorter, and the
+# error is the same one under a different number. It is noise on a successful
+# install, and on a failing one it is the last line a person sees.
 define Package/luci-app-fcc/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	( . /etc/uci-defaults/99-fcc ) && rm -f /etc/uci-defaults/99-fcc
-	rm -f /tmp/luci-indexcache 2>/dev/null
 	rm -rf /tmp/luci-modulecache 2>/dev/null
 	# Best-effort: (re)load rpcd so the new ACL is picked up immediately.
 	[ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd reload >/dev/null 2>&1

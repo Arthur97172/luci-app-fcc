@@ -25,6 +25,18 @@ install_block() {
 		| grep -v '^[[:space:]]*#'
 }
 
+# The body of one `define <name> ... endef` block, comments excluded.
+# install_block() strips comments for the same reason: the reasoning lives in
+# the comment above a block, and a check that counted the comment as part of
+# the block would still pass after the block itself had been emptied out.
+makefile_define() { # makefile_define <name>
+	awk -v name="$1" '
+		$0 == "define " name { inside = 1; next }
+		inside && $0 == "endef" { exit }
+		inside && $0 !~ /^[[:space:]]*#/ { print }
+	' "$MAKEFILE"
+}
+
 # Source paths the manifest installs from, as repo-relative paths.
 manifest_sources() {
 	install_block | grep -o '\./[^ 	]*' | sed 's#^\./##' | LC_ALL=C sort -u
@@ -134,6 +146,34 @@ test_conffile_is_declared() {
 	assert_contains "$(cat "$MAKEFILE")" '/etc/config/fcc' "the UCI config is a conffile"
 	assert_contains "$(cat "$MAKEFILE")" '$(INSTALL_CONF) ./root/etc/config/fcc' \
 		"the UCI config is installed with INSTALL_CONF"
+}
+
+test_postinst_leaves_uci_defaults_to_the_wrapper() {
+	_ts_pi="$(makefile_define Package/luci-app-fcc/postinst)"
+	assert_ne "" "$_ts_pi" "the package declares a postinst"
+
+	# Neither package manager runs this text on its own: both wrap it, and both
+	# wrappers call default_postinst() from /lib/functions.sh *before* the block.
+	# default_postinst() runs every /etc/uci-defaults/ file the package ships and
+	# deletes each one, so a `. /etc/uci-defaults/99-fcc` here runs against a file
+	# that is already gone:
+	#
+	#   /proc/self/fd/7: .: line 10: can't open /etc/uci-defaults/99-fcc: no such file
+	#
+	# It is noise on an install that worked and the last line on one that did
+	# not, which is why the failure is easy to read as the cause. The wrapper
+	# also removes /tmp/luci-indexcache.* itself, so doing it here is at best
+	# redundant and at worst races the wrapper.
+	assert_not_contains "$_ts_pi" 'uci-defaults' \
+		"the postinst does not source /etc/uci-defaults"
+	assert_not_contains "$_ts_pi" 'luci-indexcache' \
+		"the postinst leaves the index cache to default_postinst"
+
+	# The fix is to stop sourcing it, not to stop shipping it: the script is
+	# still the thing that applies the defaults on a fresh install.
+	assert_file "$ROOT/root/etc/uci-defaults/99-fcc"
+	assert_contains "$(cat "$MAKEFILE")" '$(INSTALL_BIN) ./root/etc/uci-defaults/99-fcc' \
+		"and the script is still shipped and installed"
 }
 
 # ---------------------------------------------------------------------------

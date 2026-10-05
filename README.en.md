@@ -68,6 +68,28 @@ the *Configuration* page, and the whole terminal is written to
 `<install_path>/logs/installer.out`. When an install fails, that transcript is
 where the reason is — and the first place to look.
 
+The *Configuration* page then follows the job while it runs. Two things are
+worth knowing, because both have been misread:
+
+* **The progress bar is not an estimate — it means "still running".** It eases
+  toward 95% and stops there for the rest of the run, reaching 100% only when
+  the job actually ends and its lock is released. A bar sitting at around 90%
+  therefore says nothing more than that the job is still going; a bar at 100%
+  says the job finished, and the log says how.
+* **The log is append-only, and the page shows the current run.** Each run
+  starts with a `===== fcc job start <time>: <command> =====` line, and the page
+  shows what follows the last one. For earlier runs, read
+  `<install_path>/logs/fcc-runtime.log` (install/reinstall) or `fcc-update.log`
+  (update) on the router directly; when the install path is not writable they
+  fall back to `/tmp/fcc-logs/`.
+
+Clicking install or update again while a job is running is refused outright,
+with `another install/update is already running` in the log — the same sentence
+the shell backend writes when it cannot take the lock. A job that was killed
+outright — the router rebooting mid-install, say — leaves its lock behind, but
+that lock goes stale after at most an hour, so it cannot keep the next install
+out for longer than that.
+
 **2. Configure.** On the *Configuration* page, set the address and port, then
 **Open FCC Admin** to add provider credentials. API keys are entered in FCC's
 own admin UI and are never stored in UCI — this package has nowhere to put them.

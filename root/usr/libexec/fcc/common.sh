@@ -467,19 +467,46 @@ fcc_valid_session() {
 # ---------------------------------------------------------------------------
 # Locks (update / install). Stale locks older than 1h are reclaimed.
 # ---------------------------------------------------------------------------
+# How long a lock directory may sit there before it is treated as left over by
+# a job that died rather than held by one that is running.
+#
+# The controller asks the same question, both before it starts a job and again on
+# every poll while one runs (luci.fcc.util.FCC_LOCK_STALE_SECS, job_running), so
+# the number is named here and mirrored there. tests/test_lua.sh asserts the two
+# values agree and that the two *answers* agree for a lock of a given age — a
+# page that believed a different window than the backend would either offer to
+# start a job the backend will refuse, or show a dead job as still running.
+FCC_LOCK_STALE_SECS="${FCC_LOCK_STALE_SECS:-3600}"
+
 fcc_lock_dir() {
 	if [ -d /var/lock ] && [ -w /var/lock ]; then printf '/var/lock'; else printf '/tmp'; fi
+}
+
+fcc_lock_age() {
+	# fcc_lock_age <lockpath> -> seconds since it was taken, or nothing at all
+	# when that cannot be worked out. Callers read "no answer" as "not stale":
+	# refusing to start a second job is the safe direction, and
+	# luci.fcc.util.job_running() reads an unreadable mtime the same way. On every
+	# image this runs on, `date -r` on a directory answers, so this is a guard
+	# rather than a path anyone walks.
+	_lag_stamp="$(date -r "$1" +%s 2>/dev/null)" || return 1
+	case "$_lag_stamp" in ''|*[!0-9]*) return 1 ;; esac
+	printf '%s' "$(( $(date +%s) - _lag_stamp ))"
+}
+
+fcc_lock_stale() {
+	# fcc_lock_stale <lockpath> -> 0 when it is older than the window
+	_las_age="$(fcc_lock_age "$1")" || return 1
+	[ "$_las_age" -gt "$FCC_LOCK_STALE_SECS" ]
 }
 
 fcc_lock_acquire() {
 	# fcc_lock_acquire <name> -> 0 on success; prints the lock path
 	_la_lock="$(fcc_lock_dir)/fcc-$1.lock"
 	if [ -d "$_la_lock" ]; then
-		# Reclaim a stale lock (older than 3600s).
-		_la_age=$(( $(date +%s) - $(date -r "$_la_lock" +%s 2>/dev/null || echo 0) ))
-		if [ "$_la_age" -gt 3600 ]; then
-			rmdir "$_la_lock" 2>/dev/null
-		fi
+		# Reclaim a stale lock: the job that made it is gone, and without this
+		# every later install would be refused until the next reboot.
+		fcc_lock_stale "$_la_lock" && rmdir "$_la_lock" 2>/dev/null
 	fi
 	if mkdir "$_la_lock" 2>/dev/null; then
 		printf '%s' "$$" > "$_la_lock/pid" 2>/dev/null
@@ -495,8 +522,21 @@ fcc_lock_release() {
 }
 
 fcc_lock_held() {
+	# Is a *live* job holding this lock?
+	#
+	# Not "is the directory there". A job that was killed — by a reboot, by the
+	# OOM killer, by the user — leaves its lock behind, and the callers of this
+	# ask in order to decide whether the *other* kind of job may run: install.sh
+	# checks the update lock and update.sh checks the install one. Answering
+	# "held" for a lock the acquirer would have reclaimed means one stale lock,
+	# left by a router that rebooted mid-install, blocks the other operation for
+	# up to an hour. That is the same bug fcc_lock_acquire() reclaims against, one
+	# function over, and it is why the question is asked here rather than of the
+	# filesystem.
 	_lh_lock="$(fcc_lock_dir)/fcc-$1.lock"
-	[ -d "$_lh_lock" ]
+	[ -d "$_lh_lock" ] || return 1
+	fcc_lock_stale "$_lh_lock" && return 1
+	return 0
 }
 
 # ---------------------------------------------------------------------------

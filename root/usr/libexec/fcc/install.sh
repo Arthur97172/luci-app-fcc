@@ -206,8 +206,20 @@ installer_answer_for() {
 	_iaf_set=" $2 "
 	_iaf_mode="$3"
 	case "$_iaf_line" in
-		*'Install '*' for fcc-'*'? [Y/n] '*|*'Install '*' for fcc-'*'? [y/N] '*)
-			# "Install Claude Code for fcc-claude? [Y/n] "
+		# "Install Claude Code for fcc-claude? [Y/n]"
+		#
+		# The trailing space after [Y/n] is upstream's — prompt_yes_no() ends
+		# with `printf '%s %s ' "$question" "$prompt" >&4`, and nothing follows
+		# it because the installer is blocked on the read. It is NOT here,
+		# because the line being matched came through `tmux capture-pane -p`,
+		# which strips trailing whitespace from every line it prints. Requiring
+		# that space therefore matched nothing, ever: the loop below never
+		# answered a question, never saw the exit status file appear, and sat
+		# there until the deadline — so every runtime install took the full
+		# ${FCC_INSTALLER_TIMEOUT}s, rolled back, and left the page's progress
+		# bar parked at 95%. Matching up to "[Y/n]" and letting the rest of the
+		# line be anything is what the pane can actually be asked for.
+		*'Install '*' for fcc-'*'? [Y/n]'*|*'Install '*' for fcc-'*'? [y/N]'*)
 			# Strip through " for " to reach the launcher, then up to the "?".
 			_iaf_launcher="${_iaf_line##* for }"
 			_iaf_launcher="${_iaf_launcher%%\?*}"

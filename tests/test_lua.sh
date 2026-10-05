@@ -197,4 +197,210 @@ test_agent_registry_parity() {
 		"$_ts_sh_ids" "the shell reads the registry the Lua tests assert on"
 }
 
+# ---------------------------------------------------------------------------
+# Cross-language agreement: job locks
+#
+# util.FCC_LOCK_STALE_SECS / lock_dir() / job_running() are the same rule as
+# FCC_LOCK_STALE_SECS / fcc_lock_dir() / fcc_lock_held() in common.sh: one for the
+# page, which polls a job to decide whether to keep the progress bar moving, and
+# one for the backend, which decides whether a job may start. A page that believed
+# a different window from the backend would offer to start a job the backend
+# refuses, or show a job as running an hour after it was killed; a page looking in
+# a different directory would never see the job at all.
+#
+# The Lua side is asked through a nixio stub that consults the real filesystem,
+# because the point is that the two implementations read the *same* lock: access()
+# answers by trying, and stat("mtime") by running the same `date -r` that
+# fcc_lock_age() runs. A stub that invented an answer could not show that.
+# ---------------------------------------------------------------------------
+
+# One question, in the same shape the backend asks it.
+sh_lock() { # sh_lock '<code>'
+	FCC_LIBDIR="$ROOT/root/usr/libexec/fcc" \
+	FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
+	FCC_VERSION_FILE="$ROOT/VERSION" \
+	sh -c '. "$1/common.sh"; eval "$2"' _ "$ROOT/root/usr/libexec/fcc" "$1" 2>&1
+}
+
+# The Lua side's answers about a lock of this name, one per line.
+lock_probe() { # lock_probe <lockname>
+	_ts_lp="$(mktemp)"
+	cat > "$_ts_lp" <<'LUA'
+local ROOT = assert(os.getenv("FCC_TEST_ROOT"))
+table.insert(package.loaders, 1, function(name)
+	local short = name:match("^luci%.fcc%.([a-z_]+)$")
+	if not short then return nil end
+	local fh = io.open(ROOT .. "/luasrc/fcc/" .. short .. ".lua", "r")
+	if not fh then return nil end
+	local src = fh:read("*a"); fh:close()
+	return assert(loadstring(src, "@" .. short))
+end)
+
+local function exists(p)
+	if type(p) ~= "string" or p == "" then return false end
+	local f = io.open(p, "r")
+	if f then f:close() return true end
+	return os.rename(p, p) ~= nil
+end
+
+local function writable(p)
+	local probe = p .. "/.fcc-lock-probe"
+	local f = io.open(probe, "w")
+	if not f then return nil end
+	f:close(); os.remove(probe)
+	return true
+end
+
+local function quote(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+
+local function mtime(p)
+	local fh = io.popen("date -r " .. quote(p) .. " +%s 2>/dev/null")
+	if not fh then return nil end
+	local out = fh:read("*a") or ""
+	fh:close()
+	return tonumber(out:match("%d+"))
+end
+
+package.preload["nixio.fs"] = function()
+	return {
+		access = function(p, mode)
+			if mode == "w" then return writable(p) end
+			return exists(p) or nil
+		end,
+		stat = function(p, what)
+			if what ~= "mtime" then return nil end
+			return mtime(p)
+		end,
+	}
+end
+
+local util = require "luci.fcc.util"
+print("dir=" .. tostring(util.lock_dir()))
+print("window=" .. tostring(util.FCC_LOCK_STALE_SECS))
+print("running=" .. tostring(util.job_running(os.getenv("FCC_PROBE_LOCK"))))
+LUA
+	FCC_TEST_ROOT="$ROOT" FCC_PROBE_LOCK="$1" "$LUA" "$_ts_lp"
+	rm -f "$_ts_lp"
+}
+
+test_lock_rules_match_the_shell() {
+	if [ -z "$LUA" ]; then
+		skip "no Lua interpreter available"
+		return
+	fi
+
+	_ts_dir="$(sh_lock 'fcc_lock_dir')"
+	_ts_win="$(sh_lock 'printf "%s" "$FCC_LOCK_STALE_SECS"')"
+	_ts_lock="$_ts_dir/fcc-luaprobe.lock"
+
+	# Neither side has a lock, and both say so from the same two facts.
+	_ts_out="$(lock_probe luaprobe)"
+	assert_contains "$_ts_out" "dir=$_ts_dir" \
+		"Lua and shell choose the same lock directory"
+	assert_contains "$_ts_out" "window=$_ts_win" \
+		"Lua and shell use the same staleness window"
+	assert_contains "$_ts_out" "running=false" \
+		"an absent lock is not running"
+
+	# A lock taken now, made the way the backend makes one.
+	mkdir -p "$_ts_lock"
+	_ts_out="$(lock_probe luaprobe)"
+	assert_contains "$_ts_out" "running=true" "a fresh lock reads as held"
+	assert_ok "and the shell agrees it is held" sh_lock 'fcc_lock_held luaprobe'
+
+	# The same lock, old enough that the acquirer would reclaim it. This is what
+	# a router that rebooted mid-install leaves behind, and the two sides have to
+	# agree about it in both directions: the page must stop showing the job as
+	# running, and the backend must let the next job start.
+	touch -t 202001010000 "$_ts_lock"
+	_ts_out="$(lock_probe luaprobe)"
+	assert_contains "$_ts_out" "running=false" "a stale lock is not running"
+	assert_no "and the shell does not report it held" sh_lock 'fcc_lock_held luaprobe'
+	assert_ok "and the next job may take it" sh_lock 'fcc_lock_acquire luaprobe'
+
+	rm -rf "$_ts_lock"
+}
+
+# ---------------------------------------------------------------------------
+# The controller's job wiring
+#
+# What is left in the controller once the rules live in luci.fcc.util is the
+# order of three calls, and the order is the whole of it: the lock is asked
+# before anything is spawned, the run's marker is written before the fork, and
+# the log the page is shown is cut to the current run. Each is a line somebody
+# can move, and moving any of them is silent — the job still runs and the page
+# still draws, and the only thing that changes is what a person reads when it
+# goes wrong. The rules themselves are exercised for real in the driver and in
+# test_lock_rules_match_the_shell above; what is checked here is that they are
+# called, and called in that order.
+# ---------------------------------------------------------------------------
+
+# The body of one controller function, parameter list and all. test_security.sh
+# has a version of this for the no-argument guards; the job functions take
+# arguments, so the match has to allow for them.
+ctrl_function() {
+	awk -v fn="$1" '
+		$0 ~ "^(local )?function " fn "\\(" { inside = 1 }
+		inside { print }
+		inside && /^end$/ { exit }
+	' "$ROOT/luasrc/controller/fcc.lua"
+}
+
+# The line number of the first line of a body matching a pattern, or nothing.
+body_line() { # body_line <body> <pattern>
+	printf '%s\n' "$1" | grep -n "$2" | head -1 | cut -d: -f1
+}
+
+test_controller_job_wiring() {
+	_ts_start="$(ctrl_function start_job)"
+	_ts_job="$(ctrl_function act_job)"
+
+	assert_ne "" "$_ts_start" "start_job was found in the controller"
+	assert_ne "" "$_ts_job" "act_job was found in the controller"
+
+	_ts_n_lock="$(body_line "$_ts_start" 'util\.job_running')"
+	_ts_n_mark="$(body_line "$_ts_start" 'write_job_marker')"
+	_ts_n_spawn="$(body_line "$_ts_start" 'util\.spawn_detached')"
+
+	assert_ne "" "$_ts_n_lock" "start_job asks whether a job is already running"
+	assert_ne "" "$_ts_n_spawn" "start_job starts the job"
+
+	# The refusal has to come first: asking after the fork is asking too late,
+	# and it is the fork that produces the "no process id" report when the loser
+	# of the race exits before its pid is read back.
+	if [ -n "$_ts_n_lock" ] && [ -n "$_ts_n_spawn" ] && [ "$_ts_n_lock" -lt "$_ts_n_spawn" ]; then
+		pass
+	else
+		fail "start_job checks the lock before it spawns anything"
+	fi
+
+	# And the marker before the fork, because the child shares nothing with this
+	# process: written after spawn_detached() returns, it can land in the middle
+	# of the run's own output, and the slice in act_job would then throw away the
+	# start of the run it was written for.
+	if [ -n "$_ts_n_mark" ] && [ -n "$_ts_n_spawn" ] && [ "$_ts_n_mark" -lt "$_ts_n_spawn" ]; then
+		pass
+	else
+		fail "start_job marks the run before it spawns anything"
+	fi
+
+	# The same sentence the backend prints when fcc_lock_acquire loses, so the
+	# page and the log do not describe one situation in two ways.
+	assert_contains "$_ts_start" 'fail("another install/update is already running")' \
+		"the refusal is worded as the backend words it"
+
+	assert_contains "$_ts_job" "util.job_running(" \
+		"act_job asks the same liveness question"
+	assert_contains "$_ts_job" "util.current_run(" \
+		"act_job reports the current run's lines only"
+
+	# One rule, one place. The controller had its own copy of the lock directory
+	# rule and its own marker constant before; a second copy is how the two sides
+	# start disagreeing.
+	assert_not_contains "$(cat "$ROOT/luasrc/controller/fcc.lua")" 'lockdir' \
+		"the lock directory rule is not duplicated in the controller"
+	assert_not_contains "$(cat "$ROOT/luasrc/controller/fcc.lua")" '===== fcc job start' \
+		"the marker is not duplicated in the controller"
+}
+
 tests_main

@@ -145,7 +145,23 @@ function spawn_detached(cmd, args, logfile)
 	local setsid = which("setsid")
 	if setsid then job = shell_quote(setsid) .. " " .. job end
 
-	local fh = io.popen(job .. " & echo $!")
+	-- The pid is asked for by name, and the wrapper shell's own diagnostics are
+	-- folded into the same pipe.
+	--
+	-- `echo $!` on its own was the previous form, and it is what made this
+	-- function's failure impossible to act on: everything the *wrapper* shell
+	-- says — a redirection it could not make, a `setsid` that turned out not to
+	-- be executable, a fork refused by the process limit — goes to fd 2, which
+	-- the CGI discards, while only the pid came back on fd 1. So "the shell
+	-- reported no process id" arrived with no evidence attached, and the reader
+	-- could not tell which of the four situations they were in. With 2>&1 the
+	-- shell's complaint is captured and quoted in the reason.
+	--
+	-- The sentinel exists because that output is no longer guaranteed to be only
+	-- a number: `out:match("%d+")` would happily return the line number out of
+	-- "sh: line 1: ...". Matching a marker this function itself wrote cannot pick
+	-- up a digit that came from anywhere else.
+	local fh = io.popen("{ " .. job .. " & echo \"FCCPID $!\"; } 2>&1")
 	if not fh then
 		-- popen failed before any shell existed: out of memory, or the process
 		-- table is full. Distinct from every failure below, and the only one
@@ -155,7 +171,7 @@ function spawn_detached(cmd, args, logfile)
 	local out = fh:read("*a") or ""
 	fh:close()
 
-	local pid = tonumber(out:match("%d+"))
+	local pid = tonumber(out:match("FCCPID%s+(%d+)"))
 	if not pid then
 		local said = out:gsub("%s+$", "")
 		return nil, "the shell reported no process id" ..
@@ -179,6 +195,146 @@ end
 
 function file_exists(path)
 	return path ~= nil and fs.access(path) ~= nil
+end
+
+--- Seconds since a path was last modified, or nil when it is not there.
+--
+-- A job lock is a directory, and a directory's mtime is what says how long it has
+-- been there — which is the whole of job_running() below.
+function path_age(path)
+	local st = fs.stat(path, "mtime")
+	if type(st) ~= "number" then return nil end
+	return os.time() - st
+end
+
+--- Can this path be written to? Mirrors the shell's `[ -w "$p" ]`.
+function writable(path)
+	local ok = fs.access(path, "w")
+	return ok ~= nil and ok ~= false
+end
+
+-- ---------------------------------------------------------------------------
+-- Background jobs
+--
+-- Installing or updating the runtime takes minutes, so the controller starts the
+-- work detached and then observes it from outside: the lock the job holds and the
+-- log it writes. Both belong to the shell — fcc_lock_acquire() and fcc_log() in
+-- common.sh — and the rules for *reading* them live here, beside
+-- valid_install_path() and for the same two reasons: so the controller stays a
+-- thin translation of a request into a script call, and so the rules can be
+-- tested without a web server or a router.
+-- ---------------------------------------------------------------------------
+
+--- How long a job lock may sit there before it is treated as left over by a job
+--  that died rather than held by one that is running.
+--
+-- Mirrors FCC_LOCK_STALE_SECS in common.sh, which is where the number is
+-- actually enforced: fcc_lock_acquire() reclaims a lock older than this before
+-- deciding it cannot have one. The copy exists so the controller answers "is a
+-- job running?" the way the shell answers "may I start one?". A controller that
+-- believed a shorter window would refuse to start a job the shell would happily
+-- have reclaimed; one that believed a longer window would report a dead job as
+-- running and leave the page's progress bar climbing for an hour after the job
+-- was killed.
+--
+-- tests/test_lua.sh reads the shell's value out of common.sh and asserts the two
+-- are equal, because two numbers that must agree, written down twice, stop
+-- agreeing.
+--
+-- The override is the shell's, and it is honoured here for the same reason: the
+-- two numbers have to be the same number, and an override that reached only one
+-- of them would be a way to make them differ. A value that is not a number at all
+-- is ignored rather than propagated.
+FCC_LOCK_STALE_SECS = tonumber(os.getenv("FCC_LOCK_STALE_SECS") or "") or 3600
+
+--- Where the backend puts job locks.
+--
+-- Mirrors fcc_lock_dir() in common.sh: the same two candidates, in the same
+-- order, decided the same way — /var/lock is used only when it is both there and
+-- writable, and /tmp is the fallback. The writability half is not decoration: on
+-- an image where /var/lock exists but is not writable the shell locks under /tmp,
+-- and a controller that stopped at "does it exist" would then poll a path nothing
+-- writes.
+--
+-- Getting this wrong fails quietly rather than loudly. It does not break the job,
+-- which locks wherever the shell's copy of the rule says; it makes the page watch
+-- the wrong file, so a job that is running looks finished and one that finished
+-- looks like it is still going.
+function lock_dir()
+	if file_exists("/var/lock") and writable("/var/lock") then return "/var/lock" end
+	return "/tmp"
+end
+
+--- The lock a job of this name holds. The name is the shell's (`install`,
+--  `update`), and sharing it is what makes this the same path.
+function lock_path(name)
+	return lock_dir() .. "/fcc-" .. name .. ".lock"
+end
+
+--- Is a job holding this lock right now?
+--
+-- "The lock directory exists" is not that question. fcc_lock_acquire() creates it
+-- with mkdir and fcc_lock_release() removes it, so a job that was killed — by a
+-- reboot, by the OOM killer, by the user — leaves its lock behind, and the naive
+-- test goes on calling that job "still running" until someone removes the
+-- directory by hand. The shell treats a lock older than FCC_LOCK_STALE_SECS as
+-- abandoned and reclaims it; asking the same question here is what makes the
+-- page's idea of "running" and the backend's idea of "may I start" one idea.
+--
+-- A lock whose age cannot be read counts as live. The backend would refuse to
+-- start a job against it in any case, and calling a dead job live is the failure
+-- that corrects itself a moment later, when the lock is reclaimed.
+function job_running(name)
+	local path = lock_path(name)
+	if not file_exists(path) then return false end
+	local age = path_age(path)
+	if age == nil then return true end
+	return age <= FCC_LOCK_STALE_SECS
+end
+
+--- The line that separates one run of a job from the next in its log.
+--
+-- Job logs are appended to and never truncated, deliberately: the log is the only
+-- record of what a failed install did, and it is what a person reads afterwards.
+-- The cost is that the file is the concatenation of every run of that job since
+-- it was created, and the page — which polls act_job() during a run and shows
+-- what it reads there — would be handed the tail of the previous run followed by
+-- the head of this one. After a retry the panel opens on the *old* failure, and
+-- nothing in the text says that the lines above the new ones belong to a run that
+-- has already ended. That is a log that appears to contradict itself.
+--
+-- So every run begins with a line only this package writes. The page reports what
+-- follows the last one; act_log() reports the file as it is, markers and all,
+-- which is where the history goes for anyone who wants it.
+JOB_MARKER = "===== fcc job start "
+
+--- The marker line for a run that is about to start.
+function job_marker_line(label)
+	return JOB_MARKER .. os.date("!%Y-%m-%dT%H:%M:%SZ") .. ": " .. label .. " ====="
+end
+
+--- The part of a log tail that belongs to the most recent run.
+--
+-- Tailing a fixed number of lines and then cutting at the last marker is enough
+-- in both directions, which is worth spelling out because "tail more, just in
+-- case" is the obvious move and is not needed:
+--
+--   * A run that has written that many lines or more fills the window on its own,
+--     so the marker is behind the window and nothing is cut.
+--   * A run that has written fewer leaves the marker inside the window, because
+--     the window reaches back further than this run has written.
+--
+-- With no marker at all — a log written before this existed, or by something that
+-- is not this controller — the window comes back as it always did.
+function current_run(lines)
+	local start = 0
+	for i = #lines, 1, -1 do
+		if tostring(lines[i]):sub(1, #JOB_MARKER) == JOB_MARKER then start = i break end
+	end
+	if start == 0 then return lines end
+	local out = {}
+	for i = start + 1, #lines do out[#out + 1] = lines[i] end
+	return out
 end
 
 --- Resolve an executable to an absolute path, checking the standard OpenWrt

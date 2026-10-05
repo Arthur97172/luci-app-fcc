@@ -36,13 +36,50 @@ end)
 -- Stubs
 -- ---------------------------------------------------------------------------
 local function path_exists(p)
+	if type(p) ~= "string" or p == "" then return false end
 	local fh = io.open(p, "r")
 	if fh then fh:close() return true end
 	return os.rename(p, p) ~= nil -- true for directories as well as files
 end
 
+-- nixio.fs, reduced to the two questions the modules ask it.
+--
+-- access(p) is "does it exist" and access(p, "w") is "could it be written to",
+-- which is the shell's `[ -e ]` and `[ -w ]` and is how lock_dir() decides
+-- between /var/lock and /tmp. Writability is answered by trying it, because the
+-- host has no lfs and this is the only honest way to ask; the probe is removed
+-- immediately. Getting this wrong would not fail here — it would make the driver
+-- and the shell disagree about the lock directory on a host where /var/lock
+-- exists but is not writable, which is the disagreement the parity check in
+-- tests/test_lua.sh exists to catch.
+--
+-- stat(p, "mtime") is what path_age() asks for. The driver is testing util's
+-- arithmetic — nil for a path that is not there, seconds for one that is — not
+-- the kernel's timestamps, so the stub reports a fixed age for a path that
+-- exists.
+local STUB_MTIME_AGE = 42
+
+local function path_writable(p)
+	local probe = p .. "/.fcc-driver-write-probe"
+	local fh = io.open(probe, "w")
+	if not fh then return nil end
+	fh:close()
+	os.remove(probe)
+	return true
+end
+
 package.preload["nixio.fs"] = function()
-	return { access = function(p) return path_exists(p) or nil end }
+	return {
+		access = function(p, mode)
+			if mode == "w" then return path_writable(p) end
+			return path_exists(p) or nil
+		end,
+		stat = function(p, what)
+			if what ~= "mtime" then return nil end
+			if not path_exists(p) then return nil end
+			return os.time() - STUB_MTIME_AGE
+		end,
+	}
 end
 
 -- No JSON decoder on a stock host. Leaving luci.jsonc/luci.json unloaded is
@@ -497,6 +534,81 @@ check("agents/exists_yes", agents.exists("codex"))
 check("agents/exists_no",  not agents.exists("nosuchagent"))
 check("agents/get_rejects_bad_id", agents.get("../../etc") == nil)
 check("agents/get_rejects_nil",    agents.get(nil) == nil)
+
+-- ---------------------------------------------------------------------------
+-- Job locks
+--
+-- These decide two things the page shows: whether a job is still running (which
+-- is what keeps the progress bar moving, and what makes the panel stop) and
+-- whether a click may start another one. The shell decides the same two things
+-- from the same two facts — which directory the lock is in, and how old it is —
+-- and the cross-language half of that (the window, the directory, and the answer
+-- for a lock of a given age) is in tests/test_lua.sh, which can create a lock and
+-- set its timestamp. What is checkable here is the arithmetic on top of the stub.
+-- ---------------------------------------------------------------------------
+
+local _age = util.path_age(ROOT)
+-- The stub reports STUB_MTIME_AGE for anything that exists, and the call above
+-- may straddle a second boundary, so this is a floor rather than an equality.
+check("path_age/existing", type(_age) == "number" and _age >= STUB_MTIME_AGE)
+eq("path_age/missing", util.path_age(ROOT .. "/no-such-path"), nil)
+eq("path_age/nil",     util.path_age(nil), nil)
+
+check("writable/yes",     util.writable(ROOT) == true)
+check("writable/missing", util.writable(ROOT .. "/no-such-path") ~= true)
+
+check("lock_dir/is_a_candidate",
+	util.lock_dir() == "/var/lock" or util.lock_dir() == "/tmp")
+-- The rule, not the host: /var/lock is chosen only when it is there *and*
+-- writable, which is the shell's `[ -d ] && [ -w ]`.
+check("lock_dir/follows_the_rule",
+	(util.lock_dir() == "/var/lock") ==
+		(util.file_exists("/var/lock") and util.writable("/var/lock")))
+
+eq("lock_path/shape", util.lock_path("install"), util.lock_dir() .. "/fcc-install.lock")
+
+-- Nothing holds a lock while the tests run: a lock would have to exist at the
+-- exact path the shell uses, and the fixture in tests/test_lua.sh is the only
+-- thing that creates one.
+check("job_running/absent_is_not_running",
+	util.job_running("driverabsent") == false)
+
+-- ---------------------------------------------------------------------------
+-- Job logs
+--
+-- A job's log is appended to across runs, so the page has to be told which part
+-- of it belongs to the run it is watching. The marker is how; this is what the
+-- page does with it.
+-- ---------------------------------------------------------------------------
+
+local _marker = util.job_marker_line("agent install aider")
+check("job_marker_line/starts_with_the_marker",
+	_marker:sub(1, #util.JOB_MARKER) == util.JOB_MARKER)
+check("job_marker_line/ends_the_line", _marker:sub(-6) == " =====")
+check("job_marker_line/names_the_run", _marker:find("agent install aider", 1, true) ~= nil)
+check("job_marker_line/is_one_line", _marker:find("\n", 1, true) == nil)
+
+-- The marker is a prefix test, not a pattern: a run label that happens to
+-- contain a magic character must not change what is matched.
+check("JOB_MARKER/is_plain_text", util.JOB_MARKER:find("%%") == nil)
+
+eq("current_run/none",
+	table.concat(util.current_run({ "a", "b" }), ","), "a,b")
+eq("current_run/keeps_what_follows_the_last_marker",
+	table.concat(util.current_run({ "old", util.JOB_MARKER .. "x", "new" }), ","), "new")
+eq("current_run/ignores_earlier_runs",
+	table.concat(util.current_run({ util.JOB_MARKER .. "one", "a",
+		util.JOB_MARKER .. "two", "b" }), ","), "b")
+eq("current_run/marker_last_is_an_empty_run",
+	table.concat(util.current_run({ "old", util.JOB_MARKER .. "x" }), ","), "")
+eq("current_run/empty_stays_empty",
+	table.concat(util.current_run({}), ","), "")
+-- A line that merely mentions the marker is not one: the test is on the start of
+-- the line, so an installer that echoed the marker back would not cut the run in
+-- half.
+eq("current_run/only_the_start_of_a_line_counts",
+	table.concat(util.current_run({ "saw " .. util.JOB_MARKER .. "x", "kept" }), ","),
+	"saw " .. util.JOB_MARKER .. "x,kept")
 
 -- ---------------------------------------------------------------------------
 -- Total first, then failures: tests/test_lua.sh checks that the total matches

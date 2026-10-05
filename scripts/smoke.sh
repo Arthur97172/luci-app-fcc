@@ -336,6 +336,30 @@ docker cp "$SMOKE_APP" "$SMOKE_NAME:$SMOKE_STAGE/app.$SMOKE_EXT"
 _sm_rc=0
 smoke_install "$SMOKE_STAGE/app.$SMOKE_EXT" || _sm_rc=$?
 smoke_check "the package installs" 0 "$_sm_rc"
+
+# Neither package manager runs the package's post-install text on its own: both
+# wrap it, and both wrappers call default_postinst() from /lib/functions.sh
+# *before* it. default_postinst() runs every /etc/uci-defaults/ file the package
+# ships and deletes each one, so a `. /etc/uci-defaults/99-fcc` in the postinst
+# runs against a file that is already gone:
+#
+#   /proc/self/fd/7: .: line 10: can't open /etc/uci-defaults/99-fcc: no such file
+#
+# Both package managers turn that into a failed install — apk reports "exited
+# with error 2", opkg exits 255 — so the check above does catch it, but only as
+# an exit status, with the line itself buried in the log that smoke_show_log
+# prints at the very end. It is therefore named here as well, and checked before
+# the early exit rather than after it, so that a failing install reports both the
+# failure and its reason instead of just the failure. A correct install has no
+# reason to mention uci-defaults at all, and this is the only place the real
+# wrappers run, so this is the only place it can be seen.
+if grep -q 'uci-defaults' "$SMOKE_LOG"; then
+	smoke_bad "the post-install script leaves /etc/uci-defaults to the wrapper"
+	grep 'uci-defaults' "$SMOKE_LOG" >&2
+else
+	smoke_ok "the post-install script leaves /etc/uci-defaults to the wrapper"
+fi
+
 if [ "$_sm_rc" != 0 ]; then
 	smoke_show_log "the package manager said"
 	exit 1
