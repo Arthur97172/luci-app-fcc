@@ -99,20 +99,22 @@ test_lua_install_paths_match_the_module_names() {
 # ---------------------------------------------------------------------------
 
 test_the_package_is_declared() {
-	# One package, not two. The translation is built into it — section 52 asks
-	# for two languages, not two packages — which is also what section 62's
-	# release lists.
+	# Two packages, and exactly two: the application, which is English only, and
+	# the translation. Section 52 asks for two languages; where they are built is
+	# a packaging decision, and it is this one.
 	assert_contains "$(cat "$MAKEFILE")" 'define Package/luci-app-fcc' "the package is declared"
 	assert_contains "$(cat "$MAKEFILE")" '$(eval $(call BuildPackage,luci-app-fcc))' "the package is built"
-	assert_eq "1" "$(grep -c '^\$(eval \$(call BuildPackage' "$MAKEFILE")" \
-		"exactly one package is built"
+	assert_eq "2" "$(grep -c '^\$(eval \$(call BuildPackage' "$MAKEFILE")" \
+		"exactly two packages are built, and no more"
 }
 
 test_the_package_is_architecture_independent() {
 	# This package is a pure control layer: Lua, JS and ash. Anything it ships
 	# is interpreted, so PKGARCH:=all is what lets one .ipk serve every target.
+	# Both packages, and only those two: an architecture-specific third one would
+	# be a package this project does not mean to ship.
 	_ts_n="$(grep -c '^[[:space:]]*PKGARCH:=all' "$MAKEFILE")"
-	assert_eq "1" "$_ts_n" "the package declares PKGARCH:=all"
+	assert_eq "2" "$_ts_n" "both packages declare PKGARCH:=all"
 }
 
 test_does_not_use_luci_mk() {
@@ -242,7 +244,7 @@ test_tmux_dependency_matches_the_session_backend() {
 }
 
 # ---------------------------------------------------------------------------
-# The translation, which ships inside the package
+# The translation, which ships in a package of its own
 # ---------------------------------------------------------------------------
 
 test_i18n_sources_are_wired_up() {
@@ -254,28 +256,50 @@ test_i18n_sources_are_wired_up() {
 		"po2lmo is available as a host tool"
 }
 
-test_the_catalogue_installs_into_the_app_package() {
+test_the_catalogue_installs_into_the_translation_package() {
 	# LuCI's template parser loads <name>.<lang>.lmo out of
 	# /usr/lib/lua/luci/i18n by itself when the interface language is zh-cn.
 	# Installing it anywhere else means the translation never loads — and
 	# English still works, so nothing looks broken.
-	_ts_inst="$(install_block)"
+	_ts_inst="$(makefile_define 'Package/luci-i18n-fcc-zh-cn/install')"
 	assert_contains "$_ts_inst" \
 		'po2lmo ./po/zh_Hans/fcc.po $(1)/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo' \
-		"the catalogue is compiled into the app package"
+		"the catalogue is compiled into the translation package"
 }
 
-test_no_separate_translation_package() {
-	# A luci-i18n-fcc-zh-cn package would be a second thing to install for no
-	# gain: the .lmo is already in the app package and is what LuCI actually
-	# loads. Section 62's release lists one package.
-	#
-	# Checked by definition rather than by name: the Makefile's own comment
-	# explains the decision, which means it names the package it argues against.
-	assert_not_contains "$(cat "$MAKEFILE")" 'define Package/luci-i18n' \
-		"the Makefile defines no second package"
-	assert_not_contains "$(cat "$MAKEFILE")" 'BuildPackage,luci-i18n' \
-		"the Makefile builds no second package"
+test_the_app_package_carries_no_catalogue() {
+	# The separation is the point, and it is one line to undo by accident: a
+	# po2lmo call left in the app package's install block would put the
+	# catalogue back in the .ipk while the new package still built, and every
+	# check that only looked for the new package would stay green.
+	assert_not_contains "$(install_block)" 'po2lmo' \
+		"the app package compiles no catalogue"
+	assert_not_contains "$(install_block)" 'luci/i18n' \
+		"the app package installs nothing under luci/i18n"
+}
+
+test_the_translation_package_is_defined_and_built() {
+	assert_contains "$(cat "$MAKEFILE")" 'define Package/luci-i18n-fcc-zh-cn' \
+		"the Makefile defines the translation package"
+	assert_contains "$(cat "$MAKEFILE")" 'BuildPackage,luci-i18n-fcc-zh-cn' \
+		"the Makefile builds the translation package"
+	# PKGARCH:=all, like the app: the .lmo is data and must be installable on
+	# every architecture the app is.
+	assert_contains "$(makefile_define 'Package/luci-i18n-fcc-zh-cn')" 'PKGARCH:=all' \
+		"the translation package is architecture-independent"
+}
+
+test_the_translation_package_does_not_depend_on_the_app() {
+	# Not a style rule. A dependency on luci-app-fcc would be circular the
+	# moment anything selected the translation by default, and it is not needed:
+	# the .lmo is a data file LuCI loads by name, so it is harmless to install
+	# on its own. What it must depend on is luci-base, which is where the loader
+	# that reads it lives.
+	# The DEPENDS line itself, not the whole block: the block's TITLE and URL
+	# both name luci-app-fcc, and a check over the block would fail on those.
+	_ts_dep="$(printf '%s\n' "$(makefile_define 'Package/luci-i18n-fcc-zh-cn')" \
+		| grep '^[[:space:]]*DEPENDS:=')"
+	assert_eq "  DEPENDS:=+luci-base" "$_ts_dep" "it depends on luci-base and nothing else"
 }
 
 # ---------------------------------------------------------------------------
@@ -389,8 +413,14 @@ test_the_build_collects_only_our_package() {
 			fail "the collect step copies every package the SDK built" ;;
 		*) pass ;;
 	esac
-	assert_contains "$_ts_c" 'luci-app-fcc[-_]*' "the collect step is scoped to our package"
-	assert_not_contains "$_ts_c" 'luci-i18n-fcc' "no second package is collected"
+	# Both of our packages, and the version separator glob that matches the .ipk
+	# and the .apk spellings of the same name. The translation is a package of
+	# its own now, so a collect step that still named only the app would publish
+	# a release with no Chinese interface in it — and the release job would be
+	# happy, because dist would be non-empty.
+	assert_contains "$_ts_c" 'luci-app-fcc' "the collect step is scoped to the app package"
+	assert_contains "$_ts_c" 'luci-i18n-fcc' "the collect step also collects the translation"
+	assert_contains "$_ts_c" '[-_]*' "the collect step matches both the .ipk and .apk spellings"
 }
 
 test_the_release_does_not_merge_architectures_blindly() {
@@ -410,8 +440,13 @@ test_the_release_does_not_merge_architectures_blindly() {
 
 test_the_release_publishes_only_our_package() {
 	_ts_r="$(release_job)"
-	assert_contains "$_ts_r" 'luci-app-fcc*) : ;;' \
-		"the release job filters the assets it publishes"
+	# Both of our packages, on the one line that decides. The translation does
+	# not begin with "luci-app-fcc", so a filter that named only the app would
+	# drop it here — with a warning, into a release that then looked complete.
+	# Spelled out as the whole pattern so that a third alternative added later is
+	# a deliberate edit rather than a quiet widening.
+	assert_contains "$_ts_r" 'luci-app-fcc*|luci-i18n-fcc*) : ;;' \
+		"the release job publishes our two packages and no others"
 	# The publish list must be the collected directory, not the raw download:
 	# artifacts/ is what the job received, release/ is what it decided to ship,
 	# and only the second one has been filtered.

@@ -247,11 +247,15 @@ end
 -- The cost is a marker left behind by a job that then failed to start, which
 -- reads as a run that produced nothing. That is what happened, and the reason is
 -- on the page beside it.
-local function write_job_marker(logpath, label)
+local function append_job_line(logpath, text)
 	local fh = io.open(logpath, "a")
 	if not fh then return end
-	fh:write(util.job_marker_line(label), "\n")
+	fh:write(text, "\n")
 	fh:close()
+end
+
+local function write_job_marker(logpath, label)
+	append_job_line(logpath, util.job_marker_line(label))
 end
 
 function start_job(argv, logname, lockname)
@@ -291,10 +295,26 @@ function start_job(argv, logname, lockname)
 	local pid, why = util.spawn_detached(script, rest, log)
 	if not pid then
 		-- The reason, not just the verdict. This message is the whole of what
-		-- the person sees, and the four ways it can happen — not installed, not
-		-- executable, no shell, no pid — are fixed differently.
+		-- the person sees, and the ways it can happen — the script is not
+		-- installed, it is not executable, no shell could be forked, the shell
+		-- complained while starting the job — are fixed differently.
 		return fail("could not start the job" .. (why and (": " .. why) or ""))
 	end
+
+	if pid == 0 then
+		-- Started, but the wrapper shell did not name a pid. See
+		-- util.spawn_detached() for why that is not a failure. The line below is
+		-- the evidence that is left behind: the next person to read this log
+		-- sees that the run began, and that the pid was never known, rather than
+		-- having to infer either from a marker with nothing after it.
+		--
+		-- It is written after the fork, so it can land among the job's own first
+		-- lines. That is safe: it is not a marker, so current_run()'s slice is
+		-- unaffected, and one short line under O_APPEND does not interleave.
+		append_job_line(log, util.job_note_line(
+			"job started, but the wrapper shell reported no process id"))
+	end
+
 	json_out('{"ok":true,"started":true,"pid":' .. pid ..
 		',"lock":' .. util.json_encode(lockname) ..
 		',"log":' .. util.json_encode(logname) .. '}')

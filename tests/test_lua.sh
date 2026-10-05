@@ -403,4 +403,60 @@ test_controller_job_wiring() {
 		"the marker is not duplicated in the controller"
 }
 
+test_a_silent_wrapper_shell_is_not_a_failure() {
+	# spawn_detached() answers 0 for "started, but the wrapper shell named no
+	# pid". The caller's failure branch is `if not pid`, and 0 is truthy in Lua —
+	# so the whole fix rests on the controller not testing the pid for truthiness
+	# in some other way, and on it recording why the pid is unknown. Both are
+	# one-line changes away from being undone, and neither would fail anything
+	# else: the page would simply go back to reporting a job that is running as
+	# one that could not start.
+	_ts_start="$(ctrl_function start_job)"
+
+	assert_contains "$_ts_start" 'if pid == 0 then' \
+		"start_job recognises the started-but-no-pid answer"
+	assert_not_contains "$_ts_start" 'if pid == nil' \
+		"start_job does not treat a missing pid as the only success shape"
+
+	# The evidence line, so the next reader of the log sees that the run began.
+	# It is not a marker — current_run() cuts at the last marker, and a note that
+	# looked like one would discard the run it was written for.
+	assert_contains "$_ts_start" 'append_job_line(' \
+		"start_job records the unknown pid in the job's log"
+	assert_contains "$_ts_start" 'util.job_note_line(' \
+		"the recorded line is a note, not a marker"
+
+	# And the sentence that was the bug must not be reachable from the silent
+	# case any more: the reason now carries the shell's own words, so a failure
+	# here always has something after the colon.
+	assert_not_contains "$(cat "$ROOT/luasrc/fcc/util.lua")" \
+		'return nil, "the shell reported no process id"' \
+		"silence alone is no longer a failure"
+
+	# The decision lives in one place, and it is the tested one.
+	assert_contains "$(cat "$ROOT/luasrc/fcc/util.lua")" 'function parse_spawn_output(' \
+		"the shell's answer is parsed by a function of its own"
+}
+
+test_the_page_does_not_declare_a_fresh_job_finished() {
+	# The other half of the same report: the bar jumped straight to 100% for an
+	# install that then ran for minutes. The POST's response is written before the
+	# forked shell has taken its lock, so the first poll finds the lock unheld —
+	# and the old code read that as "the job is over", stopped the timer, set the
+	# bar to 100% and refreshed the page.
+	_ts_js="$(cat "$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js")"
+
+	assert_contains "$_ts_js" 'seenRunning' \
+		"the watch remembers having seen the job running"
+	assert_contains "$_ts_js" 'JOB_SETTLE_MS' \
+		"the watch has a settle window for a job that starts and stops between polls"
+
+	# The guard itself, spelled out: "not running" may only mean "finished" once
+	# the job has been seen running, or once the window has passed.
+	assert_contains "$_ts_js" 'if (!r.running && (seenRunning ||' \
+		"a fresh job is not declared finished on the first poll"
+	assert_not_contains "$_ts_js" 'if (!r.running) {' \
+		"the unguarded finish branch is gone"
+}
+
 tests_main

@@ -412,6 +412,62 @@ check("spawn_detached/reasons_are_distinguishable",
 	_sr_why .. " | " .. _sr2_why .. " | " .. _sr3_why)
 
 -- ---------------------------------------------------------------------------
+-- parse_spawn_output — what the wrapper shell's output means
+--
+-- The decision is split out of spawn_detached() because a real shell cannot be
+-- made to produce each of these answers on demand. The middle one is the bug
+-- this release fixes: silence from the wrapper was read as "the job did not
+-- start", and the job's own log — which is where an install says what went wrong
+-- — was thrown away along with it.
+-- ---------------------------------------------------------------------------
+local function spawn_verdict(out)
+	local pid, why = util.parse_spawn_output(out)
+	return pid, (why or "")
+end
+
+local _pv_pid = spawn_verdict("FCCPID 4242\n")
+check("parse_spawn_output/names_the_pid", _pv_pid == 4242, "got " .. tostring(_pv_pid))
+
+-- The sentinel earns its keep here: a shell that complains before it echoes
+-- prints digits of its own, and a bare match would return the line number.
+local _pv_noise = spawn_verdict("sh: line 7: 9: not found\nFCCPID 11\n")
+check("parse_spawn_output/ignores_digits_that_are_not_the_pid",
+	_pv_noise == 11, "got " .. tostring(_pv_noise))
+
+-- The fix. Silence is "started, pid unknown", not "did not start".
+local _pv_silent, _pv_silent_why = spawn_verdict("")
+check("parse_spawn_output/silence_means_started",
+	_pv_silent == 0 and _pv_silent_why == "",
+	"got pid " .. tostring(_pv_silent) .. " why " .. tostring(_pv_silent_why))
+
+-- Whitespace only is the same thing: a read that came back with a newline and
+-- nothing else. This is the shape the report actually had — the page showed the
+-- message with no ": <detail>" after it, which is only possible here.
+local _pv_ws, _pv_ws_why = spawn_verdict("  \n\t\n")
+check("parse_spawn_output/whitespace_means_started",
+	_pv_ws == 0 and _pv_ws_why == "",
+	"got pid " .. tostring(_pv_ws) .. " why " .. tostring(_pv_ws_why))
+
+-- A nil read is the same answer. io.popen returned a handle and read returned
+-- nothing at all; the job is no less started for that.
+check("parse_spawn_output/nil_means_started",
+	util.parse_spawn_output(nil) == 0)
+
+-- Text is the decidable case, and it stays a failure — with the shell's own
+-- words attached, because they are the fix.
+local _pv_said, _pv_said_why = spawn_verdict("sh: can't create /var/log/x: Read-only file system\n")
+check("parse_spawn_output/a_complaint_is_a_failure",
+	_pv_said == nil and _pv_said_why ~= "", "got " .. tostring(_pv_said))
+check("parse_spawn_output/the_complaint_is_quoted_back",
+	_pv_said_why:find("Read-only file system", 1, true) ~= nil,
+	"got " .. tostring(_pv_said_why))
+
+-- And the two answers must stay distinguishable: a silent wrapper and a
+-- complaining one are the whole of the fix.
+check("parse_spawn_output/silence_and_a_complaint_differ",
+	spawn_verdict("") ~= nil and spawn_verdict("sh: nope\n") == nil)
+
+-- ---------------------------------------------------------------------------
 -- paths
 -- ---------------------------------------------------------------------------
 check("paths/script_ok",    paths.script("status") == paths.LIBEXEC .. "/status.sh")
@@ -591,6 +647,21 @@ check("job_marker_line/is_one_line", _marker:find("\n", 1, true) == nil)
 -- The marker is a prefix test, not a pattern: a run label that happens to
 -- contain a magic character must not change what is matched.
 check("JOB_MARKER/is_plain_text", util.JOB_MARKER:find("%%") == nil)
+
+-- A note the controller adds to a job's log. It must not look like a marker:
+-- current_run() cuts at the last marker, so a note that matched would discard
+-- the run it was written for — which is exactly the run the reader is looking at.
+local _note = util.job_note_line("job started, but the shell reported no process id")
+check("job_note_line/is_not_a_marker",
+	_note:sub(1, #util.JOB_MARKER) ~= util.JOB_MARKER,
+	"got " .. _note:sub(1, #util.JOB_MARKER))
+check("job_note_line/names_the_controller", _note:find("fcc:", 1, true) ~= nil)
+check("job_note_line/carries_the_text",
+	_note:find("no process id", 1, true) ~= nil)
+check("job_note_line/is_one_line", _note:find("\n", 1, true) == nil)
+-- And it survives the slice: a note after the marker is part of the run.
+eq("current_run/a_note_stays_in_the_run",
+	table.concat(util.current_run({ "old", util.JOB_MARKER .. "x", _note }), ","), _note)
 
 eq("current_run/none",
 	table.concat(util.current_run({ "a", "b" }), ","), "a,b")

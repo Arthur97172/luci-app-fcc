@@ -45,10 +45,20 @@ LuCI → Services → FCC
 
 All three pages work immediately, before anything else is installed.
 
-The interface follows LuCI's language. English is the source language; the
-compiled Simplified Chinese catalogue is built into this same package, so there
-is no `luci-i18n-fcc-zh-cn` to install alongside it. LuCI loads it on its own
-whenever the interface language is Chinese.
+The interface follows LuCI's language. English is the source language and ships
+in `luci-app-fcc`; the compiled Simplified Chinese catalogue is a **separate
+package, `luci-i18n-fcc-zh-cn`**, which you install as well. Once it is there,
+LuCI loads it by itself whenever the interface language is Chinese — no
+configuration, and no service to restart.
+
+```
+opkg install luci-i18n-fcc-zh-cn      # 24.10 and earlier
+apk add luci-i18n-fcc-zh-cn           # 25.12 and newer
+```
+
+The two are independent: install English only, add Chinese later, upgrade and
+remove them separately. An English interface with only `luci-app-fcc` installed
+is the package working, not a fault.
 
 ---
 

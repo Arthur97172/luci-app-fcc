@@ -229,11 +229,12 @@ test_makefile_compiles_to_lucis_language_code() {
 	assert_not_contains "$_ts_mk" 'fcc.zh_Hans.lmo' "the .lmo is not named after the po directory"
 
 	# Upstream's luci-i18n-* packages also register their language in
-	# luci.languages through uci-defaults. This package deliberately does not.
-	# It is an application, not a language pack, and adding zh_cn to the global
-	# language list would offer a half-translated interface to anyone who has
-	# not installed luci-i18n-base-zh-cn as well. LuCI loads the catalogue by
-	# itself whenever the interface language already is zh-cn.
+	# luci.languages through uci-defaults. luci-i18n-fcc-zh-cn deliberately does
+	# not, despite now carrying the name of one. Adding zh_cn to the global
+	# language list would offer a half-translated interface to anyone who has not
+	# installed luci-i18n-base-zh-cn as well — the theme, the menu and every other
+	# page would still be English. LuCI loads this catalogue by itself whenever
+	# the interface language already is zh-cn, which is the case that matters.
 	assert_not_contains "$_ts_mk" 'luci.languages.zh_cn' \
 		"the package does not change the global LuCI language list"
 }

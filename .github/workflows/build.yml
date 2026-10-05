@@ -219,15 +219,16 @@ jobs:
           # builds, so without this line the job collects a dist/ full of
           # libraries and a green run ships no package of ours at all.
           #
-          # There is no second line for the translation. It is no longer a
-          # package: the .lmo is built into luci-app-fcc itself (section 52
-          # requires the two languages, not two packages).
-          printf 'CONFIG_ALL=n\nCONFIG_ALL_KMODS=n\nCONFIG_ALL_NONSHARED=n\nCONFIG_PACKAGE_luci-app-fcc=y\n' > .config
+          # The translation is a package of its own and is selected the same way,
+          # for the same reason: without CONFIG_PACKAGE_luci-i18n-fcc-zh-cn=y the
+          # compile target is the autoremove stub and no .lmo is ever built.
+          printf 'CONFIG_ALL=n\nCONFIG_ALL_KMODS=n\nCONFIG_ALL_NONSHARED=n\nCONFIG_PACKAGE_luci-app-fcc=y\nCONFIG_PACKAGE_luci-i18n-fcc-zh-cn=y\n' > .config
           make defconfig
           # Fail loudly if the defaults came back: a silent return to ALL would
           # turn this job into a kernel build rather than a package build.
           ! grep -qE '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED)=y' .config
           test "$(grep -cE '^CONFIG_PACKAGE_luci-app-fcc=y' .config)" = 1
+          test "$(grep -cE '^CONFIG_PACKAGE_luci-i18n-fcc-zh-cn=y' .config)" = 1
           echo "kmods selected: $(grep -cE '^CONFIG_PACKAGE_kmod.*=y' .config)"
 
       - name: Build luci-base host tools
@@ -235,7 +236,7 @@ jobs:
         # host tools in staging_dir/host/bin do not include it. luci-base builds
         # it as a HostBuild into staging_dir/hostpkg/bin, which is what a full
         # buildroot does and what turns our po/zh_Hans/fcc.po into the .lmo that
-        # ships inside luci-app-fcc. It takes about a second.
+        # ships inside luci-i18n-fcc-zh-cn. It takes about a second.
         run: |
           set -eu
           cd "$SDK_DIR"
@@ -243,7 +244,14 @@ jobs:
           test -x staging_dir/hostpkg/bin/po2lmo
           staging_dir/hostpkg/bin/po2lmo 2>&1 | head -1 || true
 
-      - name: Build the package
+      - name: Build the packages
+        # One target, both packages. `package/<name>/compile` is aliased by
+        # *directory* name — subdir.mk's diralias takes the last path segment of
+        # feeds/fcc/luci-app-fcc — so there is no
+        # `package/luci-i18n-fcc-zh-cn/compile` and asking for one fails with
+        # "No rule to make target". The two CONFIG_PACKAGE_…=y lines above are
+        # what decide which of the Makefile's BuildPackage entries produce
+        # output.
         run: |
           set -eu
           cd "$SDK_DIR"
@@ -265,17 +273,22 @@ jobs:
           #
           # The feed name is the directory the SDK writes into, so glob the
           # extension across bin/packages rather than guessing the arch path.
-          find "$SDK_DIR/bin/packages" -name "luci-app-fcc[-_]*.${{ matrix.ext }}" \
-            -exec cp -v {} dist/ \;
-          # Assert on it by name. What this catches is a build that produced no
+          for _vi_p in 'luci-app-fcc' 'luci-i18n-fcc'; do
+            find "$SDK_DIR/bin/packages" -name "$_vi_p[-_]*.${{ matrix.ext }}" \
+              -exec cp -v {} dist/ \;
+          done
+          # Assert on each by name. What this catches is a build that produced no
           # package of ours at all because the config never selected it — the
           # dependency chain still builds in that case, so "dist is non-empty"
-          # would say nothing.
-          ls dist/luci-app-fcc[-_]*.${{ matrix.ext }} >/dev/null 2>&1 || {
-            echo "::error::luci-app-fcc was not built"
-            find "$SDK_DIR/bin/packages" -maxdepth 3 -type d
-            exit 1
-          }
+          # would say nothing. Both are named because a release that carried only
+          # the app would be one with no Chinese interface in it.
+          for _vi_p in 'luci-app-fcc' 'luci-i18n-fcc'; do
+            ls dist/"$_vi_p"[-_]*.${{ matrix.ext }} >/dev/null 2>&1 || {
+              echo "::error::$_vi_p was not built"
+              find "$SDK_DIR/bin/packages" -maxdepth 3 -type d
+              exit 1
+            }
+          done
           ls -l dist
 
       - name: Verify the artifacts
@@ -347,10 +360,24 @@ jobs:
               || { echo "::error::$f is missing the views"; fail=1; }
             test -f "$d/usr/libexec/fcc/session.sh" \
               || { echo "::error::$f is missing the backends"; fail=1; }
-            # The Chinese catalogue lives in this package now, so a build where
-            # po2lmo was missing — or where its output went somewhere LuCI does
-            # not look — has to fail here. Nothing else would notice: the
-            # package installs and runs perfectly well in English.
+            # English only. The catalogue belongs to luci-i18n-fcc-zh-cn, and a
+            # po2lmo line left behind in this package's install block would ship
+            # it twice with nothing else noticing — both packages install and run
+            # perfectly well either way.
+            test ! -e "$d/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo" \
+              || { echo "::error::$f carries the zh-cn catalogue; it belongs in luci-i18n-fcc-zh-cn"; fail=1; }
+            rm -rf "$d"
+            echo "$(basename "$f"): payload ok"
+          done
+
+          # The translation package, which correctly contains only the catalogue.
+          # A build where po2lmo was missing — or where its output went somewhere
+          # LuCI does not look — has to fail here; nothing else would notice.
+          i18n="$(ls -1 "$DIST"/luci-i18n-fcc[-_]*."$EXT" 2>/dev/null || true)"
+          [ -n "$i18n" ] || { echo "::error::no luci-i18n-fcc package in dist"; fail=1; }
+
+          for f in $i18n; do
+            d="$(unpack "$(basename "$f")")"
             test -f "$d/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo" \
               || { echo "::error::$f carries no compiled zh-cn catalogue"; fail=1; }
             rm -rf "$d"
@@ -532,8 +559,11 @@ jobs:
           for f in artifacts/*/*; do
             [ -f "$f" ] || continue
             b="$(basename "$f")"
+            # Both of our packages. The translation does not begin with
+            # "luci-app-fcc", so a filter that named only the app would drop it
+            # here — with a warning, into a release that then looked complete.
             case "$b" in
-              luci-app-fcc*) : ;;
+              luci-app-fcc*|luci-i18n-fcc*) : ;;
               *) echo "::warning::not publishing $b"; continue ;;
             esac
             # The version read above says which release this is; the file name
@@ -605,6 +635,7 @@ jobs:
             printf '| Version | `%s` |\n' "$ver"
             printf '| OpenWrt | 24.10 and earlier — `.ipk` (opkg) · 25.12 and later — `.apk` (apk) |\n'
             printf '| Architecture | `all` — pure Lua, JavaScript and shell, so one artifact fits ARM, x86 and MIPS |\n'
+            printf '| Packages | `luci-app-fcc` — the application, English only · `luci-i18n-fcc-zh-cn` — the Simplified Chinese catalogue, install it for a Chinese interface |\n'
             printf '| FCC runtime | not shipped and not pinned — installed on demand from upstream |\n\n'
             printf '**Agents**\n\n'
             awk -F'|' '/^[a-z]/ { printf "- %s (`%s`)\n", $2, $3 }' \

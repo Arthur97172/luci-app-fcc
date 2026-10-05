@@ -413,6 +413,21 @@
 		if (panel) { panel.style.display = ''; }
 		if (jobTimer) { clearInterval(jobTimer); }
 
+		/* A job that has just been asked for has not necessarily taken its lock
+		 * yet. The POST's response is written by the CGI before the forked shell
+		 * has run its first line, so the very first poll can find the lock
+		 * unheld — and reading that as "the job is over" is what made the bar
+		 * jump straight to 100% for an install that then ran for minutes.
+		 *
+		 * So two things have to be true before "not running" means "finished":
+		 * the watch has seen the job running at least once, or the settle window
+		 * has passed. The window covers the opposite case — a job that starts
+		 * and stops between two polls, such as an install the compatibility gate
+		 * refuses, which exits in well under a second — and it is short enough
+		 * that a request that really did start nothing is not left spinning. */
+		var seenRunning = false;
+		var JOB_SETTLE_MS = 8000;
+
 		var tick = function () {
 			FCC.api('job', { lock: lock, log: log, lines: 60 }, { method: 'GET' })
 				.then(function (r) {
@@ -441,12 +456,13 @@
 					 * never reaches 100% — only the lock being released means
 					 * the job ended, and the branch below is what sets that. */
 					var bar = FCC.$('#fcc-job-bar');
+					if (r.running) { seenRunning = true; }
 					if (bar && r.running) {
 						var secs = (Date.now() - jobStart) / 1000;
 						bar.style.width = (95 * (1 - Math.exp(-secs / 240))).toFixed(1) + '%';
 					}
 
-					if (!r.running) {
+					if (!r.running && (seenRunning || Date.now() - jobStart > JOB_SETTLE_MS)) {
 						clearInterval(jobTimer);
 						jobTimer = null;
 						if (bar) { bar.style.width = '100%'; }

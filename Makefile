@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -145,14 +145,11 @@ define Package/luci-app-fcc/install
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-info.js $(1)/www/luci-static/resources/fcc/fcc-info.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc.css $(1)/www/luci-static/resources/fcc/fcc.css
 
-	# The Simplified Chinese catalogue ships inside this package rather than as
-	# a separate luci-i18n-fcc-zh-cn. LuCI's template parser looks for
-	# <name>.<lang>.lmo here by itself when the interface language is zh-cn, so
-	# a second package buys nothing but a second thing to install — and section
-	# 62's release lists one package. English needs no catalogue: it is the
-	# source language the _("...") strings are written in.
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
-	po2lmo ./po/zh_Hans/fcc.po $(1)/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo
+	# No .lmo here. The Simplified Chinese catalogue is built into
+	# luci-i18n-fcc-zh-cn, below, so this package carries English only — English
+	# is the source language the _("...") strings are written in and needs no
+	# catalogue at all. The interface language still follows LuCI; what changed
+	# is only which package the compiled zh-cn catalogue arrives in.
 endef
 
 # The uci-defaults script is deliberately NOT sourced here, and neither is
@@ -195,4 +192,55 @@ define Package/luci-app-fcc/postrm
 }
 endef
 
+# ---------------------------------------------------------------------------
+# luci-i18n-fcc-zh-cn — the compiled Simplified Chinese catalogue
+# ---------------------------------------------------------------------------
+#
+# Separate from the app package on purpose: the app ships English and nothing
+# else, and the translation is something you add. This is the layout upstream
+# LuCI uses for every application, and it is what lets the two be installed,
+# upgraded and removed independently — an English-only install no longer carries
+# 40 KB of catalogue it will never load.
+#
+# It depends on luci-base and deliberately NOT on luci-app-fcc. A dependency on
+# the app would be circular the moment anything wanted the translation selected
+# by default, and nothing here needs it: the .lmo is a data file that LuCI's
+# template parser loads by name, so installing it without the app is harmless —
+# it simply sits unread. Adding the app afterwards needs no reinstall.
+#
+# The path is the whole of the wiring. LuCI looks for <name>.<lang>.lmo under
+# /usr/lib/lua/luci/i18n when the interface language is zh-cn, where <name> is
+# the view or controller module — fcc, here — and <lang> is the alias from
+# LUCI_LC_ALIAS. That alias is zh-cn, which is not what the po directory is
+# called: the catalogue is named after the language tag LuCI asks for, not after
+# the gettext directory it was written in. Getting this wrong is silent — the
+# file installs, and the interface stays English.
+#
+# po2lmo comes from luci-base's host build, which PKG_BUILD_DEPENDS already
+# pulls in for the app package above; the variable is per-Makefile, so this
+# package inherits it.
+define Package/luci-i18n-fcc-zh-cn
+  SECTION:=luci
+  CATEGORY:=LuCI
+  SUBMENU:=Translations
+  TITLE:=Chinese (Simplified) translation for luci-app-fcc
+  DEPENDS:=+luci-base
+  PKGARCH:=all
+  URL:=https://github.com/Arthur97172/luci-app-fcc
+endef
+
+define Package/luci-i18n-fcc-zh-cn/description
+  Simplified Chinese (zh-cn) translation for luci-app-fcc.
+
+  Without this package the FCC pages render in English whatever the interface
+  language is set to. Install it and LuCI loads the catalogue by itself; no
+  configuration is needed and no service has to be restarted.
+endef
+
+define Package/luci-i18n-fcc-zh-cn/install
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
+	po2lmo ./po/zh_Hans/fcc.po $(1)/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo
+endef
+
 $(eval $(call BuildPackage,luci-app-fcc))
+$(eval $(call BuildPackage,luci-i18n-fcc-zh-cn))

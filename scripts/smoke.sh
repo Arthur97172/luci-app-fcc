@@ -269,10 +269,14 @@ smoke_install() {
 }
 
 smoke_remove() {
+	# Both packages, in the reverse of the order they were installed. They are
+	# independent — the translation does not depend on the app — so neither
+	# manager would take the other out on its own, and a check that only removed
+	# the app would leave the catalogue behind and then fail on it.
 	if [ "$SMOKE_EXT" = apk ]; then
-		smoke_sh "apk del luci-app-fcc"
+		smoke_sh "apk del luci-i18n-fcc-zh-cn luci-app-fcc"
 	else
-		smoke_sh "opkg remove luci-app-fcc"
+		smoke_sh "opkg remove luci-i18n-fcc-zh-cn luci-app-fcc"
 	fi
 }
 
@@ -281,9 +285,15 @@ smoke_remove() {
 # ---------------------------------------------------------------------------
 
 SMOKE_APP="$(smoke_pkg_path "luci-app-fcc[-_]*.$SMOKE_EXT")"
+# The translation is a package of its own. Both are installed and both are
+# checked: the whole point of the split is that the app carries English only and
+# the catalogue arrives separately, and neither half of that is visible from the
+# other package.
+SMOKE_I18N="$(smoke_pkg_path "luci-i18n-fcc[-_]*.$SMOKE_EXT")"
 
 printf 'smoke: %s on %s (%s)\n' "$SMOKE_IMAGE" "$SMOKE_PLATFORM" "$SMOKE_EXT"
 printf 'smoke: package %s\n' "$SMOKE_APP"
+printf 'smoke: package %s\n' "$SMOKE_I18N"
 
 # A locally imported rootfs carries whatever platform `docker import` recorded,
 # which is the host's unless it was told otherwise. Asking to run it as anything
@@ -333,9 +343,16 @@ fi
 
 smoke_note "installing"
 docker cp "$SMOKE_APP" "$SMOKE_NAME:$SMOKE_STAGE/app.$SMOKE_EXT"
+docker cp "$SMOKE_I18N" "$SMOKE_NAME:$SMOKE_STAGE/i18n.$SMOKE_EXT"
 _sm_rc=0
 smoke_install "$SMOKE_STAGE/app.$SMOKE_EXT" || _sm_rc=$?
 smoke_check "the package installs" 0 "$_sm_rc"
+
+# Installed second, and separately, because that is how it is meant to arrive:
+# on its own, without the app present, and with nothing else to carry it.
+_sm_rc=0
+smoke_install "$SMOKE_STAGE/i18n.$SMOKE_EXT" || _sm_rc=$?
+smoke_check "the translation installs as a package of its own" 0 "$_sm_rc"
 
 # Neither package manager runs the package's post-install text on its own: both
 # wrap it, and both wrappers call default_postinst() from /lib/functions.sh
@@ -720,13 +737,41 @@ case "$_sm_platmodel" in
 esac
 
 # ---------------------------------------------------------------------------
-# The translation, which ships inside the package rather than beside it
+# The translation, which ships in a package of its own
+#
+# Both halves of the split are checked. The catalogue being present is what
+# makes the Chinese interface work; the app not carrying it is what makes the
+# split real, and it is the half that would regress silently — a po2lmo line
+# left in the app's install block puts the .lmo back in the .ipk, both packages
+# install, and every other check in this file stays green.
 # ---------------------------------------------------------------------------
 
 smoke_note "the translation"
 _sm_rc=0
 smoke_sh '[ -s /usr/lib/lua/luci/i18n/fcc.zh-cn.lmo ]' || _sm_rc=$?
-smoke_check "the compiled zh-cn catalogue arrived with the package" 0 "$_sm_rc"
+smoke_check "the compiled zh-cn catalogue is installed" 0 "$_sm_rc"
+
+# Which package owns the file, asked of the package manager rather than guessed
+# from the filesystem. opkg keeps a per-package file list in
+# /usr/lib/opkg/info/<name>.list; apk answers with `apk info -L <name>`. Both are
+# exact, and neither needs the other package to be present to be readable.
+_sm_rc=0
+smoke_sh 'if [ -f /usr/lib/opkg/info/luci-i18n-fcc-zh-cn.list ]; then
+		grep -q fcc.zh-cn.lmo /usr/lib/opkg/info/luci-i18n-fcc-zh-cn.list
+	else
+		apk info -L luci-i18n-fcc-zh-cn 2>/dev/null | grep -q fcc.zh-cn.lmo
+	fi' || _sm_rc=$?
+smoke_check "the catalogue came from its own package" 0 "$_sm_rc"
+
+# And the other half of the split: the app must not carry it. This is the half
+# that would regress silently.
+_sm_rc=0
+smoke_sh 'if [ -f /usr/lib/opkg/info/luci-app-fcc.list ]; then
+		! grep -q fcc.zh-cn.lmo /usr/lib/opkg/info/luci-app-fcc.list
+	else
+		! apk info -L luci-app-fcc 2>/dev/null | grep -q fcc.zh-cn.lmo
+	fi' || _sm_rc=$?
+smoke_check "the app package does not carry the catalogue itself" 0 "$_sm_rc"
 
 # ---------------------------------------------------------------------------
 # Removal

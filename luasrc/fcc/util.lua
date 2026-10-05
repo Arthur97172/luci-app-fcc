@@ -120,13 +120,56 @@ end
 -- the process exists, which is what it asked for.
 --
 -- When it cannot be started at all, the *reason* is returned alongside the nil
--- rather than left to be inferred. "could not start the job" is true of four
+-- rather than left to be inferred. "could not start the job" is true of several
 -- different situations — the script is not installed, it is not executable, the
--- shell cannot be forked, the shell forked but said nothing — and each has a
--- different fix. The message a person reads is the only part of this that
+-- shell cannot be forked, the shell complained while starting the job — and each
+-- has a different fix. The message a person reads is the only part of this that
 -- reaches them.
 --
--- @return pid (number) on success; nil plus a reason string on failure
+--- What the wrapper shell's output means.
+--
+-- Split out of spawn_detached() so the decision can be tested directly. The
+-- three answers are "here is the pid", "the shell complained" and "the shell
+-- said nothing", and only the middle one is a failure — arranging for a real
+-- shell to produce each of them in turn is not something a test can do.
+--
+-- The silence case is the one that used to be a failure and must not be. The
+-- pid was never the evidence that a job started; the job's own lock and its own
+-- log are. Reading "no pid" as "did not start" is what put
+--
+--   could not start the job: the shell reported no process id
+--
+-- on the page for an install that went on to write its entire log, run to the
+-- end and fail on its own terms — a sentence about the wrapper, for work that
+-- had happened.
+--
+-- EOF on the pipe means the wrapper shell ran to completion, and a wrapper that
+-- failed cannot be silent: the group's `2>&1` folds the shell's own diagnostics
+-- into that same pipe, so a redirection it could not make, a `setsid` that
+-- turned out not to be executable, or a fork refused by the process limit all
+-- arrive as text. Text is therefore the decidable case and stays a failure, with
+-- the shell's own words as the reason; an empty read is the ambiguous one, and
+-- the caller settles it with the job's evidence rather than with the absence of
+-- a number.
+--
+-- 0 rather than nil for "started, pid unknown", because the caller's failure
+-- branch is `if not pid` and 0 is truthy in Lua. The two cannot be confused by
+-- accident.
+--
+-- @return pid (number, possibly 0) on success; nil plus a reason on failure
+function parse_spawn_output(out)
+	out = out or ""
+	local pid = tonumber(out:match("FCCPID%s+(%d+)"))
+	if pid then return pid end
+	local said = out:gsub("%s+$", "")
+	if said ~= "" then
+		return nil, "the shell reported no process id: " .. said
+	end
+	return 0
+end
+
+-- @return pid (number) on success — 0 when the job started but the wrapper shell
+--         did not name its pid — or nil plus a reason string on failure
 function spawn_detached(cmd, args, logfile)
 	if type(cmd) ~= "string" or cmd == "" then
 		return nil, "no command was given"
@@ -171,13 +214,7 @@ function spawn_detached(cmd, args, logfile)
 	local out = fh:read("*a") or ""
 	fh:close()
 
-	local pid = tonumber(out:match("FCCPID%s+(%d+)"))
-	if not pid then
-		local said = out:gsub("%s+$", "")
-		return nil, "the shell reported no process id" ..
-			(said ~= "" and (": " .. said) or "")
-	end
-	return pid
+	return parse_spawn_output(out)
 end
 
 -- ---------------------------------------------------------------------------
@@ -311,6 +348,18 @@ JOB_MARKER = "===== fcc job start "
 --- The marker line for a run that is about to start.
 function job_marker_line(label)
 	return JOB_MARKER .. os.date("!%Y-%m-%dT%H:%M:%SZ") .. ": " .. label .. " ====="
+end
+
+--- A line the controller adds to a job's log to record something the job itself
+--- cannot know.
+--
+-- Distinct from job_marker_line() on purpose: current_run() cuts at the last
+-- marker, so a note that looked like one would discard the run it was written
+-- for. The timestamp is there because a note can be written after the fork and
+-- therefore appear among the job's own output, where the order of the file is
+-- not the order of events.
+function job_note_line(text)
+	return "--- fcc: " .. os.date("!%Y-%m-%dT%H:%M:%SZ") .. ": " .. text
 end
 
 --- The part of a log tail that belongs to the most recent run.
