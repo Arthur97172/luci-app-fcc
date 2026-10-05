@@ -290,6 +290,24 @@ esac
 [ -z "$_cpu_khz_max" ] && _cpu_khz_max="$_cpu_khz"
 [ -n "$_cpu_khz_max" ] && cpu_mhz_max=$(( _cpu_khz_max / 1000 ))
 
+# The core temperature (section 15's System list). The reader returns the value
+# and the sensor it came from as one answer, because the name is only meaningful
+# beside the reading it belongs to — a board with several sensors would otherwise
+# have the page attribute one sensor's number to another's name.
+#
+# It is empty, not zero, when nothing answers: section 44 again. A board with no
+# thermal zone and no hwmon is a board whose page shows a dash.
+cpu_temp_mc=""
+cpu_temp_source=""
+_cpu_temp="$(fcc_cpu_temp_mc)" || _cpu_temp=""
+if [ -n "$_cpu_temp" ]; then
+	cpu_temp_mc="${_cpu_temp%%|*}"
+	cpu_temp_source="${_cpu_temp#*|}"
+fi
+case "$cpu_temp_mc" in
+	''|*[!0-9-]*) cpu_temp_mc="" ;;
+esac
+
 # Build the process maps ONCE (no per-agent forks).
 #
 # pane_dead/pane_dead_status ride along on the map we already fetch, which is
@@ -332,7 +350,7 @@ COMM_MAP="$(build_comm_map)"
 	case "$session_count" in ''|*[!0-9]*) session_count=0 ;; esac
 	printf '  "sessions": {"active": %s},\n' "$session_count"
 
-	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s, "platform": %s, "platform_model": %s, "cpu_model": %s, "cpu_mhz": %s, "cpu_mhz_max": %s, "cpu_cores": %s},\n' \
+	printf '  "system": {"memory_total_kb": %s, "memory_available_kb": %s, "storage_total_bytes": %s, "storage_free_bytes": %s, "storage_used_bytes": %s, "storage_path": %s, "arch": %s, "platform": %s, "platform_model": %s, "cpu_model": %s, "cpu_mhz": %s, "cpu_mhz_max": %s, "cpu_cores": %s, "cpu_temp_mc": %s, "cpu_temp_source": %s},\n' \
 		"$(fcc_json_num_or_null "$mem_total")" \
 		"$(fcc_json_num_or_null "$mem_avail")" \
 		"$st_total_b" "$st_free_b" "$st_used_b" \
@@ -343,7 +361,9 @@ COMM_MAP="$(build_comm_map)"
 		"$(fcc_json_str_or_null "$cpu_model")" \
 		"$(fcc_json_num_or_null "$cpu_mhz")" \
 		"$(fcc_json_num_or_null "$cpu_mhz_max")" \
-		"$(fcc_json_num_or_null "$cpu_cores")"
+		"$(fcc_json_num_or_null "$cpu_cores")" \
+		"$(fcc_json_num_or_null "$cpu_temp_mc")" \
+		"$(fcc_json_str_or_null "$cpu_temp_source")"
 
 	printf '  "agents": {'
 	_ag_first=1

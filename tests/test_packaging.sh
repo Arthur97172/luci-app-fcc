@@ -333,21 +333,23 @@ test_agent_picker_is_the_agent_table() {
 # The System list on Basic Information
 #
 # Section 15's System list, in the order the page shows it: what the CPU is,
-# what platform it sits on, which architecture that is, and then the two pools
-# of space. There is no DOM harness here, so the order is pinned against the
-# renderer that produces it: the cards are appended in source order, which makes
-# reading them off the source the same question as reading them off the page.
+# how hot it is, what platform it sits on, which architecture that is, and then
+# the two pools of space. The temperature belongs directly under the CPU because
+# it is a reading *of* that CPU. There is no DOM harness here, so the order is
+# pinned against the renderer that produces it: the cards are appended in source
+# order, which makes reading them off the source the same question as reading
+# them off the page.
 # ---------------------------------------------------------------------------
 
-test_system_list_is_ordered_cpu_platform_arch_memory_storage() {
+test_system_list_is_ordered_cpu_temp_platform_arch_memory_storage() {
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"
 
 	_ts_order="$(sed -n '/^	function renderSystem/,/^	}$/p' "$_ts_js" \
 		| grep -o "card(FCC\._('[^']*')" | sed "s/^card(FCC\._('//; s/')$//" \
 		| tr '\n' ',' | sed 's/,$//')"
 
-	assert_eq "CPU,Platform,Architecture,Memory,Storage" "$_ts_order" \
-		"the System cards are CPU, Platform, Architecture, Memory and Storage, in that order"
+	assert_eq "CPU,Temperature,Platform,Architecture,Memory,Storage" "$_ts_order" \
+		"the System cards are CPU, Temperature, Platform, Architecture, Memory and Storage, in that order"
 }
 
 # ---------------------------------------------------------------------------

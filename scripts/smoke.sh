@@ -736,6 +736,31 @@ case "$_sm_platmodel" in
 	*)         smoke_bad "the board model is null or a quoted string (got '$_sm_platmodel')" ;;
 esac
 
+# The core temperature, the card that sits directly under the CPU. Whether a
+# sensor answers at all is a property of the machine, so the value cannot be
+# pinned here — but its *type* can, and the type is the half that regresses: a
+# reading that silently became a string, or a sensor that is not there reported
+# as 0 instead of null, would render as a number either way. Section 44 again,
+# checked on a device that really has a /sys to read.
+_sm_temp="$(smoke_out 'sh /usr/libexec/fcc/status.sh' \
+	| sed -n 's/.*"cpu_temp_mc": \([^,]*\).*/\1/p')"
+case "$_sm_temp" in
+	null)         smoke_ok "the core temperature is null where no sensor answers" ;;
+	''|*[!0-9-]*) smoke_bad "cpu_temp_mc should be null or a whole number of millidegrees (got '$_sm_temp')" ;;
+	*)            smoke_ok "the core temperature is a whole number of millidegrees ($_sm_temp)" ;;
+esac
+
+# The sensor travels with the reading, so the page's sub-line can say where the
+# number came from. null when there is none, never an empty string: the page
+# renders '' as a blank sub-line and null as no sub-line, and the two should not
+# be the same answer.
+_sm_tempsrc="$(smoke_out 'sh /usr/libexec/fcc/status.sh' \
+	| sed -n 's/.*"cpu_temp_source": \([^}]*\).*/\1/p')"
+case "$_sm_tempsrc" in
+	null|'"'*) smoke_ok "the temperature names its sensor, or null ($_sm_tempsrc)" ;;
+	*)         smoke_bad "cpu_temp_source should be null or a quoted string (got '$_sm_tempsrc')" ;;
+esac
+
 # ---------------------------------------------------------------------------
 # The translation, which ships in a package of its own
 #

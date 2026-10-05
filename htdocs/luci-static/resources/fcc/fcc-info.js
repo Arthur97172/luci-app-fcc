@@ -40,6 +40,23 @@
 		return bits.join(' · ');
 	}
 
+	/* The kernel reports the core temperature in thousandths of a degree, which
+	 * is the unit sysfs itself uses; turning it into something a person reads is
+	 * this page's job and nowhere else's. One decimal is all the precision there
+	 * is to show — sensors are not accurate to a hundredth of a degree, and a
+	 * number that twitches in its last digit on every poll reads as noise.
+	 *
+	 * A board with no sensor gets the dash rather than a zero. The backend sends
+	 * null for exactly that case, and section 44 is why: 0.0 °C looks like a
+	 * reading. */
+	function tempText(s) {
+		var mc = s.cpu_temp_mc;
+		if (mc === null || mc === undefined || mc === '') { return '—'; }
+		var c = Number(mc) / 1000;
+		if (!isFinite(c)) { return '—'; }
+		return c.toFixed(1) + ' °C';
+	}
+
 	function renderSystem(s) {
 		var box = FCC.$('#fcc-info-system');
 		box.innerHTML = '';
@@ -49,6 +66,12 @@
 		 * only place the name exists on a board whose cpuinfo names no CPU
 		 * (arm64), so a dash here means neither source had one. */
 		box.appendChild(card(FCC._('CPU'), s.cpu_model || '—', cpuDetail(s)));
+		/* The CPU's own heat, directly under the CPU. The sub-line names the
+		 * sensor the reading came from, because a board can have several — a
+		 * radio, a modem, a charger — and the backend prefers the one that names
+		 * the CPU but falls back to whichever answers. A bare number would be a
+		 * reading the page cannot say the origin of. */
+		box.appendChild(card(FCC._('Temperature'), tempText(s), s.cpu_temp_source || ''));
 		/* What the CPU sits on, then what the build targets. The two are
 		 * different questions and the answers differ: one board's target covers
 		 * a family of boards, and one architecture covers many targets. The

@@ -246,6 +246,13 @@ test_json_helpers() {
 	assert_eq "null"  "$(sh_common 'fcc_json_num_or_null ""')"    "empty is null"
 	assert_eq "null"  "$(sh_common 'fcc_json_num_or_null abc')"   "non-numeric is null"
 	assert_eq "42"    "$(sh_common 'fcc_json_num_or_null 42')"    "a number passes through"
+	# A core temperature is a signed reading, so a minus has to survive — and
+	# only in front, and only one. Everything else is a document-building caller
+	# getting a null, not an error.
+	assert_eq "-5000" "$(sh_common 'fcc_json_num_or_null -5000')" "a negative number passes through"
+	assert_eq "null"  "$(sh_common 'fcc_json_num_or_null -')"      "a bare minus is null"
+	assert_eq "null"  "$(sh_common 'fcc_json_num_or_null -5-0')"   "a minus in the middle is null"
+	assert_eq "null"  "$(sh_common 'fcc_json_num_or_null 1.5')"    "a decimal is null"
 	assert_eq "null"  "$(sh_common 'fcc_json_str_or_null ""')"    "empty is null"
 	assert_eq '"x"'   "$(sh_common 'fcc_json_str_or_null x')"     "a value is quoted"
 }
@@ -564,6 +571,157 @@ test_cpu_dt_model_reads_the_cpu_nodes_compatible() {
 		"a node that is not there says nothing at all"
 }
 
+# ---------------------------------------------------------------------------
+# Core temperature
+# ---------------------------------------------------------------------------
+
+test_temp_read_mc_parses_sysfs_millidegrees() {
+	setup_sandbox
+	# sysfs reports thousandths of a degree as text, so this is a text parser and
+	# every refusal below is a real case rather than defensive padding.
+	printf '48000\n' > "$SANDBOX/t48000"
+	assert_eq "48000" "$(sh_common "fcc_temp_read_mc $SANDBOX/t48000")" \
+		"a plausible reading is passed through in millidegrees"
+
+	# Leading zeros are octal to the shell's arithmetic, so "048000" would be a
+	# syntax error in ash — and a syntax error here takes the whole status script,
+	# and the page that reads it, down with it.
+	printf '048000\n' > "$SANDBOX/t-lead"
+	assert_eq "48000" "$(sh_common "fcc_temp_read_mc $SANDBOX/t-lead")" \
+		"leading zeros are stripped rather than fed to the arithmetic"
+
+	# A device in a cold room reads below zero, and a negative number is still a
+	# reading. Turning it into nothing would make a sensor that answered look
+	# like one that is not there.
+	printf -- '-5000\n' > "$SANDBOX/t-neg"
+	assert_eq "-5000" "$(sh_common "fcc_temp_read_mc $SANDBOX/t-neg")" \
+		"a negative reading survives"
+
+	# Zero is how a driver with nothing to say answers, and a running core is
+	# never at 0 °C — so it is refused rather than shown as 0.0 °C, which would
+	# look like a reading (section 44). All three spellings are the same reading.
+	for _tr_z in 0 00 -0; do
+		printf '%s\n' "$_tr_z" > "$SANDBOX/t-zero"
+		assert_no "a reading of [$_tr_z] is refused" \
+			sh_common "fcc_temp_read_mc $SANDBOX/t-zero >/dev/null"
+	done
+
+	# The markers a broken or unpopulated sensor reports, at both ends of the
+	# range. In range is -100 °C .. 200 °C exclusive, so the two endpoints are
+	# themselves refused.
+	printf '200000\n' > "$SANDBOX/t-hot"
+	assert_no "200 °C is refused as out of range" \
+		sh_common "fcc_temp_read_mc $SANDBOX/t-hot >/dev/null"
+	printf -- '-100000\n' > "$SANDBOX/t-cold"
+	assert_no "-100 °C is refused as out of range" \
+		sh_common "fcc_temp_read_mc $SANDBOX/t-cold >/dev/null"
+
+	# The widest reading that is still in range, so the length guard is pinned
+	# against the arithmetic rather than only against garbage.
+	printf '199999\n' > "$SANDBOX/t-max"
+	assert_eq "199999" "$(sh_common "fcc_temp_read_mc $SANDBOX/t-max")" \
+		"the top of the range is accepted"
+
+	printf 'abcdef\n' > "$SANDBOX/t-abc"
+	assert_no "a non-numeric reading is refused" \
+		sh_common "fcc_temp_read_mc $SANDBOX/t-abc >/dev/null"
+	printf '48 000\n' > "$SANDBOX/t-space"
+	assert_no "a reading with a space in it is refused" \
+		sh_common "fcc_temp_read_mc $SANDBOX/t-space >/dev/null"
+	: > "$SANDBOX/t-empty"
+	assert_no "an empty reading is refused" \
+		sh_common "fcc_temp_read_mc $SANDBOX/t-empty >/dev/null"
+	printf '9999999\n' > "$SANDBOX/t-wide"
+	assert_no "a value too wide for the arithmetic is refused" \
+		sh_common "fcc_temp_read_mc $SANDBOX/t-wide >/dev/null"
+	assert_no "a missing file is refused" \
+		sh_common "fcc_temp_read_mc $SANDBOX/nonexistent >/dev/null"
+	assert_no "an empty argument is refused" \
+		sh_common 'fcc_temp_read_mc "" >/dev/null'
+}
+
+test_temp_name_is_cpu_knows_the_cpu_sensors() {
+	setup_sandbox
+	# The zone names the kernel actually uses for a CPU, one per family: the
+	# generic device-tree ones, the x86 package sensors and the AMD ones.
+	for _tr_n in cpu-thermal cpu_thermal soc-thermal x86_pkg_temp coretemp \
+		k10temp zenpower cluster0 CPU-THERMAL; do
+		assert_ok "[$_tr_n] names the CPU" sh_common "fcc_temp_name_is_cpu '$_tr_n'"
+	done
+	# And the ones that are a different part of the board. A radio or a modem is
+	# a real sensor, but it is not the core, and the page says which it is.
+	for _tr_n in wifi radio modem charger battery acpitz nvme; do
+		assert_no "[$_tr_n] does not name the CPU" \
+			sh_common "fcc_temp_name_is_cpu '$_tr_n'"
+	done
+	assert_no "an empty name does not" sh_common "fcc_temp_name_is_cpu ''"
+}
+
+test_cpu_temp_mc_prefers_the_cpu_sensor() {
+	setup_sandbox
+	# The two sysfs layouts are fixtures, because no machine running these tests
+	# is a router with both — and the *choice* between them is the whole point of
+	# the function, so it has to be exercised where both are present.
+	_tr_zone() {  # <index> <name> <millidegrees>
+		mkdir -p "$SANDBOX/thermal/thermal_zone$1"
+		printf '%s\n' "$2" > "$SANDBOX/thermal/thermal_zone$1/type"
+		printf '%s\n' "$3" > "$SANDBOX/thermal/thermal_zone$1/temp"
+	}
+	_tr_hw() {  # <n> <name> <millidegrees>
+		mkdir -p "$SANDBOX/hwmon/hwmon$1"
+		printf '%s\n' "$2" > "$SANDBOX/hwmon/hwmon$1/name"
+		printf '%s\n' "$3" > "$SANDBOX/hwmon/hwmon$1/temp1_input"
+	}
+	_tr_read() {
+		sh_common "FCC_THERMAL_DIR=$SANDBOX/thermal FCC_HWMON_DIR=$SANDBOX/hwmon fcc_cpu_temp_mc"
+	}
+
+	# The answer is the value and the sensor's name together: the name is only
+	# meaningful beside the reading it belongs to.
+	_tr_zone 0 cpu-thermal 48000
+	assert_eq "48000|cpu-thermal" "$(_tr_read)" \
+		"a CPU zone is reported with its own name"
+
+	# A zone that is not the CPU is still used when nothing better is there, and
+	# the name goes with it so the page can say where the number came from.
+	rm -rf "$SANDBOX/thermal"
+	_tr_zone 0 acpitz 39000
+	assert_eq "39000|acpitz" "$(_tr_read)" \
+		"a zone that is not the CPU is the fallback, named"
+
+	# A CPU-named zone wins even when it is not the first one, which is the case
+	# the loop exists for: a board whose radio zone is registered first.
+	rm -rf "$SANDBOX/thermal"
+	_tr_zone 0 wifi 55000
+	_tr_zone 1 cpu-thermal 47000
+	assert_eq "47000|cpu-thermal" "$(_tr_read)" \
+		"a CPU zone later in the list beats an earlier one that is not"
+
+	# A zone whose reading is refused does not shadow a later CPU zone.
+	rm -rf "$SANDBOX/thermal"
+	_tr_zone 0 acpitz 0
+	_tr_zone 1 soc-thermal 51000
+	assert_eq "51000|soc-thermal" "$(_tr_read)" \
+		"a zone reading zero is skipped rather than reported"
+
+	# hwmon is the second layout, tried when there is no zone at all.
+	rm -rf "$SANDBOX/thermal"
+	_tr_hw 0 coretemp 45000
+	assert_eq "45000|coretemp" "$(_tr_read)" \
+		"an hwmon CPU sensor answers when there is no thermal zone"
+
+	# And a zone, even a non-CPU one, beats hwmon — because a zone is what a
+	# cooling device acts on, so it is the one the fan is actually following.
+	_tr_zone 0 acpitz 39000
+	assert_eq "39000|acpitz" "$(_tr_read)" \
+		"a thermal zone is preferred over hwmon"
+
+	# No sensor anywhere is not an error: the page shows its dash.
+	rm -rf "$SANDBOX/thermal" "$SANDBOX/hwmon"
+	assert_no "a board with no sensor at all yields nothing" \
+		sh_common "FCC_THERMAL_DIR=$SANDBOX/thermal FCC_HWMON_DIR=$SANDBOX/hwmon fcc_cpu_temp_mc >/dev/null"
+}
+
 test_status_falls_back_to_the_device_tree_for_the_cpu_rate() {
 	setup_sandbox
 	# The AN7581 case, end to end. OpenWrt 24.10 builds the EN7581 cpufreq
@@ -697,6 +855,46 @@ test_status_document_reports_the_cpu() {
 		''|*[!0-9]*) fail "cpu_mhz should be null or a whole number of MHz, got [$_tr_mhz]" ;;
 		*) pass ;;
 	esac
+}
+
+test_status_document_reports_the_temperature() {
+	setup_sandbox
+	# Basic Information shows the core temperature from this document, so the two
+	# fields have to be here and correctly typed. The sensor is a fixture rather
+	# than the machine's own: a laptop has thermal zones of its own, and a test
+	# that read them would be asserting whatever this box happens to be doing.
+	mkdir -p "$SANDBOX/thermal/thermal_zone0" "$SANDBOX/no-thermal" "$SANDBOX/no-hwmon"
+	printf 'cpu-thermal\n' > "$SANDBOX/thermal/thermal_zone0/type"
+	printf '48500\n' > "$SANDBOX/thermal/thermal_zone0/temp"
+
+	_tr_run() {
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_THERMAL_DIR="$1" FCC_HWMON_DIR="$2" \
+		sh "$LIBEXEC/status.sh" 2>&1 | grep '"system":'
+	}
+
+	_tr_sys="$(_tr_run "$SANDBOX/thermal" "$SANDBOX/no-hwmon")"
+	assert_contains "$_tr_sys" '"cpu_temp_mc": 48500' \
+		"the reading reaches the document in millidegrees"
+	assert_contains "$_tr_sys" '"cpu_temp_source": "cpu-thermal"' \
+		"the sensor the reading came from is named beside it"
+
+	# Section 44: a board with no sensor reports null, never a zero — and null is
+	# what makes the page show its dash rather than 0.0 °C.
+	_tr_sys="$(_tr_run "$SANDBOX/no-thermal" "$SANDBOX/no-hwmon")"
+	assert_contains "$_tr_sys" '"cpu_temp_mc": null' \
+		"a board with no sensor reports null rather than zero"
+	assert_contains "$_tr_sys" '"cpu_temp_source": null' \
+		"and names no sensor"
+
+	# The two fields travel together: a name with no reading would have the page
+	# label a number it does not have.
+	_tr_sys="$(_tr_run "$SANDBOX/thermal" "$SANDBOX/no-hwmon")"
+	_tr_name="$(printf '%s\n' "$_tr_sys" | sed -e 's/.*"cpu_temp_source": //' -e 's/}.*//')"
+	_tr_mc="$(printf '%s\n' "$_tr_sys" | sed -e 's/.*"cpu_temp_mc": //' -e 's/,.*//')"
+	assert_eq '"cpu-thermal"' "$_tr_name" "the source is a JSON string"
+	assert_eq '48500' "$_tr_mc" "the reading is a JSON number"
 }
 
 test_status_document_reports_the_platform() {

@@ -297,6 +297,9 @@ msgstr ""
 msgid "System"
 msgstr ""
 
+msgid "Temperature"
+msgstr ""
+
 msgid "Terminal connection lost."
 msgstr ""
 

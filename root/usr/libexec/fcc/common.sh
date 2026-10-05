@@ -49,10 +49,18 @@ FCC_SESSION_PREFIX="fcc-"
 # not install slowly, it fails part-way, and the failure arrives as an installer
 # error rather than as "not enough space".
 #
-# This replaces the 512 MB the spec recorded as the enforced floor. That figure
-# was written before anything was measured, and the measurement above puts it
-# 200 MB short — see DESIGN_SPEC.md section 54.
-FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-768}"
+# The floor is a round 1 GB rather than the 741 MB measured, and the gap is the
+# point: that figure is one agent at one moment. A second agent adds its own
+# tool, a new release is larger than the last, and uv's cache grows with the
+# Python it builds — while the cost of guessing low is an install that dies
+# half-way and leaves a partial runtime on the device. 1 GB is also a number a
+# person can hold against their free space without doing arithmetic.
+#
+# This replaces the 768 MB that followed the first measurement, which in turn
+# replaced the 512 MB the spec had recorded. 512 was written before anything was
+# measured and sits 200 MB under the peak; 768 covered the peak but nothing
+# above it. See DESIGN_SPEC.md section 54.
+FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-1024}"
 
 fcc_die() { printf '%s\n' "fcc: $*" >&2; return 1; }
 
@@ -197,9 +205,21 @@ fcc_json_bool() {
 }
 
 fcc_json_num_or_null() {
-	case "$1" in
+	# A whole number, or null. One leading minus is allowed, because a core
+	# temperature is a signed reading: a device in a cold room reports below
+	# zero, and turning that into null would make a sensor that answered look
+	# like one that is not there (section 44). Nothing else is a number — a
+	# bare minus, a minus in the middle, a decimal point — and every one of
+	# those is null rather than an error, because the caller is building a
+	# document, not validating input.
+	_jn_v="$1"
+	_jn_sign=""
+	case "$_jn_v" in
+		-*) _jn_v="${_jn_v#-}"; _jn_sign="-" ;;
+	esac
+	case "$_jn_v" in
 		''|*[!0-9]*) printf 'null' ;;
-		*)           printf '%s' "$1" ;;
+		*)           printf '%s%s' "$_jn_sign" "$_jn_v" ;;
 	esac
 }
 
@@ -921,6 +941,180 @@ fcc_cpu_dt_model() {
 	}' <<-EOF
 	$_fcm_v
 	EOF
+}
+
+# ---------------------------------------------------------------------------
+# The core temperature (DESIGN_SPEC.md section 15's System list)
+#
+# Two places can hold the reading and OpenWrt boards use one or the other, so
+# both are asked:
+#
+#   thermal zones  /sys/class/thermal/thermal_zone*/{type,temp}
+#   hwmon          /sys/class/hwmon/hwmon*/{name,temp1_input}
+#
+# A board usually registers several zones and the CPU is not necessarily the
+# first: a WiFi radio, a modem or a charger has one too, and the numbering
+# follows probe order. So a sensor whose *name* says CPU or SoC wins, and the
+# first one that reads at all is the fallback — a radio's temperature is still a
+# better answer than a dash, as long as the page says which sensor it came from,
+# which is why the name travels back with the value.
+#
+# Both roots are overridable for the same reason as FCC_SYS_CPU: the machine
+# running the tests has thermal zones of its own, so without these the code path
+# a router depends on could not be exercised at all.
+# ---------------------------------------------------------------------------
+fcc_thermal_dir() {
+	# fcc_thermal_dir -> the kernel's thermal-zone root.
+	printf '%s' "${FCC_THERMAL_DIR:-/sys/class/thermal}"
+}
+
+fcc_hwmon_dir() {
+	# fcc_hwmon_dir -> the kernel's hwmon root. The second registration path for
+	# the same silicon: coretemp and k10temp on x86, several SoC drivers on ARM,
+	# and on some kernels the only one of the two that exists.
+	printf '%s' "${FCC_HWMON_DIR:-/sys/class/hwmon}"
+}
+
+fcc_temp_name_is_cpu() {
+	# fcc_temp_name_is_cpu <sensor name> -> true when the name says the sensor
+	# belongs to the CPU.
+	#
+	# Folded to lower case because the kernel's spellings differ by driver:
+	# "cpu-thermal" and "cpu_thermal" (the device-tree thermal driver),
+	# "soc-thermal", "x86_pkg_temp" (Intel), "coretemp" and "k10temp" (the hwmon
+	# names for the same sensor), "zenpower", and "cluster0" on some big.LITTLE
+	# SoCs. The list is deliberately about names that *say* CPU: a name that says
+	# nothing falls through to the first-that-reads fallback, which is the honest
+	# answer for a board whose sensors are all anonymous.
+	case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+		*cpu*|*soc*|*core*|*pkg*|*cluster*|*x86*|*zen*|*k10*) return 0 ;;
+	esac
+	return 1
+}
+
+fcc_temp_sensor_name() {
+	# fcc_temp_sensor_name <file> -> the name in it, or nothing.
+	#
+	# `read` rather than `cat`: these files hold one line, and section 3.8 keeps
+	# this script to a handful of processes on a poll that runs every two
+	# seconds. The -r test comes first because the shell prints its own message
+	# when a redirection fails, and that message would land in the runtime log —
+	# the same trap fcc_cpu_dt_model documents.
+	[ -r "$1" ] || return 1
+	_tsn_v=""
+	IFS= read -r _tsn_v 2>/dev/null < "$1" || :
+	printf '%s' "$_tsn_v"
+}
+
+fcc_temp_read_mc() {
+	# fcc_temp_read_mc <file> -> the millidegrees it holds, if that is a
+	# temperature at all.
+	#
+	# sysfs prints one bare integer in thousandths of a degree Celsius, and that
+	# is the unit kept here: it is what the kernel says, and a shell has no
+	# business rounding it into a decimal string. The page is where it becomes
+	# something a person reads.
+	#
+	# Section 44 is why this refuses rather than passes through. A sensor that
+	# has failed does not go quiet — several drivers report 0, and the "invalid"
+	# markers sit far outside any real range — and a page showing 0.0 °C for a
+	# dead sensor is worse than one showing a dash, because it looks like a
+	# reading. So: anything outside -100 °C .. 200 °C is not a core temperature,
+	# and neither is exactly zero.
+	#
+	# Every step here is a shell builtin. That matters more than it looks: this
+	# runs once per sensor per poll, and a process apiece would be the largest
+	# thing this script does.
+	[ -r "$1" ] || return 1
+	_rmc_v=""
+	IFS= read -r _rmc_v 2>/dev/null < "$1" || :
+	case "$_rmc_v" in
+		-*) _rmc_neg=1; _rmc_v="${_rmc_v#-}" ;;
+		*)  _rmc_neg=0 ;;
+	esac
+	# One pattern covers both the empty file and the trailing whitespace a
+	# non-sysfs file might carry: neither is a number, and the arithmetic below
+	# would be a syntax error on either.
+	case "$_rmc_v" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	# Leading zeros are octal to the arithmetic below, so they are stripped
+	# rather than fed to it: "048000" is a syntax error in ash, and it would take
+	# the whole status script — and the page that reads it — down with it.
+	while :; do
+		case "$_rmc_v" in
+			0?*) _rmc_v="${_rmc_v#0}" ;;
+			*) break ;;
+		esac
+	done
+	[ -n "$_rmc_v" ] || return 1
+	# Seven digits is 1000 °C whatever the sign, so the length check spares the
+	# arithmetic a value wider than a 32-bit router's shell has to carry.
+	[ "${#_rmc_v}" -le 6 ] || return 1
+	_rmc_n=$(( _rmc_v ))
+	# Exactly zero is refused here, and the test is on the number rather than on
+	# the text: "0", "00" and "-0" are the same reading and all three are the
+	# driver saying it has nothing. A running core is never at 0 °C, so this is
+	# the one in-range value that means "no data" rather than "cold".
+	[ "$_rmc_n" -ne 0 ] || return 1
+	if [ "$_rmc_neg" = 1 ]; then
+		[ "$_rmc_n" -lt 100000 ] || return 1
+		_rmc_n=$(( 0 - _rmc_n ))
+	else
+		[ "$_rmc_n" -lt 200000 ] || return 1
+	fi
+	printf '%s' "$_rmc_n"
+}
+
+fcc_cpu_temp_mc() {
+	# fcc_cpu_temp_mc -> "<millidegrees>|<which sensor>", or nothing.
+	#
+	# The pair is one answer rather than two because the name is only meaningful
+	# for the value it came with: the caller that shows a number has to be able
+	# to say where it came from, and a board with two sensors would otherwise
+	# report the first one's name beside the second one's reading.
+	#
+	# Zones first, hwmon second. Both are the kernel's own view of the same
+	# silicon, but a thermal zone is the one with a cooling device attached to
+	# it, so on a board that has both it is the one that reflects what the
+	# governor is acting on.
+	_tp_any=""
+	_tp_anyname=""
+	for _tp_z in "$(fcc_thermal_dir)"/thermal_zone*; do
+		[ -d "$_tp_z" ] || continue
+		_tp_v="$(fcc_temp_read_mc "$_tp_z/temp")" || continue
+		_tp_n="$(fcc_temp_sensor_name "$_tp_z/type")"
+		if fcc_temp_name_is_cpu "$_tp_n"; then
+			printf '%s|%s' "$_tp_v" "${_tp_n:-thermal}"
+			return 0
+		fi
+		if [ -z "$_tp_any" ]; then
+			_tp_any="$_tp_v"
+			_tp_anyname="$_tp_n"
+		fi
+	done
+	if [ -n "$_tp_any" ]; then
+		printf '%s|%s' "$_tp_any" "${_tp_anyname:-thermal}"
+		return 0
+	fi
+
+	_tp_any=""
+	_tp_anyname=""
+	for _tp_h in "$(fcc_hwmon_dir)"/hwmon*; do
+		[ -d "$_tp_h" ] || continue
+		_tp_v="$(fcc_temp_read_mc "$_tp_h/temp1_input")" || continue
+		_tp_n="$(fcc_temp_sensor_name "$_tp_h/name")"
+		if fcc_temp_name_is_cpu "$_tp_n"; then
+			printf '%s|%s' "$_tp_v" "${_tp_n:-hwmon}"
+			return 0
+		fi
+		if [ -z "$_tp_any" ]; then
+			_tp_any="$_tp_v"
+			_tp_anyname="$_tp_n"
+		fi
+	done
+	[ -n "$_tp_any" ] || return 1
+	printf '%s|%s' "$_tp_any" "${_tp_anyname:-hwmon}"
 }
 
 # ---------------------------------------------------------------------------

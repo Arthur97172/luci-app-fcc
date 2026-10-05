@@ -70,6 +70,14 @@ hand — the page fetches the official installer over HTTPS, records its SHA-256
 and runs it. Python, `uv` and the runtime itself are installed under the
 configured install path (`/opt/fcc` by default), never into this package.
 
+**Check the free space first: the filesystem holding the install path needs at
+least 1 GB available.** When there is less, this package refuses the install
+before downloading anything and says how much is missing, rather than letting it
+fail half-way. The runtime itself — Python 3.14, `uv`, the agents — peaks at
+around 741 MB measured, and 1 GB is that rounded up with room to spare: one more
+agent, a larger release, or a growing `uv` cache all eat into the margin, and
+guessing low leaves half a runtime on the device.
+
 The installer then asks which coding agents to install, and that conversation
 only reads `/dev/tty` — there is no flag or environment variable that skips it.
 So this package does not guess at the answers: the installer is run inside a
@@ -138,12 +146,24 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 
 `tmux` is not optional: it is the terminal backend the Web Console drives.
 
-`tar` is deliberately *not* among them. Nothing here shells out to tar — the
-runtime installer is fetched as a shell script and run, and backups are
-directory renames — and busybox already provides `/bin/tar` on every image.
-Depending on the GNU `tar` package would also make this package unselectable on
-25.12, where upstream's tar carries a variant gate (`TAR_XZ` on, `xz-utils` off
-by default) that the metadata generator copies onto every dependent.
+`tar` is deliberately *not* among them — which is not the same as the tar on the
+device being good enough. Nothing here shells out to tar: the runtime installer
+is fetched as a shell script and run, and backups are directory renames. The
+*installer* does shell out to it, though: `uv` unpacks its own release with
+`tar xf … --no-same-owner --strip-components 1`, and busybox tar implements
+neither option. It prints its usage text, exits 1, and the install stops a few
+seconds after the last question with nothing on the page but the installer's
+`uv installation failed with exit code 1`. So the *Configuration* page's
+diagnostics decide by **actually unpacking an archive**, not by reading a version
+string: a tar that supports both options (GNU tar, or libarchive's) is an OK;
+busybox tar alone is a FAIL with the install command, because the next update
+downloads `uv` again and therefore needs it.
+
+Why not simply depend on it, then? Because on 25.12 that makes this package
+unselectable: upstream's tar carries a variant gate (`TAR_XZ` on, `xz-utils` off
+by default) that the metadata generator copies onto every dependent, so the
+dependency does not resolve under any default configuration. The diagnostics
+report's FAIL plus install hint is the substitute.
 
 `bash` is deliberately *not* in that list. Upstream's installer hands five of the
 ten agents — Claude Code, OpenCode, Hermes, Grok Build and Muse Code — to their

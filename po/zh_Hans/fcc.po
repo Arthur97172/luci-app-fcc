@@ -298,6 +298,9 @@ msgstr "存储空间"
 msgid "System"
 msgstr "系统"
 
+msgid "Temperature"
+msgstr "温度"
+
 msgid "Terminal connection lost."
 msgstr "终端连接已断开。"
 
