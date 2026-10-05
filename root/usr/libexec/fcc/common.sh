@@ -37,10 +37,22 @@ FCC_SESSION_PREFIX="fcc-"
 # it before an install is allowed to start (section 3.6.4); install.sh applies
 # it again immediately before it writes (section 23 step 3).
 #
-# TEMPORARY, at the project owner's request: relaxed so the runtime can be
-# exercised on a device with 233 MB free. The enforced floor is to become
-# 512 MB once that testing is done — this is the one number to change.
-FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-64}"
+# MEASURED, not estimated. A one-agent install (Claude Code) on a stock OpenWrt
+# 24.10.4 rootfs, with no system uv, so uv and its private Python were fetched:
+#
+#     peak  741 MB          settled  585 MB
+#                           bin 54 · cache 211 · data 230 · runtime 90
+#
+# The peak is what this gate has to cover, and it is reached while the Claude
+# Code binary is being downloaded — 240 MB by its own release manifest — with
+# uv's cache and the uv-installed Python already on disk. A device below it does
+# not install slowly, it fails part-way, and the failure arrives as an installer
+# error rather than as "not enough space".
+#
+# This replaces the 512 MB the spec recorded as the enforced floor. That figure
+# was written before anything was measured, and the measurement above puts it
+# 200 MB short — see DESIGN_SPEC.md section 54.
+FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-768}"
 
 fcc_die() { printf '%s\n' "fcc: $*" >&2; return 1; }
 
@@ -413,6 +425,44 @@ fcc_agents_need_bash() {
 			*" $_anb_a "*) return 0 ;;
 		esac
 	done
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# tar: the one tool uv's own installer needs, and the one BusyBox cannot be
+# ---------------------------------------------------------------------------
+# uv's standalone installer unpacks its release archive with
+#
+#     tar xf <archive> --no-same-owner --strip-components 1 -C <dir>
+#
+# and BusyBox tar — the only tar on a stock OpenWrt image — implements neither
+# option. It prints its usage text, exits 1, and the installer's next line is
+# "uv installation failed with exit code 1." That is where the whole runtime
+# install stops: before uv, before Python, before any agent, a few seconds
+# after the last question, with the reason only ever written to the installer
+# transcript. Measured on a stock 24.10.4 rootfs: six seconds from the last
+# answer to the failure.
+#
+# The probe tests the capability rather than naming an implementation: the
+# requirement is the two options, and libarchive's tar has them as well as GNU
+# tar does. OpenWrt's `tar` package provides GNU tar and is what the hint
+# installs.
+#
+# It unpacks a real archive because that is the only question whose answer
+# matters. A version string would say "GNU tar" and be wrong the day OpenWrt
+# ships a BusyBox with the option, or the day someone puts a wrapper in PATH.
+fcc_tar_can_extract_uv_archive() {
+	_tar_dir="$(mktemp -d 2>/dev/null)" || return 1
+	mkdir -p "$_tar_dir/src/uv-x" "$_tar_dir/out" 2>/dev/null
+	: > "$_tar_dir/src/uv-x/probe" 2>/dev/null
+	( cd "$_tar_dir/src" && tar -cf "$_tar_dir/probe.tar" uv-x ) >/dev/null 2>&1
+	if tar -xf "$_tar_dir/probe.tar" --no-same-owner --strip-components 1 \
+			-C "$_tar_dir/out" >/dev/null 2>&1 &&
+		[ -f "$_tar_dir/out/probe" ]; then
+		rm -rf "$_tar_dir" 2>/dev/null
+		return 0
+	fi
+	rm -rf "$_tar_dir" 2>/dev/null
 	return 1
 }
 

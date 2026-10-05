@@ -105,7 +105,7 @@ if [ -n "$_free_mb" ] && [ "$_free_mb" -ge "$REQUIRED_FREE_MB" ]; then
 	add_result OK "Storage" "${_free_mb} MB free" ">= ${REQUIRED_FREE_MB} MB" "$_stpath"
 else
 	add_result FAIL "Storage" "${_free_mb:-?} MB free" ">= ${REQUIRED_FREE_MB} MB" \
-		"Free space at $_stpath is insufficient for the FCC runtime."
+		"Free space at $_stpath is insufficient for the FCC runtime. Install to a filesystem that has room: set the install path (uci set fcc.main.install_path=...) to a mount with ${REQUIRED_FREE_MB} MB free, such as a USB disk."
 fi
 
 # /tmp space (section 3.6.4), which is a different filesystem from the install
@@ -145,6 +145,35 @@ fi
 _uv="$(fcc_detect_version uv --version 2>/dev/null || true)"
 if [ -n "$_uv" ]; then add_result OK "uv" "$_uv" ">= 0.12.13" ""
 else add_result WARN "uv" "not found" ">= 0.12.13" "The installer will fetch uv."; fi
+
+# tar, and specifically a tar that can do what uv's installer asks of it.
+#
+# A FAIL when there is no uv, because the installer then downloads one and
+# unpacks it with `tar xf ... --no-same-owner --strip-components 1` — neither
+# option exists in BusyBox tar, which is the only tar a stock OpenWrt image
+# has. It prints its usage text, exits 1, and the installer stops with
+# "uv installation failed with exit code 1" a few seconds after the last
+# question. Nothing is installed and nothing says why on the page.
+#
+# A WARN when a uv is already on PATH, because ensure_uv() then leaves it
+# alone and no archive is unpacked. Not an OK: this package keeps its uv under
+# the runtime root, and the update path moves that directory aside before the
+# installer runs, so the next update downloads uv again — and needs the tar.
+#
+# The verdict comes from unpacking a real archive, not from a version string:
+# see fcc_tar_can_extract_uv_archive() in common.sh.
+if fcc_tar_can_extract_uv_archive; then
+	_tar_v="$(tar --version 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1 | cut -c1-40)"
+	add_result OK "tar" "${_tar_v:-present}" "supports --strip-components" ""
+elif [ -n "$_uv" ]; then
+	_tar_v="$(tar --version 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1 | cut -c1-40)"
+	add_result WARN "tar" "${_tar_v:-BusyBox tar}" "supports --strip-components" \
+		"$(fcc_pkg_install_hint tar) — needed whenever uv has to be downloaded, which every update does."
+else
+	_tar_v="$(tar --version 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1 | cut -c1-40)"
+	add_result FAIL "tar" "${_tar_v:-not found}" "supports --strip-components" \
+		"$(fcc_pkg_install_hint tar) — uv's installer unpacks its release with --strip-components and --no-same-owner, which BusyBox tar does not support, so the install stops before uv is installed."
+fi
 
 # Node (needed by some agents).
 _node="$(fcc_detect_version node --version 2>/dev/null || true)"

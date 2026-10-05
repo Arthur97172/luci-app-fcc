@@ -193,6 +193,46 @@ installer_exit_status() {
 	printf '%s' "$_ies_rc"
 }
 
+installer_failure_reason() {
+	# installer_failure_reason <transcript> -> the installer's own last word
+	#
+	# The upstream installer is `set -eu` and routes every failure through
+	# fail(), which writes "error: <what happened>" to stderr. stderr is the
+	# terminal, so that line lands in the transcript and nowhere else — and
+	# while the runtime log said "see logs/installer.out", the Logs panel
+	# offered no such file. The one line that says why the install stopped was
+	# therefore the one line no reader could reach, which is how a box with
+	# BusyBox tar produced a report of "always FAILED" with no reason in it.
+	# The line is copied into the runtime log now, which is the file the job
+	# panel and the Logs panel both show.
+	#
+	# The transcript is a terminal screen rather than a text file: the installer
+	# colours its output, tmux writes into the same stream, and the final
+	# capture-pane adds a whole screen of trailing blanks. Carriage returns and
+	# escape sequences are stripped before a line is chosen. The escape is built
+	# with printf because BusyBox sed has no \x escape of its own.
+	#
+	# The parameter bytes are matched with the bracket written last inside its
+	# class, so this line holds no double open-bracket: the shell suite rejects
+	# that pair anywhere in the tree, and an escaped bracket followed by the
+	# class would spell it. Cursor-mode sequences carry a "?" among those bytes,
+	# and one left standing in front of the "error:" line would hide it from the
+	# anchored match below — which is the whole point of this function.
+	_ifr_file="$1"
+	[ -r "$_ifr_file" ] || return 1
+	_ifr_esc="$(printf '\033')"
+	_ifr_txt="$(tr -d '\r' < "$_ifr_file" 2>/dev/null \
+		| sed -e "s/${_ifr_esc}[0-9;?<>=[]*[A-Za-z]//g" \
+		| grep -v '^[[:space:]]*$')"
+	_ifr_line="$(printf '%s\n' "$_ifr_txt" | grep '^error: ' | tail -n 1)"
+	# No fail() line — the run was cut short by the timeout, or the installer
+	# died on a signal. The last thing it managed to print is the next best
+	# answer, and an empty one is not an answer at all.
+	[ -n "$_ifr_line" ] || _ifr_line="$(printf '%s\n' "$_ifr_txt" | tail -n 1)"
+	[ -n "$_ifr_line" ] || return 1
+	printf '%s' "$_ifr_line"
+}
+
 # Answer one prompt. Prints the keys to send, or nothing when the line is not a
 # prompt we recognise.
 installer_answer_for() {
@@ -597,10 +637,55 @@ rollback_runtime() {
 	# reader looking for a previous version to repair, and hides the actual
 	# question, which is whether anything was written at all.
 	#
-	# runtime.json is the discriminator: it is written only after a successful
-	# install, and an update copies it into the backup before touching anything,
-	# so it is absent exactly when nothing has ever been installed here.
-	if [ -z "$_rb_dir" ] && [ ! -f "$ROOT/runtime.json" ]; then
+	# Whether there is a previous runtime to put back — a question about the
+	# backup's *contents*, not about whether a backup directory exists.
+	#
+	# The condition used to be `[ -z "$_rb_dir" ] && [ ! -f runtime.json ]`, and
+	# the first half is what made the report wrong. It asked for an *empty*
+	# backup directory, which a first install never has: fcc_ensure_dirs()
+	# creates data/ before anything else runs, so backup_runtime() always finds
+	# something to keep and always returns a directory. A retry on a box whose
+	# first install had already failed therefore skipped this branch, took the
+	# restore path below, restored nothing, found no bin/fcc-server to run, and
+	# ended on "FCC Server remains stopped. Please inspect logs." +
+	# ROLLBACK_FAILED — section 79's wording for a restore that failed, printed
+	# when there was nothing to restore. Every retry repeated it, and the
+	# installer's own error stayed hidden behind it.
+	#
+	# So: is there anything in the backup that could be a runtime? Two files say
+	# so, and both are written only by an install that got all the way through.
+	#
+	#   runtime.json    written by write_runtime_metadata() once the new runtime
+	#                   has been verified, so it exists only where an install
+	#                   succeeded — and it is the version section 79's message
+	#                   names, which is why the backup copies it at all.
+	#   bin/fcc-server  the launcher the upstream tool install produces. Nothing
+	#                   else in this package writes it.
+	#
+	# What cannot be used is the mere presence of runtime/ or bin/ in the
+	# backup, however much it looks like it should be: fcc_ensure_dirs() creates
+	# both empty on every run, so they are always there, and a first install
+	# that got part-way leaves a non-empty pair that cannot be told from a
+	# working one by looking. The empty pair is exactly what a retry on the
+	# reported box had, and reading it as a previous runtime is the bug.
+	#
+	# The trade this makes: a first install that failed *after* the tool install
+	# leaves a bin/fcc-server behind, and is then treated as a previous runtime.
+	# Its restore is attempted and, if that launcher turns out to run, reported
+	# as one. The wording is then generous, but the alternative — discarding a
+	# runtime that may well work, on a device where reinstalling it costs
+	# several hundred megabytes and ten minutes — is the worse error.
+	_rb_had=0
+	if [ -n "$_rb_dir" ] && [ -d "$_rb_dir" ]; then
+		[ -f "$_rb_dir/runtime.json" ] && _rb_had=1
+		[ -x "$_rb_dir/bin/fcc-server" ] && _rb_had=1
+	fi
+	# A runtime.json still in place says the same thing about the box itself: an
+	# update copies it into the backup rather than moving it, so it outlives the
+	# failed attempt that followed.
+	[ -f "$ROOT/runtime.json" ] && _rb_had=1
+
+	if [ "$_rb_had" -eq 0 ]; then
 		# runtime/ and bin/ are what the installer writes, and a partial one is
 		# worse than none: the status page would report an install that cannot
 		# run. They are the same two directories the update path removes, so the
@@ -609,6 +694,12 @@ rollback_runtime() {
 		# credentials the user entered through FCC's own admin page.
 		rm -rf "$ROOT/runtime" "$ROOT/bin" 2>/dev/null
 		fcc_cache_set fcc_version ""
+		# The backup directory this attempt created is not consumed by anything
+		# below, so without this it would never be reached by section 25's
+		# retention: a device that keeps failing and keeps being retried would
+		# keep a fresh copy of data/ per attempt, on the very device whose free
+		# space is the reason the install stopped.
+		prune_backups
 		fcc_log "$LOG" "Install failed. Nothing was installed before, so there was no version to restore."
 		printf 'INSTALL_FAILED\n'
 		return 1
@@ -783,6 +874,14 @@ cmd_runtime() {
 
 	if [ "$_cr_rc" -ne 0 ]; then
 		fcc_log "$LOG" "installer exited with status $_cr_rc; see logs/installer.out"
+		# And what the installer said about it. The transcript is the only place
+		# the reason exists, and until now nothing copied it anywhere a reader
+		# could reach: the log named a file the Logs panel did not offer, so a
+		# failed install was reported as a status number and no cause. The
+		# installer writes "error: ..." for every failure it knows about, and
+		# that line is quoted here verbatim so the panel shows it.
+		_cr_reason="$(installer_failure_reason "$ROOT/logs/installer.out" 2>/dev/null || true)"
+		[ -n "$_cr_reason" ] && fcc_log "$LOG" "installer reported: $_cr_reason"
 		rollback_runtime "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return "$_cr_rc"

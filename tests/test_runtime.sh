@@ -46,6 +46,10 @@ sh_common() {
 # so that a branch which depends on which tools exist is the only branch that
 # can run. Prepending would not do: the point is that the tools left out cannot
 # be found at all.
+#
+# A name may be an absolute path, in which case it is installed under its own
+# basename — that is how a test puts a *stand-in* tool on this PATH, since a
+# tool the code under test has to find cannot be substituted any other way.
 #   sh_common_tools '<tools>' '<code>'
 sh_common_tools() {
 	rm -rf "$SANDBOX/toolbin"
@@ -53,7 +57,7 @@ sh_common_tools() {
 	# sh itself, because PATH has to hold the shell that is about to be run.
 	for _tr_t in sh $1; do
 		_tr_p="$(command -v "$_tr_t" 2>/dev/null)" || continue
-		ln -sf "$_tr_p" "$SANDBOX/toolbin/$_tr_t"
+		ln -sf "$_tr_p" "$SANDBOX/toolbin/${_tr_t##*/}"
 	done
 	PATH="$SANDBOX/toolbin" \
 	FCC_LIBDIR="$LIBEXEC" \
@@ -1191,6 +1195,33 @@ EOF
 	chmod +x "$_ms_path"
 }
 
+# make_standin_tool <name> <body> -> the path it was written to
+#
+# A tool that answers the way a *different implementation* of it would. Some
+# checks ask "what can the tar on PATH do?", and the only honest way to produce
+# the answer a router gives is to put a tar on PATH that really behaves that
+# way — a stubbed return value would test the stub. sh_common_tools and
+# sh_doctor_tools take an absolute path for exactly this.
+make_standin_tool() {
+	mkdir -p "$SANDBOX/standin"
+	printf '#!/bin/sh\n%s\n' "$2" > "$SANDBOX/standin/$1"
+	chmod +x "$SANDBOX/standin/$1"
+	printf '%s' "$SANDBOX/standin/$1"
+}
+
+# BusyBox tar's whole defect, as it presents itself: uv's installer unpacks its
+# release with `tar xf ARCHIVE --no-same-owner --strip-components 1`, and
+# BusyBox tar knows neither option. It prints a complaint to stderr, its usage
+# text to stdout, and exits 1 — which is what the upstream installer turns into
+# "error: uv installation failed with exit code 1" a few seconds after its last
+# question, having installed nothing.
+BUSYBOX_TAR_BODY='case " $* " in
+	*" --strip-components "*|*" --no-same-owner "*)
+		echo "tar: unrecognized option" >&2
+		exit 1 ;;
+esac
+exit 0'
+
 # install.sh ends with a dispatch on $1, so sourcing it directly would run the
 # dispatch and exit. The functions are what is under test, so the dispatch is
 # stripped from a copy — a test-only branch inside the real script would be a
@@ -1524,6 +1555,285 @@ test_rollback_reports_a_failed_first_install_honestly() {
 	# data/ is not this installer's to discard — on a reinstall attempt it may
 	# hold provider credentials entered through FCC's own admin page.
 	assert_ok "but the data is left alone" test -f "$_ri_root/data/providers.json"
+}
+
+# The state a *retry* is in on a box whose install has already failed once, and
+# the one the "always FAILED" report came from.
+#
+# fcc_ensure_dirs() creates data/ before anything else runs, so backup_runtime()
+# always finds something to keep and always returns a directory — but no install
+# ever succeeded here, so there is no runtime.json and nothing to go back to.
+# The backup exists and holds only a copy of data/.
+#
+# rollback_runtime required *both* an empty backup directory and no runtime.json
+# before it would admit that nothing had been installed. A first install never
+# has the empty directory, so the branch was unreachable in practice: this state
+# took the restore path instead, restored nothing, found no bin/fcc-server to
+# run, and ended on section 79's "FCC Server remains stopped. Please inspect
+# logs." plus ROLLBACK_FAILED. Those two lines are the wording for a restore
+# that failed; here nothing was restored and nothing could be. Every retry
+# printed them again, and the installer's own error — the one line that said
+# what was actually wrong — was never shown anywhere.
+#
+# Note what the backup here does *not* hold, because that is now the question:
+# no runtime.json and no bin/fcc-server. runtime/ and bin/ are moved into the
+# backup on every run, but fcc_ensure_dirs() creates both empty first, so their
+# presence is not evidence of anything.
+test_rollback_treats_a_data_only_backup_as_no_previous_runtime() {
+	setup_sandbox
+	_rd_root="$SANDBOX/opt/fcc"
+	_rd_bk="$_rd_root/backup/20261005T101018Z"
+	mkdir -p "$_rd_root/data/providers" "$_rd_bk/data/providers"
+	# The sandbox is shared by every test in this file, and the restore test
+	# before this one installs a runtime into it. This one is about a box where
+	# nothing has ever been installed successfully, so it says so.
+	rm -f "$_rd_root/runtime.json"
+	printf 'provider settings\n' > "$_rd_root/data/providers/settings.json"
+	printf 'provider settings\n' > "$_rd_bk/data/providers/settings.json"
+
+	# The failed attempt's leftovers, which a rollback has to clear.
+	mkdir -p "$_rd_root/runtime" "$_rd_root/bin"
+	printf 'half-written interpreter\n' > "$_rd_root/runtime/marker"
+	printf '#!/bin/sh\nexit 1\n'       > "$_rd_root/bin/fcc-server"
+	chmod +x "$_rd_root/bin/fcc-server"
+
+	make_uci_shim
+	# The sandbox — and so this log — is shared by every test in this file, and
+	# an earlier one has already written "FCC Server remains stopped" into it.
+	# The assertions below are about what *this* call logged, so it starts empty.
+	mkdir -p "$_rd_root/logs"
+	: > "$_rd_root/logs/fcc-runtime.log"
+	_out="$(sh_install "rollback_runtime '$_rd_bk' false; echo \"rc=\$?\"")"
+	_log="$(cat "$_rd_root/logs/fcc-runtime.log" 2>/dev/null)"
+
+	assert_contains "$_out" "INSTALL_FAILED" \
+		"a box with no runtime.json has no previous runtime"
+	assert_not_contains "$_out" "ROLLBACK_FAILED" \
+		"so no failed rollback is reported"
+	assert_not_contains "$_log" "remains stopped" \
+		"and no server that never ran is said to remain stopped"
+	assert_contains "$_log" "no version to restore" "the log says what was true"
+
+	# The leftovers go, for the same reason as on a first install: the status
+	# page reads fcc-server to decide whether a runtime is installed.
+	assert_no "the half-written runtime is removed" test -d "$_rd_root/runtime"
+	assert_no "the half-written launchers go with it" test -d "$_rd_root/bin"
+	# data/ stays, and stays untouched: it is where the user's own settings and
+	# any provider credentials they entered live.
+	assert_ok "the data is still there" test -f "$_rd_root/data/providers/settings.json"
+	assert_eq "provider settings" "$(cat "$_rd_root/data/providers/settings.json")" \
+		"and was not overwritten by the copy in the backup"
+}
+
+# ---------------------------------------------------------------------------
+# The installer's own words, and where they end up.
+#
+# A failed install used to be reported as a status number and nothing else: the
+# runtime log said "see logs/installer.out" and the Logs page did not offer that
+# file, so the one line that said why the install stopped was the one line no
+# reader could reach. A router with BusyBox tar therefore produced a report of
+# "always FAILED" with no cause anywhere in it.
+# ---------------------------------------------------------------------------
+
+test_installer_failure_reason_reads_the_installers_own_error() {
+	setup_sandbox
+	_ir_dir="$SANDBOX/opt/fcc/logs"
+	mkdir -p "$_ir_dir"
+	_ir_esc="$(printf '\033')"
+
+	# A terminal transcript rather than a text file: upstream colours its
+	# output, the pty turns every newline into CR LF, and the run ends with a
+	# whole capture-pane of trailing blanks. All three are in this fixture —
+	# including a cursor-mode sequence, whose "?" is not a colour parameter and
+	# would sit in front of the error line, out of reach of an anchored match,
+	# if the stripper only knew about digits and semicolons.
+	{
+		printf '%s[1;34m==>%s Installing uv\r\n' "$_ir_esc" "$_ir_esc[0m"
+		printf 'downloading uv 0.12.23\r\n'
+		printf '%s[?25l%s[31merror: uv installation failed with exit code 1.%s\r\n' \
+			"$_ir_esc" "$_ir_esc" "$_ir_esc[0m"
+		printf '\r\n'
+		printf '   \r\n'
+	} > "$_ir_dir/installer.out"
+
+	assert_eq "error: uv installation failed with exit code 1." \
+		"$(sh_install "installer_failure_reason '$_ir_dir/installer.out'")" \
+		"the error line is recovered, with its escapes and carriage returns gone"
+
+	# BusyBox tar prints its usage text *after* the installer's error, so "the
+	# last line" is not the answer — the installer's own error line is.
+	{
+		printf 'error: uv installation failed with exit code 1.\n'
+		printf 'BusyBox v1.36.1 (2024-05-22 12:00:00 UTC) multi-call binary.\n'
+		printf 'Usage: tar c|x|t [-ZzJjahmvokO] [-f TARFILE] [-C DIR] [FILE]...\n'
+	} > "$_ir_dir/installer.out"
+	assert_eq "error: uv installation failed with exit code 1." \
+		"$(sh_install "installer_failure_reason '$_ir_dir/installer.out'")" \
+		"the error line is preferred over whatever a tool printed after it"
+
+	# No error line: the run was cut short by the deadline, or the installer
+	# died on a signal. The last thing it managed to print is the next best
+	# answer — and where there is none, none is reported rather than invented.
+	printf 'still downloading Claude Code\n' > "$_ir_dir/installer.out"
+	assert_eq "still downloading Claude Code" \
+		"$(sh_install "installer_failure_reason '$_ir_dir/installer.out'")" \
+		"without an error line the last output is used"
+
+	: > "$_ir_dir/installer.out"
+	assert_no "an empty transcript yields no reason" \
+		sh_install "installer_failure_reason '$_ir_dir/installer.out' >/dev/null"
+	assert_no "a missing transcript yields no reason" \
+		sh_install "installer_failure_reason '$_ir_dir/nosuch.out' >/dev/null"
+}
+
+# The tar check decides by unpacking a real archive rather than by reading a
+# version string, because a version string does not answer the question: BusyBox
+# tar reports one and cannot do this, and a BusyBox built with the long options
+# could. So the check asks the tar itself, and this asks two tars.
+test_tar_probe_follows_the_tar_on_path() {
+	setup_sandbox
+	make_standin_tool tar "$BUSYBOX_TAR_BODY" >/dev/null
+
+	assert_no "a tar without the long options cannot unpack uv's archive" \
+		sh_common_tools "mktemp mkdir rm $SANDBOX/standin/tar" \
+			'fcc_tar_can_extract_uv_archive'
+	# The same probe against the tar this machine really has. The two long
+	# options are the only difference between the two tars, so a probe that
+	# always failed — or one that always succeeded — is caught by the pair.
+	assert_ok "a tar that supports them can" \
+		sh_common_tools 'mktemp mkdir rm tar' 'fcc_tar_can_extract_uv_archive'
+}
+
+# The whole failure path, end to end: the installer stops, and the log that the
+# job panel and the Logs page both show carries the installer's own reason.
+#
+# Everything that is the code under test is real here — run_installer, the
+# transcript, the rollback decision, the runtime log. Only what would otherwise
+# need a router or the network is stood in for: tmux, curl, nslookup.
+test_failed_install_reports_the_reason_in_the_runtime_log() {
+	setup_sandbox
+	_sr_root="$SANDBOX/opt/fcc"
+	_sr_state="$SANDBOX/tmux-state"
+	mkdir -p "$SANDBOX/bin" "$_sr_root/logs" "$_sr_state"
+	make_uci_shim
+	# The sandbox is shared by every test in this file, and a test that ran
+	# earlier may have installed a runtime into it. This one is about a box
+	# where nothing has ever been installed, so it says so rather than
+	# inheriting whatever was left behind.
+	rm -f "$_sr_root/runtime.json"
+	rm -rf "$_sr_root/runtime" "$_sr_root/bin" "$_sr_root/backup"
+	# Same reason: the log is shared, and the assertions below are about what
+	# this one install wrote into it.
+	: > "$_sr_root/logs/fcc-runtime.log"
+
+	# curl, serving one local file. Both option forms are needed: the install
+	# downloads the upstream installer with --output, and the doctor's HTTPS
+	# check probes with -o /dev/null before the install is allowed to start.
+	cat > "$SANDBOX/bin/curl" <<-'EOF'
+	#!/bin/sh
+	_out=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--output|-o) _out="$2"; shift 2 ;;
+			*) shift ;;
+		esac
+	done
+	[ -n "$_out" ] || exit 1
+	[ "$_out" = /dev/null ] && exit 0
+	cp "$FAKE_INSTALLER_SRC" "$_out"
+	EOF
+	chmod +x "$SANDBOX/bin/curl"
+	# The doctor resolves the installer host before it allows the install at
+	# all. That is a real check and it is not what this test is about, so it is
+	# answered rather than left to whatever DNS this machine has.
+	printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/bin/nslookup"
+	chmod +x "$SANDBOX/bin/nslookup"
+
+	# The upstream installer, reduced to the one thing under test: it fails the
+	# way it fails on a stock OpenWrt rootfs, and says so the way it says so.
+	cat > "$SANDBOX/fake-installer.sh" <<-'EOF'
+	#!/bin/sh
+	printf '==> Installing uv\n'
+	printf 'downloading uv 0.12.23\n'
+	printf 'error: uv installation failed with exit code 1.\n'
+	exit 1
+	EOF
+	chmod +x "$SANDBOX/fake-installer.sh"
+
+	# tmux, reduced to what run_installer uses — with one addition that matters:
+	# pipe-pane really runs the command it is given, against a pipe the pane
+	# writes into, so logs/installer.out is the transcript the real thing would
+	# produce rather than a fixture written by this test.
+	cat > "$SANDBOX/bin/tmux" <<-'EOF'
+	#!/bin/sh
+	S="$FAKE_TMUX_DIR"
+	# The doctor asks tmux for its version before it allows the install to
+	# start, and a tmux that prints nothing reads as tmux that is not there.
+	case "$1" in -V|--version) echo "tmux 3.4"; exit 0 ;; esac
+	case "$1" in
+	new-session)
+		shift
+		for a in "$@"; do cmd="$a"; done
+		# The trailing sleep keeps the pane alive after the installer exits so
+		# that the last screen survives to be read. There is no screen here,
+		# and leaving a five-minute sleeper behind is rude, so it is dropped.
+		cmd="$(printf '%s' "$cmd" | sed -e 's/^[[:space:]]*sleep 300$//')"
+		rm -f "$S/stream"
+		mkfifo "$S/stream" 2>/dev/null
+		( sh -c "$cmd" ) > "$S/stream" 2>&1 &
+		;;
+	pipe-pane)
+		for a in "$@"; do last="$a"; done
+		# run_installer's pipe command is exactly `cat >> <path>`.
+		printf '%s' "$last" | sed -n 's/^cat >> //p' | tr -d "'" > "$S/pipe-target"
+		( eval "$last" < "$S/stream" ) >/dev/null 2>&1 &
+		;;
+	capture-pane)
+		# The screen, which for this stand-in is everything the pane has
+		# written. The real capture-pane trims trailing whitespace.
+		sed 's/[[:space:]]*$//' "$(cat "$S/pipe-target" 2>/dev/null)" 2>/dev/null
+		;;
+	send-keys)    : ;;
+	kill-session) : ;;
+	esac
+	exit 0
+	EOF
+	chmod +x "$SANDBOX/bin/tmux"
+
+	# Both space gates are lifted so that the disk this happens to run on is not
+	# part of the result: the doctor reads FCC_REQUIRED_FREE_MB and install.sh
+	# reads FCC_MIN_FREE_MB, and neither check is what this test is about.
+	_sr_out="$( export FAKE_TMUX_DIR="$_sr_state" \
+			FAKE_INSTALLER_SRC="$SANDBOX/fake-installer.sh" \
+			FCC_MIN_FREE_MB=0 FCC_REQUIRED_FREE_MB=0
+		sh_install 'cmd_runtime runtime --agents claude; echo "rc=$?"' )"
+	_sr_log="$(cat "$_sr_root/logs/fcc-runtime.log" 2>/dev/null)"
+
+	# The transcript is on disk, and it is the installer's own output.
+	assert_contains "$(cat "$_sr_root/logs/installer.out" 2>/dev/null)" \
+		"error: uv installation failed with exit code 1." \
+		"the run leaves the installer's transcript behind"
+
+	assert_contains "$_sr_log" "installer exited with status 1" \
+		"the runtime log records the status"
+	assert_contains "$_sr_log" \
+		"installer reported: error: uv installation failed with exit code 1." \
+		"and the installer's own reason, which is the line that says why"
+
+	# The state this run leaves behind is the one the report came from: a first
+	# install, so nothing was installed before and there is nothing to restore.
+	assert_contains "$_sr_out" "INSTALL_FAILED" "a first install that failed says so"
+	assert_not_contains "$_sr_out" "ROLLBACK_FAILED" \
+		"rather than reporting a rollback that never happened"
+	assert_not_contains "$_sr_log" "remains stopped" \
+		"and never claiming a server that never ran remains stopped"
+	assert_not_contains "$_sr_log" "Update failed" \
+		"nor an update that never happened"
+
+	# The sandbox is shared by every test in this file, and $SANDBOX/bin is on
+	# PATH for every later sh_install. A curl left here would answer the health
+	# check with an empty 200 for the rest of the run, so the stand-ins go.
+	rm -f "$SANDBOX/bin/curl" "$SANDBOX/bin/nslookup" "$SANDBOX/bin/tmux"
 }
 
 # Section 3.6.5 lets the user uncheck every agent. Upstream's chooser will not
@@ -2402,10 +2712,12 @@ sh_doctor_tools() {
 	_dt_tools="$1"; _dt_env="$2"; shift 2
 	rm -rf "$SANDBOX/doctorbin"
 	mkdir -p "$SANDBOX/doctorbin"
-	# sh, because PATH has to hold the shell that is about to be run.
+	# sh, because PATH has to hold the shell that is about to be run. A name may
+	# be an absolute path, so a stand-in tool can be put on this PATH under its
+	# own basename; see sh_common_tools above.
 	for _dt_t in sh $_dt_tools; do
 		_dt_p="$(command -v "$_dt_t" 2>/dev/null)" || continue
-		ln -sf "$_dt_p" "$SANDBOX/doctorbin/$_dt_t"
+		ln -sf "$_dt_p" "$SANDBOX/doctorbin/${_dt_t##*/}"
 	done
 	# shellcheck disable=SC2086  # a test-controlled list of assignments
 	env PATH="$SANDBOX/doctorbin" \
@@ -2475,6 +2787,62 @@ test_doctor_bash_check_follows_the_agent_set() {
 		"an installed bash agent is in the set even with --no-agents"
 	assert_contains "$_dbc_inst" 'Claude Code' "and the report names it"
 	rm -rf "$SANDBOX/opt/fcc"
+}
+
+# The tar check, which exists because uv's own installer cannot unpack its
+# release on a stock image. It runs `tar xf ARCHIVE --no-same-owner
+# --strip-components 1`, and BusyBox tar knows neither option: it prints its
+# usage text, exits 1, and the upstream installer stops with "error: uv
+# installation failed with exit code 1" a few seconds after its last question.
+# Nothing is installed, and before this check existed nothing said why.
+#
+# The three outcomes are produced deliberately, because the check reads PATH:
+# leaving it to the machine running the tests would assert whatever tar this
+# host happens to have.
+test_doctor_tar_check_follows_the_tar_on_path() {
+	setup_sandbox
+	make_standin_tool tar "$BUSYBOX_TAR_BODY" >/dev/null
+	make_standin_tool uv 'echo "uv 0.12.23"' >/dev/null
+
+	# The tools the probe itself needs, on top of the doctor's own: it unpacks a
+	# real archive into a scratch directory to find out what the tar can do.
+	_dtc_tools="$DOCTOR_TOOLS mktemp mkdir rm"
+
+	# No uv, and a tar that cannot unpack one: a failure, with the package to
+	# install and what goes wrong without it. This is the box the report came
+	# from — the install stopped there and said only that it had stopped.
+	_dtc_fail="$(sh_doctor_tools "$_dtc_tools $SANDBOX/standin/tar" '' --json |
+		grep '"name": "tar"')"
+	assert_contains "$_dtc_fail" '"status": "FAIL"' \
+		"a tar that cannot unpack uv, with no uv, is a failure"
+	assert_contains "$_dtc_fail" 'opkg install tar' \
+		"and the report says how to install a tar that can"
+	assert_contains "$_dtc_fail" 'strip-components' \
+		"and names the option that is missing"
+	assert_contains "$_dtc_fail" 'stops before uv is installed' \
+		"and what the install does instead"
+
+	# uv already on PATH: ensure_uv() leaves it alone and no archive is
+	# unpacked, so this is a warning. Not an OK: this package keeps its uv under
+	# the runtime root and the update path moves that directory aside before the
+	# installer runs, so the next update downloads uv again and needs the tar.
+	_dtc_warn="$(sh_doctor_tools "$_dtc_tools $SANDBOX/standin/tar $SANDBOX/standin/uv" '' --json |
+		grep '"name": "tar"')"
+	assert_contains "$_dtc_warn" '"status": "WARN"' \
+		"a uv that is already installed makes the tar a warning"
+	assert_contains "$_dtc_warn" 'every update does' \
+		"and the report says why it still matters"
+
+	# A tar that can do it: OK, whatever else is on PATH.
+	_dtc_ok="$(sh_doctor_tools "$_dtc_tools tar" '' --json | grep '"name": "tar"')"
+	assert_contains "$_dtc_ok" '"status": "OK"' "a capable tar is OK"
+	assert_not_contains "$_dtc_ok" 'not found' "and the report does not claim it is missing"
+	assert_not_contains "$_dtc_ok" 'opkg install tar' "and suggests nothing to install"
+
+	# And the verdict reaches the install gate: a FAIL here is what stops the
+	# install, so the two have to be reading the same result.
+	assert_contains "$(sh_doctor_tools "$_dtc_tools $SANDBOX/standin/tar" '' --json)" \
+		'"install_allowed": false' "and a tar that cannot unpack uv blocks the install"
 }
 
 # tmux is a hard requirement, not a convenience. It is the Web Console's backend
