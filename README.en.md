@@ -25,12 +25,16 @@ OpenWrt 24.10:
 
 ```sh
 opkg install luci-app-fcc_*.ipk
+# Chinese interface: install the translation package as well
+opkg install luci-i18n-fcc-zh-cn_*.ipk
 ```
 
 OpenWrt 25.12:
 
 ```sh
-apk add --allow-untrusted luci-app-fcc*.apk
+apk add --allow-untrusted luci-app-fcc-*.apk
+# Chinese interface: install the translation package as well
+apk add --allow-untrusted luci-i18n-fcc-zh-cn-*.apk
 ```
 
 The `.ipk` and the `.apk` are produced by CI from the corresponding OpenWrt SDK.
@@ -45,16 +49,12 @@ LuCI → Services → FCC
 
 All three pages work immediately, before anything else is installed.
 
-The interface follows LuCI's language. English is the source language and ships
-in `luci-app-fcc`; the compiled Simplified Chinese catalogue is a **separate
-package, `luci-i18n-fcc-zh-cn`**, which you install as well. Once it is there,
-LuCI loads it by itself whenever the interface language is Chinese — no
-configuration, and no service to restart.
-
-```
-opkg install luci-i18n-fcc-zh-cn      # 24.10 and earlier
-apk add luci-i18n-fcc-zh-cn           # 25.12 and newer
-```
+The second line in each pair above is optional. The interface follows LuCI's
+language: English is the source language and ships in `luci-app-fcc`, while the
+compiled Simplified Chinese catalogue is a **separate package,
+`luci-i18n-fcc-zh-cn`**, so a Chinese interface means installing that one too.
+Once it is there, LuCI loads it by itself whenever the interface language is
+Chinese — no configuration, and no service to restart.
 
 The two are independent: install English only, add Chinese later, upgrade and
 remove them separately. An English interface with only `luci-app-fcc` installed

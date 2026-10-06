@@ -26,12 +26,16 @@ OpenWrt 24.10：
 
 ```sh
 opkg install luci-app-fcc_*.ipk
+# 中文界面需额外安装翻译包
+opkg install luci-i18n-fcc-zh-cn_*.ipk
 ```
 
 OpenWrt 25.12：
 
 ```sh
-apk add --allow-untrusted luci-app-fcc*.apk
+apk add --allow-untrusted luci-app-fcc-*.apk
+# 中文界面需额外安装翻译包
+apk add --allow-untrusted luci-i18n-fcc-zh-cn-*.apk
 ```
 
 `.ipk` 与 `.apk` 由 CI 用对应版本的 OpenWrt SDK 构建。它们是两种完全不同的包格式——
@@ -45,14 +49,10 @@ LuCI → 服务 → FCC
 
 三个页面装完即可使用，无需先安装别的东西。
 
-界面语言跟随 LuCI。英文是源语言，随 `luci-app-fcc` 一起安装；简体中文的编译目录在
-**单独的 `luci-i18n-fcc-zh-cn` 包**里，需要额外装一个包。装好之后 LuCI 界面语言为
-中文时会自动加载它，不需要任何配置，也不需要重启服务。
-
-```
-opkg install luci-i18n-fcc-zh-cn      # 24.10 及更早
-apk add luci-i18n-fcc-zh-cn           # 25.12 及更新
-```
+上面两组命令里的第二行是可选的。界面语言跟随 LuCI：英文是源语言，随 `luci-app-fcc`
+一起安装；简体中文的编译目录在**单独的 `luci-i18n-fcc-zh-cn` 包**里，所以中文界面
+要多装那一个包。装好之后 LuCI 界面语言为中文时会自动加载它，不需要任何配置，也不需要
+重启服务。
 
 两个包互相独立：可以只装英文界面，也可以后补中文；升级、卸载各管各的。只装
 `luci-app-fcc` 时界面是英文，这不是故障。
