@@ -16,7 +16,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fcc
-PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
+PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.2))
 # Bumped rather than PKG_VERSION: the package's contents changed while its
 # upstream version did not. Section 62 names the release and its tag after both
 # numbers — the release carrying luci-app-fcc_0.1.1-r4_all.ipk is called
@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.1))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=9
+PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0

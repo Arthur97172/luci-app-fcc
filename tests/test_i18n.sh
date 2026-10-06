@@ -7,9 +7,13 @@
 # the two files to each other and to the source.
 #
 # One OpenWrt-specific trap is encoded here as well: po2lmo DROPS any entry
-# whose msgstr equals its msgid. A .po that "translates" a string to itself
-# therefore loses it entirely rather than falling back, which is why
-# test_no_msgstr_equals_its_msgid exists.
+# whose msgstr hashes to its msgid (po2lmo.c writes an entry only when
+# key_id != val_id). A .po that "translates" a string to itself therefore loses
+# the key entirely rather than falling back — and losing it is not neutral,
+# because LuCI resolves a key by hash against EVERY *.zh-cn.lmo on the device
+# and returns the first archive that has it. A key we drop can come back
+# translated by an unrelated package. That is what test_no_long_string_is_
+# translated_to_itself and test_generic_keys_are_claimed_by_our_catalogue pin.
 
 TESTS_NAME="i18n"
 
@@ -148,15 +152,29 @@ test_no_long_string_is_translated_to_itself() {
 	_ts_bad="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 && length($1) > 12 { print $1 }')"
 	assert_eq "" "$_ts_bad" "no sentence is translated to itself"
 
-	# The permitted ones should be exactly the product names and the labels that
-	# have no translation — "CPU" is what a Chinese interface writes too, so
-	# passing it through is the correct answer rather than a missed one. Pinned
-	# as an exact set so that a *new* pass-through entry cannot slip in.
+	# The permitted ones are exactly the product names, which have no
+	# translation to make and whose fallback is the same text anyway. Pinned as
+	# an exact set so that a *new* pass-through entry cannot slip in — an
+	# identity entry is not a no-op, it is a key we stop claiming.
 	_ts_same="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 { print $1 }' | LC_ALL=C sort | tr '\n' ' ')"
 	case "$_ts_same" in
-		"CPU FCC FCC Server "|"FCC FCC Server "|"FCC "|"") pass ;;
+		"FCC FCC Server "|"FCC "|"") pass ;;
 		*) fail "an unexpected entry passes through untranslated: [$_ts_same]" ;;
 	esac
+}
+
+test_generic_keys_are_claimed_by_our_catalogue() {
+	# The other half of that rule. A short, generic label is the one kind of key
+	# another package is likely to claim for its own purposes, so leaving it to
+	# the fallback hands our page over to that package's wording. LuCI cannot
+	# tell the two apart: a .lmo stores a hash per entry and no msgid at all, so
+	# lmo_translate() returns whichever archive it reaches first.
+	#
+	# "CPU" is the key this bit us with. With the entry dropped, the Basic
+	# Information page's CPU card was titled by luci-app-openclash's catalogue
+	# (which claims the same key for its own CPU-usage row) instead of ours.
+	_ts_bad="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 && $1 == "CPU" { print $1 }')"
+	assert_eq "" "$_ts_bad" "the generic key \"CPU\" is translated rather than passed through"
 }
 
 test_translations_are_actually_translated() {
