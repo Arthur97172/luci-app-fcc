@@ -53,7 +53,7 @@ msgid "Bind address"
 msgstr "绑定地址"
 
 msgid "CPU"
-msgstr "处理器"
+msgstr "CPU"
 
 msgid "Check for updates"
 msgstr "检查更新"

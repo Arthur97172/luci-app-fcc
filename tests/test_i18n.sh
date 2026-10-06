@@ -148,10 +148,13 @@ test_no_long_string_is_translated_to_itself() {
 	_ts_bad="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 && length($1) > 12 { print $1 }')"
 	assert_eq "" "$_ts_bad" "no sentence is translated to itself"
 
-	# The permitted ones should be exactly the product names, so pin that too.
+	# The permitted ones should be exactly the product names and the labels that
+	# have no translation — "CPU" is what a Chinese interface writes too, so
+	# passing it through is the correct answer rather than a missed one. Pinned
+	# as an exact set so that a *new* pass-through entry cannot slip in.
 	_ts_same="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 { print $1 }' | LC_ALL=C sort | tr '\n' ' ')"
 	case "$_ts_same" in
-		"FCC FCC Server "|"FCC "|"") pass ;;
+		"CPU FCC FCC Server "|"FCC FCC Server "|"FCC "|"") pass ;;
 		*) fail "an unexpected entry passes through untranslated: [$_ts_same]" ;;
 	esac
 }
