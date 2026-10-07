@@ -40,8 +40,11 @@ msgstr "在此路由器上运行编码智能体的交互式终端。关闭本页
 msgid "Architecture"
 msgstr "架构"
 
-msgid "Are you sure you want to close this session?\nAll unsaved terminal state will be lost."
-msgstr "确定要关闭此会话吗？\n所有未保存的终端状态都将丢失。"
+msgid "All unsaved terminal state will be lost."
+msgstr "所有未保存的终端状态都将丢失。"
+
+msgid "Are you sure you want to close this session?"
+msgstr "确定要关闭此会话吗？"
 
 msgid "Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation."
 msgstr "FCC 运行时的基础目录。运行时会放在其下的“fcc”子目录中，因此 /opt 对应 /opt/fcc。修改此项不会移动已安装的运行时。"

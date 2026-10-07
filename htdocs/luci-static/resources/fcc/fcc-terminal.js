@@ -368,8 +368,17 @@
 	function closeSession(name) {
 		/* Section 10 requires the confirmation before the session dies, and it
 		 * is not ceremony: closing kills the agent process, and whatever the
-		 * agent was holding in the terminal is gone. */
-		if (!window.confirm(FCC._('Are you sure you want to close this session?\nAll unsaved terminal state will be lost.'))) {
+		 * agent was holding in the terminal is gone.
+		 *
+		 * The break between the two sentences is a literal join, not a "\n"
+		 * inside one message. po2lmo does not process C escapes — it hashes the
+		 * .po text verbatim — so a msgid containing "\n" is stored under a key
+		 * built from a backslash and an "n", while the runtime holds the
+		 * evaluated string, which has a real newline. The two can never match,
+		 * so the entry is dead and this dialog stays English whatever the
+		 * interface language is. Same shape as serverOp() in fcc-config.js. */
+		if (!window.confirm(FCC._('Are you sure you want to close this session?') + '\n' +
+				FCC._('All unsaved terminal state will be lost.'))) {
 			return;
 		}
 		FCC.api('session_close', { name: name }, { method: 'POST' }).then(function () {

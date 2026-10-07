@@ -36,13 +36,16 @@ msgstr ""
 msgid "Agents"
 msgstr ""
 
+msgid "All unsaved terminal state will be lost."
+msgstr ""
+
 msgid "An interactive terminal running a coding agent on this router. Sessions keep running after you close this page, and reattaching to one restores its screen."
 msgstr ""
 
 msgid "Architecture"
 msgstr ""
 
-msgid "Are you sure you want to close this session?\nAll unsaved terminal state will be lost."
+msgid "Are you sure you want to close this session?"
 msgstr ""
 
 msgid "Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation."
