@@ -54,7 +54,7 @@ msgstr ""
 msgid "Bind address"
 msgstr ""
 
-msgid "CPU"
+msgid "CPU Info"
 msgstr ""
 
 msgid "Check for updates"

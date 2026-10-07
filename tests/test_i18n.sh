@@ -13,7 +13,7 @@
 # because LuCI resolves a key by hash against EVERY *.zh-cn.lmo on the device
 # and returns the first archive that has it. A key we drop can come back
 # translated by an unrelated package. That is what test_no_long_string_is_
-# translated_to_itself and test_generic_keys_are_claimed_by_our_catalogue pin.
+# translated_to_itself and test_context_keys_are_claimed_by_our_catalogue pin.
 
 TESTS_NAME="i18n"
 
@@ -163,18 +163,20 @@ test_no_long_string_is_translated_to_itself() {
 	esac
 }
 
-test_generic_keys_are_claimed_by_our_catalogue() {
+test_context_keys_are_claimed_by_our_catalogue() {
 	# The other half of that rule. A short, generic label is the one kind of key
 	# another package is likely to claim for its own purposes, so leaving it to
 	# the fallback hands our page over to that package's wording. LuCI cannot
 	# tell the two apart: a .lmo stores a hash per entry and no msgid at all, so
 	# lmo_translate() returns whichever archive it reaches first.
 	#
-	# "CPU" is the key this bit us with. With the entry dropped, the Basic
-	# Information page's CPU card was titled by luci-app-openclash's catalogue
-	# (which claims the same key for its own CPU-usage row) instead of ours.
-	_ts_bad="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 && $1 == "CPU" { print $1 }')"
-	assert_eq "" "$_ts_bad" "the generic key \"CPU\" is translated rather than passed through"
+	# "CPU" is the key this bit us with. Titled plainly "CPU", the Basic
+	# Information page's card was named by luci-app-openclash's catalogue (which
+	# claims the same key for its own CPU-usage row) instead of ours. The fix is
+	# the key "CPU Info", which names its context and that nothing else claims —
+	# so pin it: shortening it back to "CPU" is what re-opens the hole.
+	_ts_bad="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 && $1 == "CPU Info" { print $1 }')"
+	assert_eq "" "$_ts_bad" "the context-naming key \"CPU Info\" is translated rather than passed through"
 }
 
 test_translations_are_actually_translated() {

@@ -348,8 +348,8 @@ test_system_list_is_ordered_cpu_temp_platform_arch_memory_storage() {
 		| grep -o "card(FCC\._('[^']*')" | sed "s/^card(FCC\._('//; s/')$//" \
 		| tr '\n' ',' | sed 's/,$//')"
 
-	assert_eq "CPU,Temperature,Platform,Architecture,Memory,Storage" "$_ts_order" \
-		"the System cards are CPU, Temperature, Platform, Architecture, Memory and Storage, in that order"
+	assert_eq "CPU Info,Temperature,Platform,Architecture,Memory,Storage" "$_ts_order" \
+		"the System cards are CPU Info, Temperature, Platform, Architecture, Memory and Storage, in that order"
 }
 
 # ---------------------------------------------------------------------------

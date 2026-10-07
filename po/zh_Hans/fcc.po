@@ -52,15 +52,17 @@ msgstr "基本信息"
 msgid "Bind address"
 msgstr "绑定地址"
 
-# Do not translate this to "CPU". LuCI resolves a key by hash against every
-# *.zh-cn.lmo installed on the device and takes the first catalogue that has it
-# — a .lmo stores no msgid, so it cannot tell our entry from another package's.
-# "CPU" is a generic key that luci-app-openclash and others claim too, and
-# po2lmo drops any entry whose msgstr hashes to its msgid. With this entry
-# dropped, the Basic Information page's CPU card was titled from another
-# package's catalogue instead of this one.
-msgid "CPU"
-msgstr "处理器"
+# The key names its context on purpose — do not shorten it back to "CPU".
+# LuCI resolves a key by hash against every *.zh-cn.lmo installed on the device
+# and takes the first catalogue that has it; a .lmo stores no msgid, so it
+# cannot tell our entry from another package's. A bare "CPU" is a key that
+# luci-app-openclash and others claim for their own rows, so this card was
+# titled from whichever catalogue lmo_translate() reached first. "CPU Info" is
+# claimed by nothing else, so the label is ours. "Translating" the key to
+# itself is no escape either: po2lmo writes no index entry when the msgstr
+# hashes to the msgid, which drops the key outright.
+msgid "CPU Info"
+msgstr "处理器信息"
 
 msgid "Check for updates"
 msgstr "检查更新"

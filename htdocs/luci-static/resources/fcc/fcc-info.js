@@ -65,7 +65,7 @@
 		 * asks /proc/cpuinfo and then the CPU's device tree node, which is the
 		 * only place the name exists on a board whose cpuinfo names no CPU
 		 * (arm64), so a dash here means neither source had one. */
-		box.appendChild(card(FCC._('CPU'), s.cpu_model || '—', cpuDetail(s)));
+		box.appendChild(card(FCC._('CPU Info'), s.cpu_model || '—', cpuDetail(s)));
 		/* The CPU's own heat, directly under the CPU. The sub-line names the
 		 * sensor the reading came from, because a board can have several — a
 		 * radio, a modem, a charger — and the backend prefers the one that names
