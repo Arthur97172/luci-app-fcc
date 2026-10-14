@@ -330,6 +330,57 @@ test_agent_picker_is_the_agent_table() {
 }
 
 # ---------------------------------------------------------------------------
+# "Open FCC Admin" when there is nothing to open
+#
+# Section 3.6.9: the Admin page is served by the FCC server itself, so the link
+# only works when the server listens on an address the browser can reach. The
+# shipped default is 127.0.0.1, which in a browser is the *client's* loopback —
+# so on a fresh install there is genuinely no URL, and the control is inert by
+# design.
+#
+# Inert by design is not the same as inert and unexplained, and it was both.
+# The link lost its href, kept the class that makes it look exactly like the
+# Start and Restart buttons beside it, and put the reason in a title attribute.
+# Clicking it did nothing and said nothing. There is no DOM harness here, so
+# the three things that fix that are pinned against the files carrying them.
+# ---------------------------------------------------------------------------
+
+test_the_admin_link_says_why_when_it_cannot_open() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
+
+	# Somewhere on the page for the reason to appear, off by default: it is only
+	# true while the server is bound to loopback.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-admin-note"' \
+		"the view carries the element the reason goes in"
+	assert_contains "$(sed -n '/id="fcc-admin-note"/p' "$_ts_view")" 'hidden' \
+		"and it starts hidden"
+
+	# The renderer fills it on the loopback branch and empties it otherwise, so
+	# a working link does not keep an explanation of why it does not work.
+	assert_contains "$(cat "$_ts_js")" 'renderAdminNote' \
+		"the script renders the reason"
+	assert_contains "$(cat "$_ts_js")" 'note.hidden = true' \
+		"and takes it away again when the link works"
+
+	# The disabled control has to look disabled. This is the complaint itself: a
+	# dead <a> styled exactly like a live one.
+	assert_contains "$(cat "$_ts_css")" 'a.fcc-disabled' \
+		"a control that cannot act is styled as one"
+	assert_contains "$(cat "$_ts_css")" 'not-allowed' \
+		"with a cursor that says so"
+
+	# And the remedy is on the page rather than behind a hover: section 3.6.9
+	# prefers binding to the router's LAN address, so the note names the field
+	# that does it and offers the address the browser reached the router on.
+	assert_contains "$(cat "$_ts_js")" 'Bind address' \
+		"the note names the field that fixes it"
+	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-bind').value = host" \
+		"and offers the address this browser used"
+}
+
+# ---------------------------------------------------------------------------
 # The System list on Basic Information
 #
 # Section 15's System list, in the order the page shows it: what the CPU is,

@@ -331,3 +331,24 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 
 .fcc-note.warn { border-left-color: var(--fcc-warn); }
 .fcc-note.fail { border-left-color: var(--fcc-fail); }
+
+/* The hidden attribute is how the Admin note is taken off the page when it does
+ * not apply. Stated explicitly rather than left to the UA stylesheet, because
+ * the rule above gives .fcc-note a box of its own and a later display: would
+ * win over [hidden] without this. */
+.fcc-note[hidden] { display: none; }
+
+/* A control that cannot act must not look like one that can.
+ *
+ * The Admin link loses its href when the server is bound to loopback — there is
+ * genuinely no URL that works from a browser — and without this it rendered
+ * exactly like the Start and Restart buttons beside it. That is what "clicking
+ * Open FCC Admin does nothing" looks like from the outside: not a control that
+ * refuses, but a control that appears to ignore you.
+ *
+ * Qualified with the element so it outranks .cbi-button, which also styles
+ * <a class="cbi-button"> and is loaded from LuCI's own sheet. */
+a.fcc-disabled {
+	opacity: .55;
+	cursor: not-allowed;
+}

@@ -549,11 +549,11 @@ write_runtime_metadata() {
 		# executable check is what decides membership — this file is a record of
 		# what was seen, never the source of truth for what exists.
 		#
-		# fcc_agent_installed with the root, not a bare `command -v` on the
-		# launcher name. This function happens to run with the runtime
-		# environment applied, so the launcher directory is on PATH here — but
-		# that is a property of the caller, not of the question, and the answer
-		# must not depend on which of the two a future caller is.
+		# fcc_agent_installed with the root, not a bare `command -v`. This
+		# function happens to run with the runtime environment applied, so the
+		# agent's CLI is on PATH here — but that is a property of the caller,
+		# not of the question, and the answer must not depend on which of the
+		# two a future caller is.
 		printf ',\n  "agents": {'
 		_wm_sep=""
 		while IFS='|' read -r _wm_id _wm_rest; do

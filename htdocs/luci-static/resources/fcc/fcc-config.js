@@ -80,16 +80,26 @@
 	 * browser can only reach it if the server is bound to an address the
 	 * browser can route to — 127.0.0.1 means "the router's own loopback", which
 	 * is not reachable from a client machine.
+	 *
+	 * The shipped default is 127.0.0.1, so on a fresh install there is no URL
+	 * that works and the link is genuinely inert. Two things follow, and the
+	 * first was missing: the control must look inert (see a.fcc-disabled in
+	 * fcc.css — it used to render exactly like the live buttons beside it), and
+	 * the reason must be on the page. Section 3.6.9 names the remedy, and a
+	 * tooltip is not somewhere a person looks when a button does nothing.
 	 */
 	function updateAdminLink(bind, port) {
 		var link = FCC.$('#fcc-admin-link');
 		if (!link) { return; }
+		var note = FCC.$('#fcc-admin-note');
 		port = port || 8082;
-		if (bind === '127.0.0.1' || bind === '::1') {
+
+		if (bind === '127.0.0.1' || bind === '::1' || bind === 'localhost') {
 			link.removeAttribute('href');
 			link.classList.add('fcc-disabled');
-			link.title = FCC._('The server is bound to loopback. Bind it to this router\'s LAN address to open the Admin page from your computer.');
 			link.setAttribute('aria-disabled', 'true');
+			link.title = FCC._('The server is bound to loopback. Bind it to this router\'s LAN address to open the Admin page from your computer.');
+			renderAdminNote(note);
 		} else {
 			/* Section 13's target is http://<LAN-IP>:8082/admin. Two details
 			 * matter: the path is /admin, not /, and the scheme is http, not
@@ -99,7 +109,50 @@
 			link.removeAttribute('aria-disabled');
 			link.classList.remove('fcc-disabled');
 			link.title = FCC._('Opens the FCC Admin page in a new tab.');
+			if (note) {
+				note.hidden = true;
+				note.innerHTML = '';
+			}
 		}
+	}
+
+	/* Why the Admin button is inert, and what to do about it — beside the
+	 * button, not behind a hover.
+	 *
+	 * The remedy is the one section 3.6.9 prefers: bind the server to the
+	 * router's LAN address. It is already supported — the Bind address field is
+	 * a few sections up, and binding to a specific address needs no firewall
+	 * change — so this only has to say which field, and offer the address when
+	 * the browser has told us what it is. Nothing is saved from here: opening a
+	 * port to the LAN is the user's decision, made with Save & Apply like every
+	 * other setting. */
+	function renderAdminNote(note) {
+		if (!note) { return; }
+		var host = location.hostname;
+		note.innerHTML = '';
+		note.appendChild(FCC.el('div', {
+			text: FCC._('The FCC Admin page is served by the FCC server itself, and it is listening on 127.0.0.1 — the router\'s own loopback, which this browser cannot reach. There is no address that would open it.')
+		}));
+		note.appendChild(FCC.el('div', {
+			text: FCC._('Set “Bind address” above to this router\'s LAN address and press Save & Apply. The Admin page then opens from this computer. Binding to a specific address needs no firewall change.')
+		}));
+		/* Only offered for a literal IPv4 address: that is what the browser
+		 * reached the router on, so it is an address the router holds. A
+		 * hostname may resolve elsewhere, and binding to one that does not
+		 * resolve on the router itself would leave the server unable to start. */
+		if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+			var use = FCC.el('button', {
+				class: 'cbi-button', type: 'button',
+				text: FCC._('Use %s').replace('%s', host)
+			});
+			use.addEventListener('click', function () {
+				FCC.$('#fcc-bind').value = host;
+				FCC.notice(FCC.$('#fcc-config-status'), 'warn',
+					FCC._('Press “Save & Apply” to bind the server to %s.').replace('%s', host));
+			});
+			note.appendChild(use);
+		}
+		note.hidden = false;
 	}
 
 	/* --------------------------------------------------------- server state */

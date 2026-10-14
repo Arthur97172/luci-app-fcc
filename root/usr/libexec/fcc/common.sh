@@ -365,19 +365,92 @@ fcc_agent_by_launcher() {
 # ---------------------------------------------------------------------------
 # Which agents are actually installed
 #
-# An agent is installed when its FCC launcher resolves. The launcher is written
-# into <root>/bin, which is on PATH only for a process that has already applied
-# the runtime environment; the doctor runs *before* that, so the directory is
-# probed directly as well. Reading the directory rather than trusting a marker
-# file means the answer stays true if someone removes a launcher by hand, which
-# is exactly when a stale marker would be believed.
+# An agent is installed when its *own CLI* resolves — the agent id, which is
+# the name upstream's find_installed_coding_agent() probes.
+#
+# It is not the FCC launcher, and that distinction is the whole function.
+# `uv tool install free-claude-code` writes every fcc-* console script into
+# <root>/bin in one go — the installer's own transcript lists all sixteen — so
+# an fcc-* launcher being present says only that the FCC runtime is present.
+# That is true of all ten rows at once and is not the question anyone is
+# asking. What proves an agent is there is the CLI behind the launcher:
+# fcc-claude execs `claude`, and `claude` is what the installer installs,
+# verifies, and re-finds on its next run. Probing the launcher makes every row
+# read "installed" the moment FCC itself is installed, which is the bug.
+#
+# The search mirrors upstream's add_known_bin_directories(): the directories
+# the runtime environment puts on PATH (see apply_env() in usr/bin/fcc-env),
+# probed under the root by absolute path, then PATH itself. The absolute
+# probes come first because those directories are on PATH only for a process
+# that has already applied that environment, and none of this function's
+# callers have: the doctor runs before it, status.sh runs under uhttpd, and
+# update.sh runs from a job.
+#
+# Reading the filesystem rather than a marker file means the answer stays true
+# if someone removes an agent by hand, which is exactly when a stale marker
+# would be believed. Upstream keeps no record of what it installed either.
 # ---------------------------------------------------------------------------
+
+# npm's global bin directory, asked at most once per process.
+#
+# `npm prefix -g` forks node, which is not free on a router, and only the two
+# agents upstream installs with `npm install -g` need it. So it is asked
+# lazily — from the one place that has already run out of cheap answers — and
+# the answer is remembered.
+_fcc_npm_bin=""
+_fcc_npm_bin_asked=0
+fcc_npm_bin_dir() {
+	[ "$_fcc_npm_bin_asked" = 1 ] || {
+		_fcc_npm_bin_asked=1
+		if command -v npm >/dev/null 2>&1; then
+			_fnb_prefix="$(npm prefix -g 2>/dev/null || npm config get prefix 2>/dev/null || true)"
+			[ -n "$_fnb_prefix" ] && _fcc_npm_bin="$_fnb_prefix/bin"
+		fi
+	}
+	[ -n "$_fcc_npm_bin" ] || return 1
+	printf '%s' "$_fcc_npm_bin"
+}
+
 fcc_agent_installed() {
-	# fcc_agent_installed <id> [root] -> 0 if that agent's launcher resolves
-	_fai_cmd="$(fcc_agent_command "$1" 2>/dev/null || true)"
-	[ -n "$_fai_cmd" ] || return 1
-	command -v "$_fai_cmd" >/dev/null 2>&1 && return 0
-	[ -n "${2:-}" ] && [ -x "$2/bin/$_fai_cmd" ] && return 0
+	# fcc_agent_installed <id> [root] -> 0 if that agent's own CLI resolves
+	#
+	# The id *is* the command name. Upstream's chooser calls
+	# select_coding_agent <id> ..., and find_installed_coding_agent probes
+	# exactly that word; all ten ids here are upstream's own. The registry's
+	# `probe` column is a different thing — it names the CLI to *run* for a
+	# version, and is empty for hermes, whose `--version` hangs. Asking whether
+	# hermes is installed does not run it, so the id is safe where the probe
+	# would not be.
+	_fai_id="$1"
+	_fai_root="${2:-${ROOT:-$(fcc_root)}}"
+	fcc_valid_agent "$_fai_id" || return 1
+
+	# PATH first: cheapest, and correct for a system-wide install.
+	command -v "$_fai_id" >/dev/null 2>&1 && return 0
+
+	# Upstream's known bin directories, under this root. XDG_BIN_HOME and
+	# UV_TOOL_BIN_DIR are both <root>/bin and HOME is <root>/data, so the six
+	# below are add_known_bin_directories() spelled out for this layout.
+	for _fai_d in \
+		"$_fai_root/bin" \
+		"$_fai_root/data/.local/bin" \
+		"$_fai_root/data/.cargo/bin" \
+		"$_fai_root/data/.opencode/bin" \
+		"$_fai_root/data/.local/share/pi-node/current/bin" \
+		"$_fai_root/data/.grok/bin"
+	do
+		[ -x "$_fai_d/$_fai_id" ] && return 0
+	done
+
+	# npm's global bin, for the two agents upstream installs with
+	# `npm install -g` and then re-finds through add_npm_bin_directories().
+	case "$_fai_id" in
+		cline|dsh)
+			_fai_npm="$(fcc_npm_bin_dir 2>/dev/null || true)"
+			[ -n "$_fai_npm" ] && [ -x "$_fai_npm/$_fai_id" ] && return 0
+			;;
+	esac
+
 	return 1
 }
 
@@ -1127,6 +1200,30 @@ fcc_cpu_temp_mc() {
 # hung server — and an update that reports "unhealthy" without saying which of
 # the three broke is not much better than no check at all.
 # ---------------------------------------------------------------------------
+fcc_agent_launcher_path() {
+	# fcc_agent_launcher_path <id> -> absolute path of that agent's fcc-*
+	# launcher, or empty.
+	#
+	# This is the *launcher*, which is a different question from "is the agent
+	# installed?" (fcc_agent_installed above). The launcher is what a session
+	# execs, so it is resolved to a path rather than through PATH: the callers
+	# that need it run under rpcd, which has never applied the runtime
+	# environment, and <root>/bin is not on its PATH. Ordered the same way as
+	# fcc_find_server_exe below, and for the same reason — the runtime we manage
+	# first, a PATH lookup only as a last resort.
+	_fal_id="$1"
+	fcc_valid_agent "$_fal_id" || return 1
+	_fal_l="$(fcc_agent_command "$_fal_id")"
+	[ -n "$_fal_l" ] || return 1
+	for _fal_c in "$(fcc_dir_bin)/$_fal_l" \
+	              "$(fcc_dir_runtime)/bin/$_fal_l"; do
+		[ -x "$_fal_c" ] && { printf '%s' "$_fal_c"; return 0; }
+	done
+	_fal_c="$(command -v "$_fal_l" 2>/dev/null)"
+	[ -n "$_fal_c" ] && { printf '%s' "$_fal_c"; return 0; }
+	return 1
+}
+
 fcc_find_server_exe() {
 	# fcc_find_server_exe -> absolute path of fcc-server, or empty.
 	# Ordered most-specific first: the runtime we manage, then a PATH lookup.

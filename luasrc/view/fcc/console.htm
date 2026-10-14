@@ -30,6 +30,12 @@
 		<button id="fcc-term-cleanup" class="cbi-button cbi-button-reset"><%:Clean up finished sessions%></button>
 	</div>
 
+	<!-- The result of the toolbar above, so it sits directly under the controls
+	     that produce it. It used to be rendered below the terminal, where a
+	     failure notice — the answer to a click on "New session" — landed off the
+	     bottom of the screen and the click looked like it had done nothing. -->
+	<div id="fcc-term-status"></div>
+
 	<div id="fcc-term-tabs" class="fcc-term-tabs"></div>
 
 	<div id="fcc-term-banner" class="fcc-term-banner" hidden></div>
@@ -37,8 +43,6 @@
 	<div class="fcc-term-wrap">
 		<div id="fcc-term"></div>
 	</div>
-
-	<div id="fcc-term-status"></div>
 
 	<div id="fcc-term-log" class="fcc-term-log" hidden>
 		<div class="fcc-term-log-head">

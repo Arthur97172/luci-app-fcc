@@ -210,6 +210,9 @@ msgstr ""
 msgid "Port"
 msgstr ""
 
+msgid "Press “Save & Apply” to bind the server to %s."
+msgstr ""
+
 msgid "Re-detect versions"
 msgstr ""
 
@@ -358,6 +361,9 @@ msgid "Updating reinstalls the FCC runtime from upstream. If a step fails, the p
 msgstr ""
 
 msgid "Uptime"
+msgstr ""
+
+msgid "Use %s"
 msgstr ""
 
 msgid "Version"

@@ -371,10 +371,10 @@ COMM_MAP="$(build_comm_map)"
 		case "$aid" in ''|\#*) continue ;; esac
 		[ -n "$aid" ] || continue
 
-		# Not a bare `command -v`: the launchers live in <root>/bin, and this
-		# document is built for a process that does not have that directory on
-		# PATH — the controller reaches status.sh through io.popen under uhttpd.
-		# See the note in agent.sh and DESIGN_SPEC.md section 104.17.
+		# Not a bare `command -v`: an agent's CLI lives in the runtime's own bin
+		# directories, and this document is built for a process that does not
+		# have them on PATH — the controller reaches status.sh through io.popen
+		# under uhttpd. See the note in agent.sh and DESIGN_SPEC.md 104.17.
 		ag_installed=false
 		fcc_agent_installed "$aid" "$ROOT" && ag_installed=true
 

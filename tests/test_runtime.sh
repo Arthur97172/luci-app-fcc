@@ -961,13 +961,16 @@ test_status_reports_why_a_version_is_missing() {
 	# batched document has to carry the reason beside the null, the way agent.sh
 	# does for its single-agent output, or the table cannot tell them apart.
 	#
-	# `sh` stands in for an installed launcher: installation is decided by
-	# `command -v`, so anything on PATH counts.
+	# The id is what installation is decided by — it is the agent's own CLI, and
+	# `command -v` is what resolves it — so the first two rows take ids that are
+	# real commands and the third takes one that is not. The launcher column is
+	# deliberately a name that exists nowhere: it plays no part in the answer,
+	# which is itself worth pinning.
 	_tr_conf="$SANDBOX/agents.conf"
 	printf '%s\n' \
-		'noprobe|No Probe|sh|0|10|10|' \
-		'badprobe|Bad Probe|sh|0|10|10|false' \
-		'absent|Absent|fcc-not-a-real-launcher|0|10|10|sh' > "$_tr_conf"
+		'sh|No Probe|fcc-noprobe|0|10|10|' \
+		'true|Bad Probe|fcc-badprobe|0|10|10|false' \
+		'absent|Absent|fcc-absent|0|10|10|sh' > "$_tr_conf"
 
 	# sh_script pins the real registry, so this one invocation builds the
 	# environment itself.
@@ -1169,7 +1172,8 @@ test_create_keeps_the_exit_code_of_a_launcher_that_leaves_at_once() {
 	# cmd_create itself, because the mirror cannot catch a mistake in the real
 	# thing — and the real thing is where the race lived.
 	_cs_bin="$SANDBOX/opt/fcc/bin"
-	mkdir -p "$_cs_bin" "$SANDBOX/opt/fcc/sessions"
+	mkdir -p "$_cs_bin" "$SANDBOX/opt/fcc/sessions" \
+	         "$SANDBOX/opt/fcc/data/.local/bin"
 
 	# A runtime that looks installed and a server that looks alive, so that the
 	# two guards in front of the tmux calls are satisfied.
@@ -1177,6 +1181,13 @@ test_create_keeps_the_exit_code_of_a_launcher_that_leaves_at_once() {
 	chmod +x "$_cs_bin/fcc-server"
 	"$_cs_bin/fcc-server" &
 	_cs_srv=$!
+
+	# The agent's own CLI as well as its launcher. cmd_create asks whether the
+	# agent is installed, and that question is answered by the CLI; a sandbox
+	# holding only the launcher models a runtime with no agents in it, and would
+	# be refused for a reason this test is not about.
+	printf '#!/bin/sh\necho 2.1.299 (Claude Code)\n' > "$SANDBOX/opt/fcc/data/.local/bin/claude"
+	chmod +x "$SANDBOX/opt/fcc/data/.local/bin/claude"
 
 	# A launcher doing what one does when it cannot reach its server: print, and
 	# leave immediately. Handing this to new-session is what used to destroy the
@@ -1225,6 +1236,78 @@ test_create_keeps_the_exit_code_of_a_launcher_that_leaves_at_once() {
 	tmux kill-session -t "$_cs_name" 2>/dev/null
 	kill "$_cs_srv" 2>/dev/null
 	rm -rf "$SANDBOX/opt"
+}
+
+test_a_session_asks_whether_the_agent_is_installed_not_whether_the_launcher_is_on_path() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — session creation needs a real pane"
+		return 0
+	fi
+
+	# The report: pressing "New session" in the Web Console did nothing, for any
+	# agent, on a router where the agent was installed and listed as installed.
+	#
+	# cmd_create asked whether the agent was installed with a bare
+	# `command -v "$launcher"`. That answers a question about *this process's
+	# PATH*, not about the router. The launcher lives in <root>/bin, and the only
+	# thing that puts <root>/bin on PATH is session_env_exports() — which is
+	# written into the tmux command string, so it reaches the agent's shell
+	# inside the pane and never the shell rpcd forks to run session.sh. The probe
+	# therefore said "not installed" for every agent on every router, and no
+	# session could be created at all.
+	#
+	# The two facts the question turns on are made explicit rather than assumed:
+	# a PATH on which neither the launcher nor the agent's CLI resolves, and a
+	# root in which both exist. A predicate that consults PATH refuses; one that
+	# asks the root accepts.
+	_tr_base="$(setup_installed_root)"
+	_tr_root="$_tr_base/fcc"
+	_tr_path="$(make_agentless_path)"
+
+	for _tr_n in fcc-claude claude; do
+		assert_no "the test PATH cannot resolve $_tr_n" \
+			env PATH="$_tr_path" sh -c 'command -v "$1"' _ "$_tr_n"
+	done
+	assert_exec "$_tr_root/bin/fcc-claude"
+	assert_exec "$_tr_root/data/.local/bin/claude"
+
+	# A server that stays up, so the guard in front of it is satisfied and the
+	# agent question is the only thing left that can refuse the create. The
+	# process is found by the absolute path of its executable appearing in its
+	# own /proc cmdline, which is how fcc_server_pid() finds one.
+	printf '#!/bin/sh\ntrap "exit 0" TERM INT\nwhile :; do sleep 1; done\n' \
+		> "$_tr_root/bin/fcc-server"
+	chmod +x "$_tr_root/bin/fcc-server"
+	"$_tr_root/bin/fcc-server" &
+	_tr_srv=$!
+
+	# The launcher is what the pane execs. Held open so the session is still
+	# alive when it is asked about, which is what proves the pane really started.
+	printf '#!/bin/sh\ntrap "exit 0" TERM INT\nwhile :; do sleep 1; done\n' \
+		> "$_tr_root/bin/fcc-claude"
+	chmod +x "$_tr_root/bin/fcc-claude"
+
+	_tr_created="$(sh_blind "$_tr_path" "$_tr_base" session.sh create claude 80 24)"
+	_tr_name="$(printf '%s' "$_tr_created" | sed -n 's/.*"name": "\([^"]*\)".*/\1/p')"
+	assert_ne "" "$_tr_name" \
+		"a session is created for an agent that is installed but not on PATH: [$_tr_created]"
+
+	# And the pane runs the launcher by absolute path, so the create does not
+	# depend on the PATH the pane is given either.
+	assert_contains "$(tmux list-panes -a -F '#{pane_start_command}' 2>/dev/null)" \
+		"exec $_tr_root/bin/fcc-claude" \
+		"the pane execs the launcher at its absolute path"
+
+	# An agent that is genuinely absent is still refused. Every launcher is
+	# present — uv writes all sixteen in one go — so a predicate that reads the
+	# launcher accepts this one too, which is the same confusion in the other
+	# direction.
+	assert_no "an agent whose CLI is absent is still refused" \
+		sh_blind "$_tr_path" "$_tr_base" session.sh create codex 80 24
+
+	tmux kill-session -t "$_tr_name" 2>/dev/null
+	kill "$_tr_srv" 2>/dev/null
 }
 
 test_old_backups_are_pruned_to_the_most_recent_n() {
@@ -2927,16 +3010,28 @@ test_bash_requirement_follows_the_agent_set() {
 	# one — and it grows by what is already there once something is.
 	#
 	# The tools are restricted rather than inherited: "which agents are
-	# installed?" is answered by looking for their launchers, and a development
+	# installed?" is answered by looking for their own CLIs, and a development
 	# machine that has them on PATH would answer with all ten and quietly make
 	# this assertion about nothing.
 	assert_eq "claude" \
 		"$(sh_common_tools 'grep awk sed cut tr' 'fcc_effective_agents claude' \
 			| tr -s ' ' | sed 's/^ //;s/ $//')" \
 		"an effective set with nothing installed is the requested set"
-	mkdir -p "$SANDBOX/opt/fcc/bin"
+
+	# Installed means the CLI, in one of the runtime's own bin directories —
+	# <root>/data/.local/bin is where the installer's log shows `claude`
+	# landing. The launcher goes in beside it, because on a real box it is
+	# always there: uv writes all sixteen at once, and a predicate that reads
+	# them would call all ten agents installed.
+	mkdir -p "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data/.local/bin"
 	printf '#!/bin/sh\n' > "$SANDBOX/opt/fcc/bin/fcc-codex"
 	chmod +x "$SANDBOX/opt/fcc/bin/fcc-codex"
+	assert_eq "claude" \
+		"$(sh_common_tools 'grep awk sed cut tr' 'fcc_effective_agents claude' \
+			| tr -s ' ' | sed 's/^ //;s/ $//')" \
+		"the fcc-* launcher alone does not make an agent installed"
+	printf '#!/bin/sh\n' > "$SANDBOX/opt/fcc/data/.local/bin/codex"
+	chmod +x "$SANDBOX/opt/fcc/data/.local/bin/codex"
 	assert_eq "claude codex" \
 		"$(sh_common_tools 'grep awk sed cut tr' 'fcc_effective_agents claude' \
 			| tr -s ' ' | sed 's/^ //;s/ $//')" \
@@ -3099,9 +3194,16 @@ test_doctor_bash_check_follows_the_agent_set() {
 	# This is the case that used to desynchronise the answers: the installer
 	# went straight past the Claude Code question, and every answer after it was
 	# given to the wrong question.
-	mkdir -p "$SANDBOX/opt/fcc/bin"
+	#
+	# Installed means claude's own CLI, where the installer's log shows it
+	# landing. The fcc-* launcher is written too, and deliberately: it is
+	# present on every box that has the runtime at all, so a predicate that
+	# read it would count all ten agents and this assertion would hold for the
+	# wrong reason.
+	mkdir -p "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data/.local/bin"
 	: > "$SANDBOX/opt/fcc/bin/fcc-claude"
-	chmod +x "$SANDBOX/opt/fcc/bin/fcc-claude"
+	: > "$SANDBOX/opt/fcc/data/.local/bin/claude"
+	chmod +x "$SANDBOX/opt/fcc/bin/fcc-claude" "$SANDBOX/opt/fcc/data/.local/bin/claude"
 	_dbc_inst="$(sh_doctor_tools "$DOCTOR_TOOLS" 'FCC_AGENT_NONE=1' --json |
 		grep '"name": "bash"')"
 	assert_contains "$_dbc_inst" '"status": "FAIL"' \
@@ -3234,55 +3336,107 @@ test_doctor_blocking_names_what_failed_and_what_to_do() {
 # ---------------------------------------------------------------------------
 # "Is this agent installed?" is one question with one answer
 #
-# The launchers live in <root>/bin. Nothing that asks about them has that
-# directory on PATH: the LuCI relay reaches the backend through io.popen under
-# uhttpd, whose PATH is the system one, and `fcc-env agent` runs agent.sh
-# without applying the runtime environment on purpose. So a bare
-# `command -v fcc-claude` answers "no" on a box where fcc-claude is installed,
-# and every agent row on every page said 未安装 beside a runtime row that said
-# 已安装 — because fcc_find_server_exe() probes <root>/bin/fcc-server by
-# absolute path *first*, and the agent rows did not.
+# Two separate mistakes have been made about this question, and the tests below
+# pin both.
 #
-# common.sh already had the right rule, the <root>/bin fallback included, with
-# a comment saying why. It was re-derived with the fallback left out in five
-# other places. These tests ask each of those five the same question, with a
-# PATH that cannot answer it by accident.
+# The first: the question was re-derived five times, each copy a bare
+# `command -v fcc-claude`. The launchers live in <root>/bin, and nothing that
+# asks has that directory on PATH — the LuCI relay reaches the backend through
+# io.popen under uhttpd, whose PATH is the system one, and `fcc-env agent` runs
+# agent.sh without applying the runtime environment on purpose. So every agent
+# row said 未安装 beside a runtime row that said 已安装, because
+# fcc_find_server_exe() probes <root>/bin/fcc-server by absolute path *first*
+# and the agent rows did not.
+#
+# The second, made while fixing the first: the copies were pointed at the
+# launcher. That is worse than the bug it fixed. `uv tool install
+# free-claude-code` writes *all sixteen* fcc-* console scripts into <root>/bin
+# in one go — the installer's own transcript lists every one of them — so an
+# fcc-* launcher being present says only that the FCC runtime is present. Every
+# row then reads 已安装 the moment FCC itself is installed, which is what the
+# 配置 page showed after installing Claude Code alone.
+#
+# The rule is upstream's, from find_installed_coding_agent(): the agent's own
+# CLI, named by the agent id. fcc-claude execs `claude`, and `claude` is what
+# the installer installs, verifies and re-finds. These tests ask each of the
+# five call sites that question, with a PATH that cannot answer it by accident.
 # ---------------------------------------------------------------------------
 
-# The real PATH, minus every directory that could resolve an fcc-* name.
+# The real PATH, minus every directory that could answer the question by
+# accident: any directory holding an fcc-* launcher, and any holding one of the
+# ten agent CLIs.
 #
-# Copying the tools into a directory of our own is not needed and shadowing
-# them would not work: what has to go is the directory, not the name. Dropping
-# only the launcher's own directory keeps sed, awk and df reachable, so a
-# failure here is the question being answered wrongly rather than the script
-# being starved of tools.
-make_launcherless_path() {
+# Both halves are needed. Dropping the launcher directories alone is not
+# enough, because this suite also runs on a developer's machine and that
+# machine commonly has the agents themselves installed — ~/.local/bin/claude,
+# ~/.npm-global/bin/codex, ~/.grok/bin/grok. A PATH that can resolve `codex`
+# would make "codex is not installed" fail for a reason that has nothing to do
+# with the code under test.
+#
+# What has to go is the directory, not the name: shadowing individual names
+# would leave sed, awk and df unreachable, and a failure here should be the
+# question being answered wrongly rather than the script being starved of
+# tools.
+make_agentless_path() {
+	_lp_ids="$(awk -F'|' '/^[^#]/ && NF { printf "%s ", $1 }' "$AGENTS_CONF")"
+	_lp_ifs="$IFS"
+	IFS=:
+	set -- $PATH
+	IFS="$_lp_ifs"
 	_lp_out=""
-	_lp_ifs="$IFS"; IFS=:
-	for _lp_d in $PATH; do
+	for _lp_d in "$@"; do
 		[ -d "$_lp_d" ] || continue
 		_lp_has=0
 		for _lp_f in "$_lp_d"/fcc-*; do
 			[ -e "$_lp_f" ] && { _lp_has=1; break; }
 		done
+		if [ "$_lp_has" = 0 ]; then
+			for _lp_n in $_lp_ids; do
+				[ -e "$_lp_d/$_lp_n" ] && { _lp_has=1; break; }
+			done
+		fi
 		[ "$_lp_has" = 1 ] && continue
 		_lp_out="${_lp_out:+$_lp_out:}$_lp_d"
 	done
-	IFS="$_lp_ifs"
 	printf '%s' "$_lp_out"
 }
 
-# A runtime root with the server and one agent launcher in it — the state every
-# successful install leaves behind. Prints the base to hand to FCC_DEFAULT_BASE.
+# The state a successful `agent install claude` leaves behind, reproduced
+# faithfully rather than conveniently.
+#
+# All sixteen launchers, because uv writes them all — the names are the
+# installer's own transcript, and reproducing only fcc-claude would let a
+# launcher-probing predicate pass this suite while failing on a real router.
+# And exactly one CLI, because Claude Code is what was asked for. The two
+# together are the whole of the second bug.
+#
+# Prints the base to hand to FCC_DEFAULT_BASE.
 setup_installed_root() {
 	_ir_base="$SANDBOX/installed/opt"
 	rm -rf "$SANDBOX/installed"
 	mkdir -p "$_ir_base/fcc/bin" "$_ir_base/fcc/logs" \
-	         "$_ir_base/fcc/cache" "$_ir_base/fcc/data"
+	         "$_ir_base/fcc/cache" "$_ir_base/fcc/data/.local/bin"
+	for _ir_l in _fcc-update-check fcc-aider fcc-claude fcc-cline fcc-codex \
+	             fcc-desktop fcc-doctor fcc-dsh fcc-grok fcc-hermes fcc-muse \
+	             fcc-opencode fcc-pi fcc-update fcc-update.cmd; do
+		printf '#!/bin/sh\nexit 0\n' > "$_ir_base/fcc/bin/$_ir_l"
+		chmod +x "$_ir_base/fcc/bin/$_ir_l"
+	done
+	# The server is the one launcher whose version the runtime row reads.
 	printf '#!/bin/sh\necho 6.16.4\n' > "$_ir_base/fcc/bin/fcc-server"
-	printf '#!/bin/sh\necho 2.0.1\n'  > "$_ir_base/fcc/bin/fcc-claude"
-	chmod +x "$_ir_base/fcc/bin/fcc-server" "$_ir_base/fcc/bin/fcc-claude"
+	chmod +x "$_ir_base/fcc/bin/fcc-server"
+	# The agent that was actually installed, where upstream's own
+	# add_known_bin_directories() looks for it: $HOME/.local/bin with
+	# HOME=<root>/data. This path is from the bug report's install log —
+	# `+ /opt/fcc/data/.local/bin/claude --version`.
+	printf '#!/bin/sh\necho 2.1.299 (Claude Code)\n' > "$_ir_base/fcc/data/.local/bin/claude"
+	chmod +x "$_ir_base/fcc/data/.local/bin/claude"
 	printf '%s' "$_ir_base"
+}
+
+# The row for one agent in a JSON document that carries "id"/"installed" pairs.
+json_agent_row() { # json_agent_row <document> <id>
+	printf '%s\n' "$1" | grep "\"$2\"" | head -n1
 }
 
 # Run a backend script with a given PATH and a given install base. This is
@@ -3324,55 +3478,81 @@ sh_install_blind() { # sh_install_blind <path> <base> <code>
 test_an_installed_agent_is_reported_installed_without_being_on_path() {
 	setup_sandbox
 	_tr_base="$(setup_installed_root)"
-	_tr_path="$(make_launcherless_path)"
+	_tr_path="$(make_agentless_path)"
+	_tr_root="$SANDBOX/installed/opt/fcc"
 
 	# The precondition, asserted rather than assumed. If this PATH could still
-	# resolve a launcher, every assertion below would pass for a reason that has
-	# nothing to do with the code under test.
-	assert_no "the test PATH cannot resolve a launcher" \
-		env PATH="$_tr_path" sh -c 'command -v fcc-claude'
+	# resolve a launcher or an agent CLI, the assertions below would pass for a
+	# reason that has nothing to do with the code under test.
+	for _tr_n in fcc-claude claude codex pi opencode cline hermes dsh grok muse aider; do
+		assert_no "the test PATH cannot resolve $_tr_n" \
+			env PATH="$_tr_path" sh -c 'command -v "$1"' _ "$_tr_n"
+	done
 
-	# common.sh's rule is the one the others should be using, so it is asserted
-	# first: everything below is a statement that they now agree with it.
-	assert_ok "common.sh finds the launcher in <root>/bin" \
+	# common.sh holds the rule the other five call, so it is asserted directly
+	# first — everything after this is a statement that they agree with it.
+	#
+	# The CLI, not the launcher. This is the regression: all sixteen launchers
+	# are present and only claude's CLI is, so a predicate that probes the
+	# launcher says "yes" to both of these and the second one is the bug the
+	# 配置 page showed.
+	assert_ok "common.sh finds the agent's own CLI under the root" \
 		env PATH="$_tr_path" FCC_AGENTS_CONF="$AGENTS_CONF" \
-		sh -c '. "$1/common.sh"; fcc_agent_installed claude "$2"' \
-		_ "$LIBEXEC" "$SANDBOX/installed/opt/fcc"
+		sh -c '. "$1/common.sh"; fcc_agent_installed claude "$2"' _ "$LIBEXEC" "$_tr_root"
+	assert_no "a launcher with no CLI behind it is not an installed agent" \
+		env PATH="$_tr_path" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		sh -c '. "$1/common.sh"; fcc_agent_installed codex "$2"' _ "$LIBEXEC" "$_tr_root"
+	# The same for a launcher that is present and an agent whose version probe
+	# is deliberately empty. Asking whether it is installed does not run it, so
+	# hermes — whose `--version` hangs — is answerable for the first time.
+	assert_no "an agent with no probe is still answered by its id" \
+		env PATH="$_tr_path" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		sh -c '. "$1/common.sh"; fcc_agent_installed hermes "$2"' _ "$LIBEXEC" "$_tr_root"
 
 	# 配置 → 智能体, and the Web Console's agent list, which is the same call.
 	_tr_list="$(sh_blind "$_tr_path" "$_tr_base" agent.sh list)"
 	assert_contains "$_tr_list" '"id": "claude"' "the agent list covers the registry"
-	assert_contains "$(printf '%s\n' "$_tr_list" | grep '"id": "claude"')" \
-		'"installed": true' "the agent list reports the launcher in <root>/bin"
+	assert_contains "$(json_agent_row "$_tr_list" claude)" \
+		'"installed": true' "the agent list reports the installed agent"
+	assert_contains "$(json_agent_row "$_tr_list" codex)" \
+		'"installed": false' "and does not report the nine that were not installed"
 
 	# 基本信息: the batched document status.sh writes.
 	_tr_status="$(sh_blind "$_tr_path" "$_tr_base" status.sh)"
-	assert_contains "$(printf '%s\n' "$_tr_status" | grep '"claude":')" \
-		'"installed": true' "the status document reports the launcher in <root>/bin"
-	# The two rows the bug report set against each other. The runtime row was
-	# right all along — it probes by absolute path — and it is asserted here so
-	# that a future change to it cannot quietly make the two disagree again.
+	assert_contains "$(json_agent_row "$_tr_status" claude)" \
+		'"installed": true' "the status document reports the installed agent"
+	assert_contains "$(json_agent_row "$_tr_status" codex)" \
+		'"installed": false' "and not the ones that were not installed"
+	# The two rows the first bug report set against each other. The runtime row
+	# was right all along — it probes by absolute path — and it is asserted here
+	# so that a future change to it cannot quietly make the two disagree again.
 	assert_contains "$_tr_status" '"fcc": {"installed": true' \
 		"and the runtime row agrees with it"
 
 	# The doctor's agent list (section 80). doctor.sh already asks this question
 	# the right way for its bash check, in the same file.
-	_tr_doc="$(sh_blind "$_tr_path" "$_tr_base" doctor.sh 2>&1 | grep 'Claude Code')"
-	assert_contains "$_tr_doc" 'installed' "the doctor reports the agent as installed"
-	assert_not_contains "$_tr_doc" 'not installed' "and not as missing"
+	_tr_doc="$(sh_blind "$_tr_path" "$_tr_base" doctor.sh 2>&1)"
+	assert_not_contains "$(printf '%s\n' "$_tr_doc" | grep 'Claude Code')" \
+		'not installed' "the doctor reports the installed agent as present"
+	assert_contains "$(printf '%s\n' "$_tr_doc" | grep 'Codex')" \
+		'not installed' "and the others as missing"
 
-	# The update path's own copy, which decides the --agents set the update
-	# reinstalls. An empty set there does not merely mislabel a row: install.sh
-	# falls back to upstream's defaults and installs nine agents onto a device
-	# that had one.
-	assert_contains "$(sh_update "$_tr_path" "$_tr_base" 'installed_agents')" \
-		' claude' "the update path counts the launcher in <root>/bin"
+	# The update path's own copy, which decides the --agents set an update
+	# reinstalls. Getting this wrong does not merely mislabel a row: install.sh
+	# hands the set to the installer as the answers to its agent prompts, so a
+	# set of all ten means an update installs all ten agents onto a device that
+	# had one.
+	_tr_set="$(sh_update "$_tr_path" "$_tr_base" 'installed_agents')"
+	assert_contains "$_tr_set" ' claude' "the update path counts the installed agent"
+	assert_not_contains "$_tr_set" 'codex' "and not the ones that are not installed"
 
 	# And the metadata the install records, which is the fallback agent.sh reads
-	# a version from when the probe cannot run.
+	# a version from when the probe cannot run. Only the installed agents are
+	# named — the map is a record of what was seen, so absence is the negative.
 	sh_install_blind "$_tr_path" "$_tr_base" 'write_runtime_metadata' >/dev/null 2>&1
-	assert_contains "$(cat "$_tr_base/fcc/runtime.json" 2>/dev/null)" \
-		'"claude": true' "the runtime metadata records the launcher in <root>/bin"
+	_tr_meta="$(cat "$_tr_base/fcc/runtime.json" 2>/dev/null)"
+	assert_contains "$_tr_meta" '"claude": true' "the runtime metadata records the installed agent"
+	assert_not_contains "$_tr_meta" '"codex"' "and does not name the ones that are not installed"
 }
 
 tests_main

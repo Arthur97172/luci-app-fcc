@@ -23,16 +23,18 @@ ROOT="$(fcc_root)"
 # There is deliberately no agent_installed() here.
 #
 # This file used to carry its own, and it was a bare `command -v` on the
-# launcher name. The launchers live in <root>/bin, and nothing that reaches
-# this file has that directory on PATH: the controller runs it through
-# io.popen under uhttpd, and `fcc-env agent` runs it without applying the
-# runtime environment. So the copy answered "not installed" on every box where
-# the agent was installed, which is what the whole Configuration page, the Web
-# Console and Basic Information showed next to a runtime row that said
-# 已安装 — that one probes <root>/bin/fcc-server by absolute path.
+# launcher name. Nothing that reaches this file has the runtime's bin
+# directories on PATH: the controller runs it through io.popen under uhttpd,
+# and `fcc-env agent` runs it without applying the runtime environment. So the
+# copy answered "not installed" on every box where the agent was installed,
+# which is what the whole Configuration page, the Web Console and Basic
+# Information showed next to a runtime row that said 已安装 — that one probes
+# <root>/bin/fcc-server by absolute path.
 #
-# common.sh's fcc_agent_installed() is the rule, the fallback included, and it
-# is used here directly rather than re-derived.
+# common.sh's fcc_agent_installed() is the rule, and it is used here directly
+# rather than re-derived. Note what it asks: the *agent's own CLI*, not the
+# fcc-* launcher. uv writes all sixteen launchers at once, so a launcher proves
+# only that the runtime is installed, not that the agent behind it is.
 
 agent_running() {
 	_ar_cmd="$(fcc_agent_command "$1")" || return 1

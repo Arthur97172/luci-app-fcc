@@ -107,27 +107,51 @@ cmd_create() {
 	{ [ "$_cr_cols" -ge 20 ] && [ "$_cr_cols" -le 500 ]; } || _cr_cols=80
 	{ [ "$_cr_rows" -ge 5 ]  && [ "$_cr_rows" -le 300 ]; } || _cr_rows=24
 
-	_cr_launcher="$(fcc_agent_command "$_cr_agent")"
-	command -v "$_cr_launcher" >/dev/null 2>&1 || {
-		fcc_die "agent '$_cr_agent' is not installed (launcher '$_cr_launcher' not found)"; return 1; }
-
-	# Section 3.6.10: a session may only be created once the runtime is in place
-	# and the server it talks to is up. Enforced here rather than only in the UI
-	# because the launcher would otherwise start, fail to reach the server, and
-	# leave the user looking at a dead terminal with no explanation.
+	# Section 3.6.10: a session may only be created once the runtime is in place,
+	# an agent is installed, and the server it talks to is up. Enforced here
+	# rather than only in the UI because the launcher would otherwise start, fail
+	# to reach the server, and leave the user looking at a dead terminal with no
+	# explanation.
+	#
+	# The runtime is asked for first because it is the outer prerequisite: with
+	# no runtime there is no launcher and no agent CLI either, so "agent not
+	# installed" would name the wrong thing to install.
 	if [ -z "$(fcc_find_server_exe 2>/dev/null || true)" ]; then
 		fcc_die "the FCC runtime is not installed — install it first"; return 1
 	fi
+
+	# "Is this agent installed?" is asked of the agent's own CLI, never of the
+	# launcher — see fcc_agent_installed() in common.sh for why the two are not
+	# the same question.
+	#
+	# This used to be a bare `command -v "$_cr_launcher"`, and that is a question
+	# about *this process's PATH*, not about the router. The launcher lives in
+	# <root>/bin, which reaches only a shell that has applied
+	# session_env_exports() below — that is, the agent's own shell inside tmux.
+	# The shell rpcd forks to run this script has never applied it, so the probe
+	# answered "not installed" for every agent on every router, and no session
+	# could be created at all. It was the sixth copy of a question common.sh
+	# already answers correctly (§104.17).
+	fcc_agent_installed "$_cr_agent" "$ROOT" || {
+		fcc_die "agent '$_cr_agent' is not installed — install it in Configuration → Agents"; return 1; }
+
+	# The launcher is what the pane execs, so it is resolved to an absolute path
+	# rather than looked up in PATH. _cr_launcher keeps the bare name: it is what
+	# the reply reports and what the log records, and the name is the contract.
+	_cr_launcher="$(fcc_agent_command "$_cr_agent")"
+	_cr_launcher_exe="$(fcc_agent_launcher_path "$_cr_agent")" || {
+		fcc_die "the launcher for '$_cr_agent' ('$_cr_launcher') is missing from the runtime"; return 1; }
+
 	if [ -z "$(fcc_server_pid 2>/dev/null || true)" ]; then
 		fcc_die "the FCC server is not running — start it first"; return 1
 	fi
 
 	_cr_name="$(next_session_name "$_cr_agent")" || { fcc_die "no free session slot"; return 1; }
 
-	# The launcher itself connects to the FCC server. $_cr_launcher and $ROOT are
-	# both validated values, never user input, so the command string cannot be
-	# injected into.
-	_cr_cmd="$(session_env_exports) exec $_cr_launcher"
+	# The launcher itself connects to the FCC server. $_cr_launcher_exe and $ROOT
+	# are both validated values, never user input, so the command string cannot
+	# be injected into.
+	_cr_cmd="$(session_env_exports) exec $_cr_launcher_exe"
 
 	# The pane is created holding `cat`, which waits on stdin and prints nothing,
 	# and the agent is started afterwards by respawning it. Passing the command to
