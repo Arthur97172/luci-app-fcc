@@ -291,7 +291,11 @@ fi
 while IFS='|' read -r _ad_id _ad_name _ad_launch _ad_rest; do
 	case "$_ad_id" in ''|\#*) continue ;; esac
 	[ -n "$_ad_launch" ] || continue
-	if command -v "$_ad_launch" >/dev/null 2>&1; then
+	# The shared rule, not a bare `command -v`. This file already asks the
+	# question the right way for its bash check above — fcc_installed_agents
+	# takes the root — and the two answers have to agree. The launchers live in
+	# <root>/bin, which the doctor does not have on PATH.
+	if fcc_agent_installed "$_ad_id" "$ROOT"; then
 		add_result OK "$_ad_name" "installed" "optional" ""
 	else
 		add_result WARN "$_ad_name" "not installed" "optional" \

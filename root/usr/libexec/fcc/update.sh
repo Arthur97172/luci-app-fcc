@@ -188,9 +188,12 @@ installed_agents() {
 	_ia_out=""
 	while IFS='|' read -r _ia_id _ia_rest; do
 		case "$_ia_id" in ''|\#*) continue ;; esac
-		_ia_cmd="$(fcc_agent_command "$_ia_id")"
-		[ -n "$_ia_cmd" ] || continue
-		command -v "$_ia_cmd" >/dev/null 2>&1 && _ia_out="$_ia_out $_ia_id"
+		# fcc_agent_installed, not a bare `command -v`: this set is handed to
+		# install.sh as --agents, and an empty set there does not merely mislabel
+		# a row — install.sh reads it as "no selection" and installs upstream's
+		# nine default agents onto a device that had one. The launchers are in
+		# <root>/bin, which is not on PATH here.
+		fcc_agent_installed "$_ia_id" "$ROOT" && _ia_out="$_ia_out $_ia_id"
 	done <<-EOF
 	$(fcc_agents_each)
 	EOF

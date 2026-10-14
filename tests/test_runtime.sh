@@ -3231,4 +3231,148 @@ test_doctor_blocking_names_what_failed_and_what_to_do() {
 		'"install_allowed": false' "and the verdict it comes from still blocks"
 }
 
+# ---------------------------------------------------------------------------
+# "Is this agent installed?" is one question with one answer
+#
+# The launchers live in <root>/bin. Nothing that asks about them has that
+# directory on PATH: the LuCI relay reaches the backend through io.popen under
+# uhttpd, whose PATH is the system one, and `fcc-env agent` runs agent.sh
+# without applying the runtime environment on purpose. So a bare
+# `command -v fcc-claude` answers "no" on a box where fcc-claude is installed,
+# and every agent row on every page said 未安装 beside a runtime row that said
+# 已安装 — because fcc_find_server_exe() probes <root>/bin/fcc-server by
+# absolute path *first*, and the agent rows did not.
+#
+# common.sh already had the right rule, the <root>/bin fallback included, with
+# a comment saying why. It was re-derived with the fallback left out in five
+# other places. These tests ask each of those five the same question, with a
+# PATH that cannot answer it by accident.
+# ---------------------------------------------------------------------------
+
+# The real PATH, minus every directory that could resolve an fcc-* name.
+#
+# Copying the tools into a directory of our own is not needed and shadowing
+# them would not work: what has to go is the directory, not the name. Dropping
+# only the launcher's own directory keeps sed, awk and df reachable, so a
+# failure here is the question being answered wrongly rather than the script
+# being starved of tools.
+make_launcherless_path() {
+	_lp_out=""
+	_lp_ifs="$IFS"; IFS=:
+	for _lp_d in $PATH; do
+		[ -d "$_lp_d" ] || continue
+		_lp_has=0
+		for _lp_f in "$_lp_d"/fcc-*; do
+			[ -e "$_lp_f" ] && { _lp_has=1; break; }
+		done
+		[ "$_lp_has" = 1 ] && continue
+		_lp_out="${_lp_out:+$_lp_out:}$_lp_d"
+	done
+	IFS="$_lp_ifs"
+	printf '%s' "$_lp_out"
+}
+
+# A runtime root with the server and one agent launcher in it — the state every
+# successful install leaves behind. Prints the base to hand to FCC_DEFAULT_BASE.
+setup_installed_root() {
+	_ir_base="$SANDBOX/installed/opt"
+	rm -rf "$SANDBOX/installed"
+	mkdir -p "$_ir_base/fcc/bin" "$_ir_base/fcc/logs" \
+	         "$_ir_base/fcc/cache" "$_ir_base/fcc/data"
+	printf '#!/bin/sh\necho 6.16.4\n' > "$_ir_base/fcc/bin/fcc-server"
+	printf '#!/bin/sh\necho 2.0.1\n'  > "$_ir_base/fcc/bin/fcc-claude"
+	chmod +x "$_ir_base/fcc/bin/fcc-server" "$_ir_base/fcc/bin/fcc-claude"
+	printf '%s' "$_ir_base"
+}
+
+# Run a backend script with a given PATH and a given install base. This is
+# sh_script with the two things the question turns on made explicit.
+sh_blind() { # sh_blind <path> <base> <script> [args...]
+	_sb_path="$1"; _sb_base="$2"; _sb_script="$3"; shift 3
+	env PATH="$_sb_path" \
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$_sb_base" \
+		sh "$LIBEXEC/$_sb_script" "$@" 2>&1
+}
+
+# update.sh ends with the same dispatch install.sh does, so its functions are
+# reached the same way: from a copy with the dispatch stripped.
+update_lib() {
+	_ul_dst="$SANDBOX/lib-update.sh"
+	[ -f "$_ul_dst" ] || sed '/^case "${1:-}" in$/,$d' "$LIBEXEC/update.sh" > "$_ul_dst"
+	printf '%s' "$_ul_dst"
+}
+
+# Run a snippet with update.sh's functions defined, under a given PATH and base.
+sh_update() { # sh_update <path> <base> <code>
+	env PATH="$1" \
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$2" \
+		sh -c '. "$1"; eval "$2"' _ "$(update_lib)" "$3" 2>&1
+}
+
+# The same for install.sh's functions, which are reached through sh_install
+# everywhere else; this variant controls PATH and the base the way the test
+# above needs.
+sh_install_blind() { # sh_install_blind <path> <base> <code>
+	env PATH="$1" \
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$2" \
+		sh -c '. "$1"; eval "$2"' _ "$(install_lib)" "$3" 2>&1
+}
+
+test_an_installed_agent_is_reported_installed_without_being_on_path() {
+	setup_sandbox
+	_tr_base="$(setup_installed_root)"
+	_tr_path="$(make_launcherless_path)"
+
+	# The precondition, asserted rather than assumed. If this PATH could still
+	# resolve a launcher, every assertion below would pass for a reason that has
+	# nothing to do with the code under test.
+	assert_no "the test PATH cannot resolve a launcher" \
+		env PATH="$_tr_path" sh -c 'command -v fcc-claude'
+
+	# common.sh's rule is the one the others should be using, so it is asserted
+	# first: everything below is a statement that they now agree with it.
+	assert_ok "common.sh finds the launcher in <root>/bin" \
+		env PATH="$_tr_path" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		sh -c '. "$1/common.sh"; fcc_agent_installed claude "$2"' \
+		_ "$LIBEXEC" "$SANDBOX/installed/opt/fcc"
+
+	# 配置 → 智能体, and the Web Console's agent list, which is the same call.
+	_tr_list="$(sh_blind "$_tr_path" "$_tr_base" agent.sh list)"
+	assert_contains "$_tr_list" '"id": "claude"' "the agent list covers the registry"
+	assert_contains "$(printf '%s\n' "$_tr_list" | grep '"id": "claude"')" \
+		'"installed": true' "the agent list reports the launcher in <root>/bin"
+
+	# 基本信息: the batched document status.sh writes.
+	_tr_status="$(sh_blind "$_tr_path" "$_tr_base" status.sh)"
+	assert_contains "$(printf '%s\n' "$_tr_status" | grep '"claude":')" \
+		'"installed": true' "the status document reports the launcher in <root>/bin"
+	# The two rows the bug report set against each other. The runtime row was
+	# right all along — it probes by absolute path — and it is asserted here so
+	# that a future change to it cannot quietly make the two disagree again.
+	assert_contains "$_tr_status" '"fcc": {"installed": true' \
+		"and the runtime row agrees with it"
+
+	# The doctor's agent list (section 80). doctor.sh already asks this question
+	# the right way for its bash check, in the same file.
+	_tr_doc="$(sh_blind "$_tr_path" "$_tr_base" doctor.sh 2>&1 | grep 'Claude Code')"
+	assert_contains "$_tr_doc" 'installed' "the doctor reports the agent as installed"
+	assert_not_contains "$_tr_doc" 'not installed' "and not as missing"
+
+	# The update path's own copy, which decides the --agents set the update
+	# reinstalls. An empty set there does not merely mislabel a row: install.sh
+	# falls back to upstream's defaults and installs nine agents onto a device
+	# that had one.
+	assert_contains "$(sh_update "$_tr_path" "$_tr_base" 'installed_agents')" \
+		' claude' "the update path counts the launcher in <root>/bin"
+
+	# And the metadata the install records, which is the fallback agent.sh reads
+	# a version from when the probe cannot run.
+	sh_install_blind "$_tr_path" "$_tr_base" 'write_runtime_metadata' >/dev/null 2>&1
+	assert_contains "$(cat "$_tr_base/fcc/runtime.json" 2>/dev/null)" \
+		'"claude": true' "the runtime metadata records the launcher in <root>/bin"
+}
+
 tests_main

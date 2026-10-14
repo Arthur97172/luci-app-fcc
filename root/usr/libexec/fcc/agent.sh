@@ -20,11 +20,19 @@ set -u
 
 ROOT="$(fcc_root)"
 
-agent_installed() {
-	_ai_cmd="$(fcc_agent_command "$1")" || return 1
-	[ -n "$_ai_cmd" ] || return 1
-	command -v "$_ai_cmd" >/dev/null 2>&1
-}
+# There is deliberately no agent_installed() here.
+#
+# This file used to carry its own, and it was a bare `command -v` on the
+# launcher name. The launchers live in <root>/bin, and nothing that reaches
+# this file has that directory on PATH: the controller runs it through
+# io.popen under uhttpd, and `fcc-env agent` runs it without applying the
+# runtime environment. So the copy answered "not installed" on every box where
+# the agent was installed, which is what the whole Configuration page, the Web
+# Console and Basic Information showed next to a runtime row that said
+# 已安装 — that one probes <root>/bin/fcc-server by absolute path.
+#
+# common.sh's fcc_agent_installed() is the rule, the fallback included, and it
+# is used here directly rather than re-derived.
 
 agent_running() {
 	_ar_cmd="$(fcc_agent_command "$1")" || return 1
@@ -68,7 +76,7 @@ emit_agent_json() {
 	_ea_id="$1"
 	_ea_name="$(fcc_agent_name "$_ea_id")"
 	_ea_cmd="$(fcc_agent_command "$_ea_id")"
-	_ea_inst=false; agent_installed "$_ea_id" && _ea_inst=true
+	_ea_inst=false; fcc_agent_installed "$_ea_id" "$ROOT" && _ea_inst=true
 	_ea_run=false;  agent_running  "$_ea_id" && _ea_run=true
 	_ea_pid=""
 	if [ "$_ea_run" = true ]; then
@@ -125,7 +133,7 @@ cmd_versions() {
 	while IFS='|' read -r _cv_aid _cv_rest; do
 		case "$_cv_aid" in ''|\#*) continue ;; esac
 		[ -n "$_cv_aid" ] || continue
-		agent_installed "$_cv_aid" || continue
+		fcc_agent_installed "$_cv_aid" "$ROOT" || continue
 		if [ "$_cv_refresh" -eq 1 ]; then
 			_cv_v="$(detect_agent_version "$_cv_aid" || true)"
 			[ -n "$_cv_v" ] && fcc_cache_set "agent_$_cv_aid" "$_cv_v"
@@ -141,7 +149,7 @@ installed_set() {
 	_is_out=""
 	while IFS='|' read -r _is_aid _is_rest; do
 		case "$_is_aid" in ''|\#*) continue ;; esac
-		agent_installed "$_is_aid" && _is_out="$_is_out $_is_aid"
+		fcc_agent_installed "$_is_aid" "$ROOT" && _is_out="$_is_out $_is_aid"
 	done <<-EOF
 	$(fcc_agents_each)
 	EOF

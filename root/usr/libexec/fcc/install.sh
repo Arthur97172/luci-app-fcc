@@ -548,11 +548,17 @@ write_runtime_metadata() {
 		# Section 81's agents map: which agents are installed, keyed by id. The
 		# executable check is what decides membership — this file is a record of
 		# what was seen, never the source of truth for what exists.
+		#
+		# fcc_agent_installed with the root, not a bare `command -v` on the
+		# launcher name. This function happens to run with the runtime
+		# environment applied, so the launcher directory is on PATH here — but
+		# that is a property of the caller, not of the question, and the answer
+		# must not depend on which of the two a future caller is.
 		printf ',\n  "agents": {'
 		_wm_sep=""
 		while IFS='|' read -r _wm_id _wm_rest; do
 			case "$_wm_id" in ''|\#*) continue ;; esac
-			command -v "$(fcc_agent_command "$_wm_id")" >/dev/null 2>&1 || continue
+			fcc_agent_installed "$_wm_id" "$ROOT" || continue
 			printf '%s"%s": true' "$_wm_sep" "$_wm_id"
 			_wm_sep=", "
 		done <<-EOF
@@ -567,7 +573,7 @@ write_runtime_metadata() {
 		# trailing comma would make the whole document unparseable.
 		while IFS='|' read -r _wm_id _wm_rest; do
 			case "$_wm_id" in ''|\#*) continue ;; esac
-			command -v "$(fcc_agent_command "$_wm_id")" >/dev/null 2>&1 || continue
+			fcc_agent_installed "$_wm_id" "$ROOT" || continue
 			_wm_av="$(fcc_detect_version "$(fcc_agent_probe "$_wm_id")" --version 2>/dev/null || true)"
 			[ -n "$_wm_av" ] || continue
 			printf ',\n  "agent_version_%s": %s' "$_wm_id" "$(fcc_json_str "$_wm_av")"
