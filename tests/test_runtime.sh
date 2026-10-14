@@ -2446,9 +2446,21 @@ test_installer_answers_follow_the_agent_that_was_asked_about() {
 
 	# RTK is not a coding agent, and its own default is no. Declining is both
 	# the default and the smaller change to the router.
+	#
+	# Both wordings are pinned, and the second one is why. The rule used to
+	# match the first literally — upstream's wording of the day — and when
+	# upstream grew a second product ("Enable RTK + Headroom token
+	# optimization?") that literal stopped appearing in the question. An
+	# unmatched prompt is not answered, so every install sat on it until
+	# FCC_INSTALLER_TIMEOUT rolled it back, half an hour later, with no reason
+	# in the log. A rule anchored on the phrase survives the product name
+	# growing; a rule anchored on the product name does not.
 	assert_eq "n" \
 		"$(sh_install 'installer_answer_for "Enable RTK token optimization globally for the selected coding agents? [y/N]" "claude" set')" \
-		"the RTK prompt is declined"
+		"the RTK prompt is declined under its older wording"
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Enable RTK + Headroom token optimization? [y/N]" "claude" set')" \
+		"the RTK prompt is declined under its current wording"
 
 	# An agent this package has no id for is declined rather than guessed at,
 	# and rather than left waiting for an answer that is never coming.
@@ -2554,7 +2566,7 @@ test_installer_drives_the_agent_prompts_through_a_terminal() {
 	printf '%s' "$HOME" > "$S/env-home"
 	ask 'Install Claude Code for fcc-claude? [Y/n] '
 	ask 'Install Codex for fcc-codex? [Y/n] '
-	ask 'Enable RTK token optimization globally for the selected coding agents? [y/N] '
+	ask 'Enable RTK + Headroom token optimization? [y/N] '
 	printf '%s|%s|%s\n' "$(cat "$S/answer-1")" "$(cat "$S/answer-2")" \
 		"$(cat "$S/answer-3")" > "$S/transcript"
 	exit "${FAKE_INSTALLER_RC:-0}"
@@ -2622,8 +2634,119 @@ test_installer_drives_the_agent_prompts_through_a_terminal() {
 	assert_contains "$(cat "$_ia_s/pipe-pane" 2>/dev/null)" "logs/installer.out" \
 		"the installer's output is wired to logs/installer.out"
 	assert_contains "$(cat "$SANDBOX/opt/fcc/logs/installer.out" 2>/dev/null)" \
-		"Enable RTK token optimization" \
+		"Enable RTK + Headroom token optimization" \
 		"the last screen is appended to logs/installer.out"
+}
+
+# A question with no rule must be reported, not waited out.
+#
+# Upstream asks everything through prompt_yes_no(), which prints the question
+# and then blocks on the read. A question this package has no rule for is
+# therefore not a lull in the installer's output — it is a deadlock, and the
+# only thing that used to end it was FCC_INSTALLER_TIMEOUT: half an hour, then a
+# rollback, and a log that named no cause at all. That is what upstream's
+# reworded RTK question cost, and it is not something a reader can diagnose from
+# the page: the install simply took thirty minutes and failed.
+#
+# The run stops in seconds now, and the question itself is printed. It is the
+# whole diagnosis — the transcript holds it too, but that is a terminal screen
+# in a file the reader has to go and find, and the job log is where they are
+# already looking.
+test_an_unrecognised_prompt_is_reported_rather_than_waited_out() {
+	setup_sandbox
+	_ur_s="$SANDBOX/tmux-state-unknown"
+	mkdir -p "$_ur_s" "$SANDBOX/bin" "$SANDBOX/opt"
+	: > "$_ur_s/answers"
+
+	# The same stand-in as above, and deliberately its own copy: the state
+	# directory is per-test, and a stand-in reaching into another test's would
+	# be the coupling this file exists to avoid.
+	cat > "$SANDBOX/bin/tmux" <<-'EOF'
+	#!/bin/sh
+	S="$FAKE_TMUX_DIR"
+	case "$1" in
+	new-session)
+		shift
+		for a in "$@"; do cmd="$a"; done
+		cmd="$(printf '%s' "$cmd" | sed 's/; *sleep 300$//')"
+		( sh -c "$cmd" ) >/dev/null 2>&1 &
+		;;
+	pipe-pane)    printf '%s\n' "$*" >> "$S/pipe-pane" ;;
+	capture-pane) sed 's/[[:space:]]*$//' "$S/pane" 2>/dev/null ;;
+	send-keys)
+		shift; shift; shift
+		for a in "$@"; do
+			if [ "$a" = Enter ]; then printf '\n' >> "$S/answers"
+			else printf '%s' "$a" >> "$S/answers"; fi
+		done
+		;;
+	kill-session) : ;;
+	esac
+	exit 0
+	EOF
+	chmod +x "$SANDBOX/bin/tmux"
+
+	# One question this package knows and one it does not. The installer blocks
+	# on the second exactly as upstream's prompt_yes_no() does — the stand-in's
+	# ask() waits for a line to appear in $S/answers, and no line ever will,
+	# because run_installer has no rule that would send one.
+	#
+	# The wait also ends on a stop file, which the test writes once the run is
+	# over. kill-session here is a no-op, as it is in the stand-in above, so
+	# without it a question that is never answered would leave a sleeper behind
+	# reading this directory while the next test runs. A stop file rather than a
+	# fixed number of iterations because the two cases differ by two orders of
+	# magnitude — seconds when the detector fires, the whole deadline when it
+	# does not — and a bound picked for one is either a long tail on the other
+	# or no backstop at all.
+	cat > "$SANDBOX/opt/fake-installer.sh" <<-'EOF'
+	#!/bin/sh
+	S="$FAKE_TMUX_DIR"
+	i=0
+	ask() {
+		i=$(( i + 1 ))
+		printf '%s' "$1" > "$S/pane"
+		while [ "$(wc -l < "$S/answers" | tr -d ' ')" -lt "$i" ]; do
+			[ -e "$S/stop" ] && exit 0
+			sleep 0.1
+		done
+		sed -n "${i}p" "$S/answers" > "$S/answer-$i"
+	}
+	ask 'Install Claude Code for fcc-claude? [Y/n] '
+	ask 'Enable Telemetry Reporting? [y/N] '
+	printf 'reached\n' > "$S/transcript"
+	exit 0
+	EOF
+	chmod +x "$SANDBOX/opt/fake-installer.sh"
+
+	# The deadline is a minute and the stall threshold is two polls, so the two
+	# outcomes are twenty seconds apart and the assertion below can tell them
+	# apart: a detector that did not fire shows up as a run that sat for the
+	# whole minute, which is exactly the failure this test exists to catch.
+	_ur_start="$(date +%s)"
+	_ur_out="$( export FAKE_TMUX_DIR="$_ur_s" FCC_INSTALLER_TIMEOUT=60 FCC_PROMPT_STALL_POLLS=2
+		sh_install "run_installer \"\$FCC_DEFAULT_BASE/fake-installer.sh\" \"claude\" 0; echo \"rc=\$?\"" )"
+	_ur_elapsed=$(( $(date +%s) - _ur_start ))
+	# Release the stand-in. Nothing will ever answer its second question, and
+	# kill-session does not reach it.
+	: > "$_ur_s/stop"
+
+	assert_contains "$_ur_out" "PROMPT_NOT_RECOGNISED" \
+		"a question with no rule is reported rather than waited out"
+	assert_contains "$_ur_out" "Enable Telemetry Reporting? [y/N]" \
+		"and the question itself is printed, because it is the whole diagnosis"
+	assert_contains "$_ur_out" "rc=1" "the run fails rather than reporting success"
+	assert_eq "no" "$([ -f "$_ur_s/transcript" ] && echo yes || echo no)" \
+		"the installer never got past the question"
+	assert_eq "yes" "$([ "$_ur_elapsed" -lt 20 ] && echo yes || echo no)" \
+		"the run is stopped in seconds rather than waiting out the deadline"
+
+	# The transcript still ends up in the log: the report above goes to the job
+	# log, and logs/installer.out remains the full screen for anyone who wants
+	# the surrounding context.
+	assert_contains "$(cat "$SANDBOX/opt/fcc/logs/installer.out" 2>/dev/null)" \
+		"Enable Telemetry Reporting" \
+		"the question is in the transcript as well"
 }
 
 # The same protocol again, against a real tmux.

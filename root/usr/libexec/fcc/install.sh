@@ -159,6 +159,12 @@ precheck_failures() {
 # they are called, what order they come in — stays upstream's business.
 # ---------------------------------------------------------------------------
 FCC_INSTALLER_TIMEOUT="${FCC_INSTALLER_TIMEOUT:-1800}"
+# How many consecutive one-second polls an unrecognised question may hold the
+# screen before the run is stopped and the question named. Five is far longer
+# than any real prompt needs — a recognised one is answered on the first poll —
+# and far shorter than the deadline above, which is the point: see the answer
+# loop in run_installer().
+FCC_PROMPT_STALL_POLLS="${FCC_PROMPT_STALL_POLLS:-5}"
 
 installer_session() { printf 'fcc-installer'; }
 
@@ -293,10 +299,21 @@ installer_answer_for() {
 			esac
 			return 0
 			;;
-		*'Enable RTK token optimization'*)
-			# Section 3.6.5 is about coding agents; RTK is a token-saving proxy
-			# the user did not ask for, and its own default is no. Declining is
-			# both the default and the smaller change to the router.
+		*'token optimization'*)
+			# Section 3.6.5 is about coding agents; RTK and Headroom are a
+			# token-saving pair the user did not ask for, and upstream's own
+			# default for them is no. Declining is both the default and the
+			# smaller change to the router.
+			#
+			# The anchor is the phrase, not the product. This rule used to read
+			# `*'Enable RTK token optimization'*` — upstream's wording of the
+			# day, matched exactly — and it worked until upstream grew a second
+			# product: "Enable RTK + Headroom token optimization?". The literal
+			# no longer appeared in the question, the rule stopped matching, and
+			# because an unmatched prompt is simply not answered, every install
+			# then sat on that question until FCC_INSTALLER_TIMEOUT rolled it
+			# back. "token optimization" is the part that names what is being
+			# offered, and it is the part upstream has kept through the reword.
 			printf 'n'
 			return 0
 			;;
@@ -400,6 +417,11 @@ run_installer() {
 	_ri_answered=""
 	_ri_deadline=$(( $(date +%s) + FCC_INSTALLER_TIMEOUT ))
 	_ri_stuck=0
+	# The unrecognised question currently on screen, and how many polls in a row
+	# it has been there. See the else branch below.
+	_ri_unknown=""
+	_ri_unknown_polls=0
+	_ri_unanswered=""
 	while :; do
 		installer_finished "$_ri_rc" && break
 		if [ "$(date +%s)" -ge "$_ri_deadline" ]; then
@@ -408,6 +430,8 @@ run_installer() {
 		fi
 		_ri_line="$(installer_last_line)"
 		if _ri_ans="$(installer_answer_for "$_ri_line" "$_ri_agents" "$_ri_mode")"; then
+			_ri_unknown=""
+			_ri_unknown_polls=0
 			case "$_ri_answered" in
 				*"|$_ri_line|"*)
 					_ri_stuck=1
@@ -418,6 +442,42 @@ run_installer() {
 			_ri_answered="$_ri_answered|$_ri_line|"
 			fcc_log "$LOG" "installer prompt answered: $_ri_line -> $_ri_ans"
 			tmux send-keys -t "$(installer_session)" "$_ri_ans" Enter 2>/dev/null
+		else
+			# Nothing in the table matches this line. Most of what the installer
+			# prints has no rule and should have none — step banners, progress
+			# lines — and those are gone by the next poll, so their staying is
+			# not a signal.
+			#
+			# A question is different. Upstream asks all of its questions
+			# through prompt_yes_no(), which prints "<question> [y/N] " (or
+			# [Y/n]) and then blocks on the read; the question therefore holds
+			# the bottom of the pane until somebody answers it. An unrecognised
+			# question is not a lull — it is a deadlock, and the only thing that
+			# ends it is the deadline above: half an hour later, with the
+			# rollback and no reason recorded. That is exactly what upstream's
+			# RTK reword cost, so an unrecognised question is now counted and
+			# reported in seconds instead. See DESIGN_SPEC.md section 104.16.
+			#
+			# The marker is upstream's own prompt, and it is the whole marker
+			# set: the installer has exactly two places that ask anything
+			# (select_coding_agent and the RTK question) and both go through
+			# prompt_yes_no(). A line that ends in one of these is a question
+			# waiting for an answer, whatever it is about.
+			case "$_ri_line" in
+				*'[y/N]'*|*'[Y/n]'*)
+					if [ "$_ri_line" = "$_ri_unknown" ]; then
+						_ri_unknown_polls=$(( _ri_unknown_polls + 1 ))
+					else
+						_ri_unknown="$_ri_line"
+						_ri_unknown_polls=1
+					fi
+					if [ "$_ri_unknown_polls" -ge "$FCC_PROMPT_STALL_POLLS" ]; then
+						_ri_unanswered="$_ri_line"
+						fcc_log "$LOG" "installer is waiting on a question this package does not recognise: $_ri_line"
+						break
+					fi
+					;;
+			esac
 		fi
 		sleep 1
 	done
@@ -434,6 +494,17 @@ run_installer() {
 	# could not source the environment, or tmux refused the session), or the
 	# run was cut short by the timeout above.
 	[ "$_ri_stuck" = 1 ] && printf 'AGENT_SELECTION_REJECTED\n'
+	# A question we could not answer. The question is printed in full because it
+	# is the only thing that says which rule is missing — upstream's own
+	# transcript has it, but that is a terminal screen in a file the reader has
+	# to go find, and the job log is where they are already looking. The line
+	# that ends this output is the marker, matching the shape of the others.
+	[ -n "$_ri_unanswered" ] && {
+		printf 'The installer asked a question this package does not know how to answer:\n'
+		printf '  %s\n' "$_ri_unanswered"
+		printf 'Nothing was installed. Please report this — the question above is the whole diagnosis.\n'
+		printf 'PROMPT_NOT_RECOGNISED\n'
+	}
 	fcc_log "$LOG" "installer did not report an exit status; see logs/installer.out"
 	return 1
 }
