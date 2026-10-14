@@ -1283,9 +1283,11 @@ test_a_session_asks_whether_the_agent_is_installed_not_whether_the_launcher_is_o
 	_tr_srv=$!
 
 	# The launcher is what the pane execs. Held open so the session is still
-	# alive when it is asked about, which is what proves the pane really started.
-	printf '#!/bin/sh\ntrap "exit 0" TERM INT\nwhile :; do sleep 1; done\n' \
-		> "$_tr_root/bin/fcc-claude"
+	# alive when it is asked about, which is what proves the pane really started
+	# — and before it settles it records what its own PATH resolves `claude` to,
+	# which is the question the report was really about.
+	printf '#!/bin/sh\ncommand -v claude > %s/launcher-resolved.txt 2>&1\ntrap "exit 0" TERM INT\nwhile :; do sleep 1; done\n' \
+		"$SANDBOX" > "$_tr_root/bin/fcc-claude"
 	chmod +x "$_tr_root/bin/fcc-claude"
 
 	_tr_created="$(sh_blind "$_tr_path" "$_tr_base" session.sh create claude 80 24)"
@@ -1299,6 +1301,25 @@ test_a_session_asks_whether_the_agent_is_installed_not_whether_the_launcher_is_o
 		"exec $_tr_root/bin/fcc-claude" \
 		"the pane execs the launcher at its absolute path"
 
+	# And the pane is handed a PATH the *CLI* is reachable on, not just the one
+	# the launcher sits in. This is the second half of the same report: with
+	# only <root>/bin on its PATH the pane started the launcher successfully and
+	# then watched it exit 127 — "Could not find Claude Code command: claude" —
+	# because upstream resolves that command with a bare PATH lookup. §104.21.
+	assert_contains "$(tmux display-message -p -t "$_tr_name" '#{pane_start_command}' 2>/dev/null)" \
+		"$_tr_root/data/.local/bin" \
+		"the pane's PATH includes the directory the agent CLI is installed in"
+
+	# And the end of it, from inside the running pane rather than from the
+	# command string: the launcher resolves `claude`. This is the assertion the
+	# report would have passed — the launcher started, and then could not find
+	# the command it exists to run, which is exit code 127 and
+	# "Could not find Claude Code command: claude".
+	sleep 1
+	assert_eq "$_tr_root/data/.local/bin/claude" \
+		"$(cat "$SANDBOX/launcher-resolved.txt" 2>/dev/null)" \
+		"the launcher finds its CLI from inside the pane"
+
 	# An agent that is genuinely absent is still refused. Every launcher is
 	# present — uv writes all sixteen in one go — so a predicate that reads the
 	# launcher accepts this one too, which is the same confusion in the other
@@ -1308,6 +1329,110 @@ test_a_session_asks_whether_the_agent_is_installed_not_whether_the_launcher_is_o
 
 	tmux kill-session -t "$_tr_name" 2>/dev/null
 	kill "$_tr_srv" 2>/dev/null
+}
+
+# session.sh's functions, reached the way install_lib() reaches install.sh's:
+# from a copy with the dispatch stripped. Sourcing it whole would run the case
+# statement and exit.
+session_lib() {
+	_sl_dst="$SANDBOX/lib-session.sh"
+	[ -f "$_sl_dst" ] || sed '/^case "${1:-}" in$/,$d' "$LIBEXEC/session.sh" > "$_sl_dst"
+	printf '%s' "$_sl_dst"
+}
+
+test_the_pane_environment_puts_the_agent_cli_on_path() {
+	setup_sandbox
+	# Section 104.21, without tmux in the way: the environment a pane is given,
+	# applied to a shell that starts with neither the launcher nor the CLI
+	# reachable. That starting state is not a convenience of the test — tmux
+	# hands a new pane the *server's* environment, not the environment of
+	# whatever asked for the pane, so a PATH that has to be extended really is
+	# extended from nothing.
+	#
+	# The bug: session_env_exports() was a hand-written second copy of the
+	# runtime environment and its PATH held only <root>/bin, where the sixteen
+	# fcc-* launchers live and no agent CLI does. Every session therefore
+	# reached its launcher and died inside it with exit code 127.
+	_pe_base="$(setup_installed_root)"
+	_pe_root="$_pe_base/fcc"
+	_pe_path="$(make_agentless_path)"
+
+	# Stated, not assumed: neither name resolves before the environment is
+	# applied, and both exist under the root afterwards.
+	for _pe_n in fcc-claude claude; do
+		assert_no "the starting PATH cannot resolve $_pe_n" \
+			env PATH="$_pe_path" sh -c 'command -v "$1"' _ "$_pe_n"
+	done
+	assert_exec "$_pe_root/bin/fcc-claude"
+	assert_exec "$_pe_root/data/.local/bin/claude"
+
+	_pe_env="$(env PATH="$_pe_path" \
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$_pe_base" \
+		sh -c '. "$1"; session_env_exports' _ "$(session_lib)" 2>&1)"
+
+	assert_contains "$_pe_env" "$_pe_root/data/.local/bin" \
+		"the pane's PATH names the directory the agent CLI is installed in"
+
+	# The rule rather than the string: a shell that applies this environment and
+	# nothing else resolves `claude`, and resolves it to the CLI under this root
+	# rather than to some other installation that happens to be on the host.
+	_pe_found="$(env PATH="$_pe_path" \
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$_pe_base" \
+		sh -c '. "$1"; session_env_exports > "$2"; . "$2"; command -v claude' _ \
+		"$(session_lib)" "$SANDBOX/pane-env.sh" 2>&1)"
+	assert_eq "$_pe_root/data/.local/bin/claude" "$_pe_found" \
+		"a shell given the pane's environment resolves the agent CLI"
+
+	# And the launcher is still what wins for its own name: <root>/bin comes
+	# first, so `fcc-claude` is the runtime's launcher and not a system copy.
+	_pe_launcher="$(env PATH="$_pe_path" \
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$_pe_base" \
+		sh -c '. "$1"; session_env_exports > "$2"; . "$2"; command -v fcc-claude' _ \
+		"$(session_lib)" "$SANDBOX/pane-env.sh" 2>&1)"
+	assert_eq "$_pe_root/bin/fcc-claude" "$_pe_launcher" \
+		"the runtime's own launcher still wins on the pane's PATH"
+}
+
+test_the_runtime_environment_has_one_definition() {
+	setup_sandbox
+	# The same rule, counted rather than described: install.sh, fcc-env and the
+	# pane all render one list, and a fourth hand-written copy is exactly how
+	# the pane's PATH came to be missing its agent directories. The list is
+	# fcc_runtime_bin_dirs(); everything else has to be reading it.
+	_rb_base="$(setup_installed_root)"
+	_rb_root="$_rb_base/fcc"
+
+	_rb_path="$(make_agentless_path)"
+	_rb_want="$(printf '%s\n%s\n%s\n%s\n%s\n%s' \
+		"$_rb_root/bin" \
+		"$_rb_root/data/.local/bin" \
+		"$_rb_root/data/.cargo/bin" \
+		"$_rb_root/data/.opencode/bin" \
+		"$_rb_root/data/.local/share/pi-node/current/bin" \
+		"$_rb_root/data/.grok/bin")"
+
+	assert_eq "$_rb_want" \
+		"$(sh_blind_code "$_rb_path" "$_rb_base" 'fcc_runtime_bin_dirs "$FCC_DEFAULT_BASE/fcc"')" \
+		"the one list holds the runtime bin and every agent CLI directory"
+
+	# Joined for PATH in the same order, which is what makes the launchers win.
+	assert_eq "$(printf '%s' "$_rb_want" | tr '\n' ':')" \
+		"$(sh_blind_code "$_rb_path" "$_rb_base" 'fcc_runtime_bin_path "$FCC_DEFAULT_BASE/fcc"')" \
+		"the PATH form is the same list, joined"
+
+	# fcc_agent_installed() and the PATH must agree about where to look. The
+	# CLI is found under the root while the PATH resolves neither it nor the
+	# launcher, which is exactly the state that made the two disagree in the
+	# report.
+	assert_ok "the agent probe reads the same list" \
+		sh_blind_code "$_rb_path" "$_rb_base" \
+		'fcc_agent_installed claude "$FCC_DEFAULT_BASE/fcc"'
+	assert_no "and still refuses an agent that is not there" \
+		sh_blind_code "$_rb_path" "$_rb_base" \
+		'fcc_agent_installed codex "$FCC_DEFAULT_BASE/fcc"'
 }
 
 test_old_backups_are_pruned_to_the_most_recent_n() {
@@ -3425,9 +3550,9 @@ setup_installed_root() {
 	# The server is the one launcher whose version the runtime row reads.
 	printf '#!/bin/sh\necho 6.16.4\n' > "$_ir_base/fcc/bin/fcc-server"
 	chmod +x "$_ir_base/fcc/bin/fcc-server"
-	# The agent that was actually installed, where upstream's own
-	# add_known_bin_directories() looks for it: $HOME/.local/bin with
-	# HOME=<root>/data. This path is from the bug report's install log —
+	# The agent that was actually installed, at $HOME/.local/bin with
+	# HOME=<root>/data — the first place fcc_runtime_bin_dirs() names after the
+	# runtime's own bin. This path is from the bug report's install log:
 	# `+ /opt/fcc/data/.local/bin/claude --version`.
 	printf '#!/bin/sh\necho 2.1.299 (Claude Code)\n' > "$_ir_base/fcc/data/.local/bin/claude"
 	chmod +x "$_ir_base/fcc/data/.local/bin/claude"
@@ -3447,6 +3572,18 @@ sh_blind() { # sh_blind <path> <base> <script> [args...]
 		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
 		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$_sb_base" \
 		sh "$LIBEXEC/$_sb_script" "$@" 2>&1
+}
+
+# sh_blind for a *snippet* rather than a script: common.sh sourced, then the
+# code given as the third argument evaluated. sh_common() and sh_common_tools()
+# above run snippets too, but neither lets a test choose the install base, and
+# the question here is about a root that is not the sandbox default.
+sh_blind_code() { # sh_blind_code <path> <base> <code>
+	_sbc_path="$1"; _sbc_base="$2"; _sbc_code="$3"
+	env PATH="$_sbc_path" \
+		FCC_LIBDIR="$LIBEXEC" FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" FCC_DEFAULT_BASE="$_sbc_base" \
+		sh -c '. "$1/common.sh"; eval "$2"' _ "$LIBEXEC" "$_sbc_code" 2>&1
 }
 
 # update.sh ends with the same dispatch install.sh does, so its functions are

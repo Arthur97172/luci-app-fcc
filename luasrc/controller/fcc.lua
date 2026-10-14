@@ -528,7 +528,15 @@ end
 local LOG_LEVELS = { debug = true, info = true, warning = true, error = true, critical = true }
 
 function act_config_get()
-	local c = uci
+	-- The cursor comes from luci.fcc.paths, never from a bare `uci`.
+	--
+	-- `local c = uci` here read a global that does not exist, so `c` was nil,
+	-- `g()` fell through to its default every time, and this page displayed the
+	-- defaults as though they were the saved configuration — which is why a
+	-- saved bind address never appeared in the form. It failed quietly, which
+	-- is the worse half: the setter below failed loudly and the pair looked
+	-- like one broken page instead of one broken global. Section 104.20.
+	local c = paths.uci_cursor()
 	local function g(opt, default)
 		local v = c and c:get("fcc", "main", opt)
 		if v == nil or v == "" then return default end
@@ -550,7 +558,12 @@ end
 
 function act_config_set()
 	if not require_post() then return end
-	local c = uci
+	-- Same cursor, same source as act_config_get above: a bare `uci` is nil
+	-- under every LuCI this package runs on, so this line used to be the whole
+	-- of "Save & Apply" — every submit answered "configuration is
+	-- unavailable" and no setting on the page could be stored at all,
+	-- including the bind address that "Open FCC Admin" depends on. §104.20.
+	local c = paths.uci_cursor()
 	if not c then return fail("configuration is unavailable") end
 
 	local newpath = util.valid_install_path(http.formvalue("install_path") or "")

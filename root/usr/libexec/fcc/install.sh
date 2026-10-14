@@ -53,17 +53,11 @@ apply_runtime_env() {
 	# root's home directory, silently, and nothing notices until the flash chip
 	# fills up. Two hand-maintained lists would drift; one cannot.
 	#
-	# `export "$name=$value"` performs the assignment itself, so no shell text
-	# is ever built and nothing is passed to eval — the name is one of a fixed
-	# list and the value is a path this package derived.
-	for _ae_n in $(fcc_runtime_env_names); do
-		export "$_ae_n=$(fcc_runtime_env_value "$ROOT" "$_ae_n")"
-	done
-	# PATH is handled apart because it extends rather than replaces: the
-	# runtime's bin goes first so its launchers win, but the system tools have
-	# to stay reachable — the installer needs curl, tar and a compiler.
-	PATH="$ROOT/bin:$PATH"
-	export PATH
+	# The list, the values and the PATH are all in common.sh — see
+	# fcc_runtime_env_apply() — because the Web Console's agent pane and
+	# `fcc-env shell` have to export exactly this set too, and a second copy
+	# here is how the pane's PATH came to be missing its agent directories.
+	fcc_runtime_env_apply "$ROOT"
 }
 
 # ---------------------------------------------------------------------------

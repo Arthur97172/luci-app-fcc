@@ -459,4 +459,169 @@ test_the_page_does_not_declare_a_fresh_job_finished() {
 		"the unguarded finish branch is gone"
 }
 
+test_the_controller_never_reads_a_bare_uci() {
+	# Section 104.20. `local c = uci` in the controller read a global that no
+	# LuCI sets — the assignment that looks like it does lives inside
+	# `module("luci.dispatcher", package.seeall)` and writes to the dispatcher's
+	# own table — so `c` was nil. "Save & Apply" answered "configuration is
+	# unavailable" for every submit, and the getter fell through to its defaults
+	# and displayed them as though they were the saved configuration.
+	#
+	# The cursor has one source now, luci.fcc.paths.uci_cursor(), and this is
+	# the guard against a third handler copying the old line. The driver's
+	# checks above prove the cursor behaves; this one proves the controller
+	# asks for it, which the driver cannot see because it never loads the
+	# controller (that needs the whole request environment).
+	_ts_c="$ROOT/luasrc/controller/fcc.lua"
+
+	# A bare read is `uci` not preceded by a word character or a dot (so
+	# `luci`, `luci.model.uci` and `paths.uci_cursor` are all excluded) and not
+	# followed by a word character. Comment-only lines are dropped, so the
+	# comments explaining the bug do not count as the bug.
+	_ts_bare="$(grep -nE '(^|[^A-Za-z0-9_.])uci([^A-Za-z0-9_]|$)' "$_ts_c" \
+		| grep -vE '^[0-9]+:[[:space:]]*--' || true)"
+	assert_eq "" "$_ts_bare" "no line of the controller reads a bare \`uci\`"
+
+	assert_eq "2" "$(grep -c 'paths\.uci_cursor()' "$_ts_c")" \
+		"both configuration handlers take the cursor from luci.fcc.paths"
+
+	# And the module they take it from exports it: a private helper would leave
+	# the controller with nothing to call, which is how this started.
+	assert_contains "$(cat "$ROOT/luasrc/fcc/paths.lua")" \
+		'function uci_cursor()' "luci.fcc.paths exports the cursor"
+	assert_not_contains "$(cat "$ROOT/luasrc/fcc/paths.lua")" \
+		'local function cursor()' "the private helper is gone, not shadowed"
+}
+
+test_the_configuration_page_can_actually_save() {
+	# The report behind section 104.20, driven rather than described: the
+	# Configuration page's two handlers run against a UCI cursor that is a plain
+	# table, so what they read and write is visible here. On the router the
+	# cursor was nil — `local c = uci` read a global nothing sets — so every
+	# "Save & Apply" answered "configuration is unavailable" and the page showed
+	# its defaults as though they were the saved settings.
+	#
+	# A driver check would not do for this one: the driver never loads the
+	# controller, because that needs the request environment. The probe below
+	# supplies the smallest one that lets the real handlers run.
+	if [ -z "$LUA" ]; then
+		skip "no Lua interpreter available"
+		return
+	fi
+
+	_ts_p="$(mktemp)"
+	cat > "$_ts_p" <<'LUA'
+local ROOT = assert(os.getenv("FCC_TEST_ROOT"))
+
+-- luasrc/ maps onto /usr/lib/lua/luci/ at install time, so luasrc/fcc/util.lua
+-- is luci.fcc.util and luasrc/controller/fcc.lua is luci.controller.fcc.
+table.insert(package.loaders, 1, function(name)
+	local rel
+	if name == "luci.controller.fcc" then
+		rel = "/luasrc/controller/fcc.lua"
+	else
+		local short = name:match("^luci%.fcc%.([a-z_]+)$")
+		if short then rel = "/luasrc/fcc/" .. short .. ".lua" end
+	end
+	if not rel then return nil end
+	local fh = io.open(ROOT .. rel, "r")
+	if not fh then return nil end
+	local src = fh:read("*a"); fh:close()
+	return assert(loadstring(src, "@" .. rel))
+end)
+
+package.preload["nixio.fs"] = function()
+	return { access = function(p)
+		local f = io.open(p, "r"); if f then f:close() return true end
+		return os.rename(p, p) ~= nil or nil
+	end }
+end
+package.preload["luci.jsonc"] = nil
+package.preload["luci.json"] = nil
+
+-- The store the cursor reads and writes. The whole point is that the handler's
+-- writes land in it and its reads come out of it.
+local store, commits = {}, 0
+local cursor = {
+	get    = function(_, cfg, sec, opt) return store[opt] end,
+	set    = function(_, cfg, sec, opt, val) store[opt] = val end,
+	commit = function() commits = commits + 1 end,
+}
+package.preload["luci.model.uci"] = function()
+	return { cursor = function() return cursor end }
+end
+
+-- luci.http, reduced to what the two handlers touch.
+local form, written = {}, {}
+package.preload["luci.http"] = function()
+	return {
+		prepare_content = function() end,
+		write     = function(t) written[#written + 1] = t end,
+		status    = function() end,
+		getenv    = function(k) if k == "REQUEST_METHOD" then return "POST" end end,
+		formvalue = function(k) return form[k] end,
+	}
+end
+
+local ctrl = require "luci.controller.fcc"
+local function body() return table.concat(written) end
+
+-- What a user saved in an earlier session: a LAN bind, and a port that is not
+-- the default either, so a handler that fell through to its defaults cannot
+-- pass by coincidence.
+local saved = {
+	install_path = "/srv/fcc", port = "9001", bind = "192.168.10.156",
+	log_level = "warning", enabled = "1", auto_start = "0",
+}
+
+store = saved
+written = {}; ctrl.act_config_get()
+print("get=" .. body())
+
+-- Now the same values submitted back, which is what "Save & Apply" does.
+form = saved
+written = {}; ctrl.act_config_set()
+print("set=" .. body())
+print("stored=" .. tostring(store.bind) .. ":" .. tostring(store.port) ..
+      ":" .. tostring(store.log_level) .. " commits=" .. commits)
+LUA
+
+	# PATH without /home/arthur/.local/bin, where a development copy of
+	# fcc-server lives on this host: the probe must answer from the root it was
+	# given, not from whatever the machine happens to have installed.
+	_ts_out="$(FCC_TEST_ROOT="$ROOT" \
+		FCC_LIBEXEC="$ROOT/tests/no-such-libexec" \
+		FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
+		FCC_VERSION_FILE="$ROOT/VERSION" \
+		PATH="/usr/bin:/bin" "$LUA" "$_ts_p" 2>&1)"
+	rm -f "$_ts_p"
+
+	_ts_get="$(printf '%s\n' "$_ts_out" | sed -n 's/^get=//p')"
+	_ts_set="$(printf '%s\n' "$_ts_out" | sed -n 's/^set=//p')"
+
+	# The page is shown what was saved. The default is asserted absent as well,
+	# because "returned the default" is exactly how the old getter failed and
+	# it would otherwise satisfy a contains-check on nothing at all.
+	assert_contains "$_ts_get" '"bind":"192.168.10.156"' \
+		"the page is shown the saved bind address: [$_ts_get]"
+	assert_contains "$_ts_get" '"port":9001' \
+		"the page is shown the saved port"
+	assert_not_contains "$_ts_get" '"bind":"127.0.0.1"' \
+		"and not the default bind address"
+
+	# And saving succeeds — which is the half the user saw fail.
+	assert_contains "$_ts_set" '"ok":true' \
+		"saving the configuration succeeds: [$_ts_set]"
+	assert_not_contains "$_ts_set" 'configuration is unavailable' \
+		"the cursor is not nil, so the save is not refused"
+
+	assert_contains "$_ts_out" "stored=192.168.10.156:9001:warning commits=1" \
+		"the submitted values reach UCI and are committed once"
+
+	# A root with no runtime under it is reported as such, which is also the
+	# check that the probe read its own root rather than this host.
+	assert_contains "$_ts_get" '"runtime_installed":false' \
+		"the probe answers from the root it was given"
+}
+
 tests_main

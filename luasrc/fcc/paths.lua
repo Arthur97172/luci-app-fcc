@@ -25,14 +25,32 @@ function luci_version()
 	return v
 end
 
--- LuCI normally provides a global `uci` cursor; create one if this module is
--- loaded outside a request (tests, CLI).
-local function cursor()
-	if uci then return uci end
+--- A UCI cursor, built on demand and shared by every caller in this package.
+--
+-- This used to be a private helper whose comment said "LuCI normally provides a
+-- global `uci` cursor; create one if this module is loaded outside a request".
+-- That premise is false, and the controller believed it: nothing in luci-base
+-- assigns a global `uci`. The one line that looks like it does —
+-- `uci = require "luci.model.uci"` at the top of luci-lua-runtime's
+-- dispatcher.lua — runs inside `module("luci.dispatcher", package.seeall)`, so
+-- it writes to the *dispatcher's* table and not to _G. A controller reading a
+-- bare `uci` therefore reads through to _G.uci, which is nil. Section 104.20.
+--
+-- Built here and cached on this module so that a request with several callers
+-- still talks to one cursor, and exported so the controller has somewhere to
+-- get it from rather than deriving its own.
+-- A file-local upvalue, not a module field and deliberately not a global: the
+-- whole bug being fixed here was code reading a `uci` that it assumed someone
+-- else had set. This one is written before it is read, and only by the
+-- function below.
+local cached_cursor = nil
+
+function uci_cursor()
+	if cached_cursor then return cached_cursor end
 	local ok, m = pcall(require, "luci.model.uci")
 	if ok and m and m.cursor then
-		uci = m.cursor()
-		return uci
+		cached_cursor = m.cursor()
+		return cached_cursor
 	end
 	return nil
 end
@@ -40,7 +58,7 @@ end
 --- The configured install base, validated. Falls back to the default rather
 --  than propagating a bad UCI value into a path we then exec from.
 function install_base()
-	local c = cursor()
+	local c = uci_cursor()
 	local raw = (c and c:get("fcc", "main", "install_path")) or DEFAULT_BASE
 	local ok = util.valid_install_path(raw)
 	return ok or DEFAULT_BASE

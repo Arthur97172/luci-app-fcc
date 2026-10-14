@@ -78,11 +78,32 @@ session_live() {
 }
 
 # Environment shared by every agent session so it matches the install layout.
+#
+# This is the runtime environment, and there is exactly one definition of it —
+# fcc_runtime_env_exports() in common.sh, the same one install.sh hands to the
+# installer's terminal. It used to be hand-written here, and the hand-written
+# copy was wrong in two ways at once:
+#
+#   * PATH held only <root>/bin. That is where the fcc-* launchers live and
+#     nowhere else — the CLI each launcher execs is installed under
+#     <root>/data — and upstream resolves that CLI with a bare PATH lookup. So
+#     every session started its launcher successfully and then died on
+#     "Could not find Claude Code command: claude", exit code 127 (§104.21).
+#   * HOME, UV_TOOL_DIR and UV_CACHE_DIR were set but UV_INSTALL_DIR,
+#     UV_PYTHON_INSTALL_DIR and the four XDG_* variables were not, so a pane
+#     that ran `uv` or the installer disagreed with the process that created
+#     the runtime about where everything goes.
+#
+# Both are the same mistake — a second copy of a list that already had an
+# owner — so the fix is to stop having a copy.
+#
+# The locale and TERM are not part of that environment and stay here: they are
+# about the terminal rather than about where the runtime keeps its files, and
+# the agent CLIs draw box-drawing and CJK glyphs that a C locale renders as
+# question marks.
 session_env_exports() {
-	printf 'export HOME=%s/data TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8;' "$ROOT"
-	printf 'export PATH=%s/bin:$PATH;' "$ROOT"
-	printf 'export UV_TOOL_BIN_DIR=%s/bin UV_TOOL_DIR=%s/runtime/uv-tools UV_CACHE_DIR=%s/cache/uv;' \
-		"$ROOT" "$ROOT" "$ROOT"
+	fcc_runtime_env_exports "$ROOT"
+	printf 'export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8\n'
 }
 
 next_session_name() {
@@ -151,7 +172,15 @@ cmd_create() {
 	# The launcher itself connects to the FCC server. $_cr_launcher_exe and $ROOT
 	# are both validated values, never user input, so the command string cannot
 	# be injected into.
-	_cr_cmd="$(session_env_exports) exec $_cr_launcher_exe"
+	#
+	# The `;` is load-bearing and belongs here rather than at the end of
+	# session_env_exports(). That function renders `export` lines for a shell to
+	# read, and `$(...)` eats the newline after the last of them — so without a
+	# separator of its own the concatenation below would end
+	# `... LC_ALL=C.UTF-8 exec /opt/fcc/bin/fcc-claude`, and `exec` would be one
+	# more word for `export`. That is not hypothetical: it is what the pane
+	# reported the first time the exports became multi-line.
+	_cr_cmd="$(session_env_exports); exec $_cr_launcher_exe"
 
 	# The pane is created holding `cat`, which waits on stdin and prints nothing,
 	# and the agent is started afterwards by respawning it. Passing the command to

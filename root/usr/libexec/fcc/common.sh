@@ -267,6 +267,54 @@ fcc_runtime_env_value() {
 	esac
 }
 
+# Every directory under one root that can hold an executable this package runs:
+# the runtime's own bin — the fcc-* launchers and the uv tools — followed by
+# each agent CLI's install location.
+#
+# One list, two questions. "Is this agent installed?" (fcc_agent_installed
+# below) probes these directories by absolute path, and "where does a pane look
+# for the CLI it execs?" (the PATH fcc_runtime_env_exports renders) puts them on
+# PATH. The two have to agree, and they did not: the Configuration page read
+# "installed" off a directory the pane's PATH did not contain, so New Session
+# started the launcher, the launcher could not find its CLI, and the pane died
+# with exit code 127 and "Could not find Claude Code command: claude" (§104.21).
+#
+# Upstream keeps no such list. Its launcher resolves the client with a bare
+# shutil.which(binary_name) — cli/launchers/common.py, resolve_client_binary —
+# and exits 127 with the install hint when PATH has no answer. So this list is
+# this package's own, and it is a consequence of the environment above rather
+# than a guess: XDG_BIN_HOME and UV_TOOL_BIN_DIR are both <root>/bin and HOME is
+# <root>/data, and the five below that bin are where each agent's installer puts
+# its CLI under such a HOME — ~/.local/bin, ~/.cargo/bin, ~/.opencode/bin,
+# ~/.local/share/pi-node/current/bin and ~/.grok/bin.
+fcc_runtime_bin_dirs() {
+	# fcc_runtime_bin_dirs <root> -> one directory per line, runtime bin first.
+	_rbd_root="$1"
+	printf '%s\n' \
+		"$_rbd_root/bin" \
+		"$_rbd_root/data/.local/bin" \
+		"$_rbd_root/data/.cargo/bin" \
+		"$_rbd_root/data/.opencode/bin" \
+		"$_rbd_root/data/.local/share/pi-node/current/bin" \
+		"$_rbd_root/data/.grok/bin"
+}
+
+fcc_runtime_bin_path() {
+	# fcc_runtime_bin_path <root> -> those directories joined with ':', for
+	# prepending to PATH. Joined by reading rather than with `for ... in $(...)`
+	# so that a root containing whitespace could not split into two entries;
+	# both path validators reject such a root today, and this does not depend on
+	# that staying true.
+	_rbp_root="$1"
+	_rbp_out=""
+	while IFS= read -r _rbp_d; do
+		_rbp_out="${_rbp_out:+$_rbp_out:}$_rbp_d"
+	done <<EOF
+$(fcc_runtime_bin_dirs "$_rbp_root")
+EOF
+	printf '%s' "$_rbp_out"
+}
+
 fcc_shquote() {
 	# Single-quote a value for a shell command line.
 	#
@@ -286,10 +334,40 @@ fcc_runtime_env_exports() {
 		printf 'export %s=%s\n' "$_fre_n" \
 			"$(fcc_shquote "$(fcc_runtime_env_value "$_fre_root" "$_fre_n")")"
 	done
-	# PATH keeps whatever the caller already had: the runtime's bin goes first
-	# so its launchers win, but the system tools stay reachable — the installer
-	# itself needs curl, tar and a compiler from the system.
-	printf 'export PATH=%s:"$PATH"\n' "$(fcc_shquote "$_fre_root/bin")"
+	# PATH keeps whatever the caller already had: the runtime's directories go
+	# first so its launchers win, but the system tools stay reachable — the
+	# installer itself needs curl, tar and a compiler from the system.
+	#
+	# All of fcc_runtime_bin_dirs, not just <root>/bin. <root>/bin holds the
+	# launchers and nothing else; the CLI each launcher execs is installed
+	# somewhere else under the root, and upstream finds it with a bare PATH
+	# lookup. A pane that got only <root>/bin therefore started its launcher
+	# successfully and then watched it exit 127 on the CLI (§104.21).
+	printf 'export PATH=%s:"$PATH"\n' \
+		"$(fcc_shquote "$(fcc_runtime_bin_path "$_fre_root")")"
+}
+
+fcc_runtime_env_apply() {
+	# fcc_runtime_env_apply <root> -> apply the same environment to *this* shell.
+	#
+	# The in-process twin of fcc_runtime_env_exports above, for a caller that is
+	# about to run something as a child and wants the child to inherit it. Two
+	# callers want exactly this — install.sh before it runs the upstream
+	# installer, and `fcc-env shell` — and neither should be a second copy of the
+	# list, which is how the pane's PATH came to be missing its agent
+	# directories in the first place.
+	#
+	# `export "$name=$value"` performs the assignment itself, so no shell text is
+	# ever built and nothing is passed to eval: the name is one of the fixed list
+	# above and the value is a path this package derived.
+	_rea_root="$1"
+	for _rea_n in $(fcc_runtime_env_names); do
+		export "$_rea_n=$(fcc_runtime_env_value "$_rea_root" "$_rea_n")"
+	done
+	# PATH extends rather than replaces, and the runtime's directories go first;
+	# see fcc_runtime_env_exports above for why that is the whole list.
+	PATH="$(fcc_runtime_bin_path "$_rea_root"):$PATH"
+	export PATH
 }
 
 # ---------------------------------------------------------------------------
@@ -378,13 +456,19 @@ fcc_agent_by_launcher() {
 # verifies, and re-finds on its next run. Probing the launcher makes every row
 # read "installed" the moment FCC itself is installed, which is the bug.
 #
-# The search mirrors upstream's add_known_bin_directories(): the directories
-# the runtime environment puts on PATH (see apply_env() in usr/bin/fcc-env),
-# probed under the root by absolute path, then PATH itself. The absolute
-# probes come first because those directories are on PATH only for a process
-# that has already applied that environment, and none of this function's
-# callers have: the doctor runs before it, status.sh runs under uhttpd, and
-# update.sh runs from a job.
+# The search is fcc_runtime_bin_dirs() — the one list of directories an agent
+# CLI can be installed into under a root — probed by absolute path, then PATH
+# itself. The absolute probes come first because those directories are on PATH
+# only for a process that has already applied the runtime environment, and none
+# of this function's callers have: the doctor runs before it, status.sh runs
+# under uhttpd, and update.sh runs from a job.
+#
+# (An earlier version of this comment said the search "mirrors upstream's
+# add_known_bin_directories()". There is no such function in upstream — not in
+# 1.2.41, 2.0.0 or 6.4.0. Upstream resolves the client with a bare
+# shutil.which() and keeps no list at all; the list is this package's. The
+# citation was wrong, and a wrong citation is worse than none: it sends the
+# next reader looking for a function that was never there.)
 #
 # Reading the filesystem rather than a marker file means the answer stays true
 # if someone removes an agent by hand, which is exactly when a stale marker
@@ -425,25 +509,25 @@ fcc_agent_installed() {
 	_fai_root="${2:-${ROOT:-$(fcc_root)}}"
 	fcc_valid_agent "$_fai_id" || return 1
 
-	# PATH first: cheapest, and correct for a system-wide install.
+	# PATH first: cheapest, and correct for a system-wide install. It is also
+	# what upstream itself would see, since its own lookup is a bare
+	# shutil.which() against PATH.
 	command -v "$_fai_id" >/dev/null 2>&1 && return 0
 
-	# Upstream's known bin directories, under this root. XDG_BIN_HOME and
-	# UV_TOOL_BIN_DIR are both <root>/bin and HOME is <root>/data, so the six
-	# below are add_known_bin_directories() spelled out for this layout.
-	for _fai_d in \
-		"$_fai_root/bin" \
-		"$_fai_root/data/.local/bin" \
-		"$_fai_root/data/.cargo/bin" \
-		"$_fai_root/data/.opencode/bin" \
-		"$_fai_root/data/.local/share/pi-node/current/bin" \
-		"$_fai_root/data/.grok/bin"
-	do
+	# Then the same directories the runtime environment puts on PATH, read from
+	# the one list rather than written out again here. Read through a heredoc
+	# rather than `for ... in $(...)` so a root with whitespace in it cannot
+	# split into two entries, and so `return` reaches this function rather than
+	# a subshell.
+	while IFS= read -r _fai_d; do
 		[ -x "$_fai_d/$_fai_id" ] && return 0
-	done
+	done <<EOF
+$(fcc_runtime_bin_dirs "$_fai_root")
+EOF
 
 	# npm's global bin, for the two agents upstream installs with
-	# `npm install -g` and then re-finds through add_npm_bin_directories().
+	# `npm install -g`. Upstream re-finds them the same way — through PATH,
+	# which for an npm-installed agent means npm's own global bin.
 	case "$_fai_id" in
 		cline|dsh)
 			_fai_npm="$(fcc_npm_bin_dir 2>/dev/null || true)"

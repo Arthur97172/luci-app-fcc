@@ -682,6 +682,66 @@ eq("current_run/only_the_start_of_a_line_counts",
 	"saw " .. util.JOB_MARKER .. "x,kept")
 
 -- ---------------------------------------------------------------------------
+-- The UCI cursor (section 104.20)
+--
+-- Kept at the end of the file because the last check below leaves a cursor
+-- built, and install_base() reads through it — anything after this point would
+-- be measuring a different root than the rest of the run.
+--
+-- The bug this covers: luci.fcc.paths used to honour a global `uci` if one was
+-- set, and the controller read that global directly. Nothing in luci-base sets
+-- one, so the controller's cursor was nil: "Save & Apply" answered
+-- "configuration is unavailable" and the page rendered its defaults as though
+-- they were the saved settings. A decoy global is the whole test — it fails
+-- loudly on any read, so a module that went back to trusting it cannot pass.
+-- ---------------------------------------------------------------------------
+check("paths/uci_cursor_is_exported", type(paths.uci_cursor) == "function")
+
+do
+	local decoy_reads = 0
+	_G.uci = setmetatable({}, {
+		__index = function(_, k)
+			decoy_reads = decoy_reads + 1
+			error("the global `uci` was read (key " .. tostring(k) .. ")")
+		end,
+	})
+
+	check("paths/uci_cursor_ignores_a_global",
+		paths.uci_cursor() == nil and decoy_reads == 0,
+		"decoy reads: " .. decoy_reads)
+
+	-- No luci.model.uci on this host either, so the honest answer is nil rather
+	-- than a cursor-shaped table that would fail on first use.
+	check("paths/uci_cursor_is_nil_without_luci", paths.uci_cursor() == nil)
+
+	_G.uci = nil
+
+	-- Now with LuCI present. The cursor must come from luci.model.uci, be built
+	-- once however many callers ask, and be the thing install_base() reads.
+	local built = 0
+	local fake = {
+		get = function(_, cfg, sec, opt)
+			if cfg == "fcc" and sec == "main" and opt == "install_path" then
+				return "/srv/fcc-cursor-test"
+			end
+			return nil
+		end,
+	}
+	package.preload["luci.model.uci"] = function()
+		return { cursor = function() built = built + 1 return fake end }
+	end
+
+	check("paths/uci_cursor_comes_from_luci", paths.uci_cursor() == fake)
+	check("paths/uci_cursor_is_built_once",
+		paths.uci_cursor() == fake and built == 1, "built " .. built .. " time(s)")
+
+	-- And the value it returns is what the page will show: the saved path, not
+	-- the default. This is the half of the bug that failed quietly.
+	eq("paths/install_base_reads_the_cursor", paths.install_base(), "/srv/fcc-cursor-test")
+	eq("paths/fcc_root_follows_the_cursor", paths.fcc_root(), "/srv/fcc-cursor-test/fcc")
+end
+
+-- ---------------------------------------------------------------------------
 -- Total first, then failures: tests/test_lua.sh checks that the total matches
 -- the number of ok/fail lines it saw, which catches a check that silently never
 -- ran (a raised error mid-file would otherwise look like a short, clean run).
