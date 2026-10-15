@@ -269,14 +269,35 @@ installer_missing_tool() {
 	# The name is checked before it is handed back: it is text out of a log
 	# line, and the only thing this function is allowed to return is something
 	# shaped like a command.
+	#
+	# A command can also be present and still not do the job, and the line then
+	# looks nothing like the one above. BusyBox's sleep is the case this package
+	# knows: it exists, so "not found" never appears, and it rejects the
+	# fractional argument the Pi installer animates its logo with —
+	#
+	#   sleep: invalid number '0.075'
+	#
+	# Both forms name the command in the same place, so both are read here and
+	# the caller gets a tool name either way. Only the measured wording is
+	# matched: a broader "invalid argument" would be a guess at what some other
+	# applet prints, and a guess here names the wrong package.
 	_imt_txt="$(installer_transcript "$1")" || return 1
-	_imt_line="$(printf '%s\n' "$_imt_txt" \
-		| sed -e 's/^[[:space:]]*//' \
+	_imt_flat="$(printf '%s\n' "$_imt_txt" | sed -e 's/^[[:space:]]*//')"
+
+	_imt_line="$(printf '%s\n' "$_imt_flat" \
 		| grep -E '(^|: line [0-9]+: |^[A-Za-z0-9_.+-]+: )[A-Za-z0-9_.+-]+: not found$' \
 		| tail -n 1)"
-	[ -n "$_imt_line" ] || return 1
-	_imt_tool="${_imt_line%: not found}"
-	_imt_tool="${_imt_tool##*: }"
+	if [ -n "$_imt_line" ]; then
+		_imt_tool="${_imt_line%: not found}"
+		_imt_tool="${_imt_tool##*: }"
+	else
+		_imt_line="$(printf '%s\n' "$_imt_flat" \
+			| grep -E '(^|: line [0-9]+: )[A-Za-z0-9_.+-]+: invalid number ' \
+			| tail -n 1)"
+		[ -n "$_imt_line" ] || return 1
+		_imt_tool="${_imt_line%%: invalid number *}"
+		_imt_tool="${_imt_tool##*: }"
+	fi
 	case "$_imt_tool" in
 		''|*[!A-Za-z0-9_.+-]*) return 1 ;;
 	esac
@@ -290,19 +311,27 @@ installer_explain_missing_tool() {
 	# failure had the answer in the transcript — "fold: not found", twice — and
 	# the question in the log — "exit code 1" — so the one file a person opens
 	# was the one file that did not say.
+	# "does not provide" is true of a command that is not there and false of one
+	# that is: BusyBox ships a sleep, and the Pi installer's failure is that this
+	# image's sleep refuses the fraction it is handed. A reader who is told the
+	# tool is missing goes looking for it, finds it, and is back where they
+	# started — so the wording follows whether the command exists.
 	_iem_tool="$(installer_missing_tool "$1" 2>/dev/null || true)"
 	[ -n "$_iem_tool" ] || return 0
 
-	fcc_log "$LOG" "installer: the installer needed '$_iem_tool', which this image does not provide"
-	# The package, for the tools whose provider has been verified. A short list
+	_iem_lack="which this image does not provide"
+	command -v "$_iem_tool" >/dev/null 2>&1 && _iem_lack="but this image's version of it is too limited"
+	fcc_log "$LOG" "installer: the installer needed '$_iem_tool', $_iem_lack"
+
+	# The package, for the tools whose provider has been verified. A short table
 	# rather than a guess from the name: "coreutils-<tool>" is the usual shape
 	# on OpenWrt and not a rule, and a package that does not exist is a second
-	# dead end after the first.
-	case "$_iem_tool" in
-		fold) _iem_pkg="coreutils-fold" ;;
-		*)    _iem_pkg="" ;;
-	esac
+	# dead end after the first. The table is the same one the Configuration
+	# page's check reads, so the two cannot name different packages.
+	_iem_pkg="$(fcc_tool_package "$_iem_tool")"
 	[ -n "$_iem_pkg" ] && fcc_log "$LOG" "installer: $_iem_tool is packaged separately here: $(fcc_pkg_install_hint "$_iem_pkg")"
+	_iem_why="$(fcc_tool_purpose "$_iem_tool")"
+	[ -n "$_iem_why" ] && fcc_log "$LOG" "installer: $_iem_why"
 	fcc_log "$LOG" "installer: the Configuration page's check reports this before an install; the line itself is in logs/installer.out"
 }
 
@@ -432,6 +461,54 @@ installer_explain_failure() {
 	fcc_log "$LOG" "installer: upstream stops at the first agent it cannot download, so this attempt installed no agent"
 }
 
+# Pi's action menu, as its rows reach the pane. The menu is drawn as a block —
+# "Choose an action:", then a row per key — and installer_last_line() returns the
+# last row, so a row is what has to be anchored on rather than the heading. It is
+# also the right anchor for a second reason: Pi prints the action it took the
+# moment the menu is answered, so the row is gone by the next poll and the loop's
+# "this question has already been answered" guard is not tripped by a menu that is
+# still on the screen.
+#
+# Every row is listed rather than the bottom one alone, which is the one that
+# actually arrives. A pane shorter than the block shows only its bottom, and a row
+# this function does not recognise is a question nobody answers: the installer sits
+# on the menu until the deadline and the run rolls back.
+#
+# The label is what is matched, not the key column in front of it, because that
+# column is colour: print_pi_action_menu() writes the key through a %-4s and wraps
+# it in cyan, so until installer_pane_text() strips the escapes what sits between
+# the key and the label is an escape sequence. The labels survive, and each is the
+# row's own text — "Uninstall Pi" is a row, and "Will uninstall Pi." is the
+# sentence Pi prints after it, in lower case, so it cannot be read as one. A
+# fragment like "Install Pi" could be: it opens "Will install Pi.", the line Pi
+# prints the moment the menu is answered, and answering *that* a second time would
+# put the key into the next prompt instead — "Start pi now?", whose default is yes.
+installer_line_is_pi_menu() {
+	# installer_line_is_pi_menu <line> -> 0 when the line is a row of the menu
+	case "$1" in
+		*'Do nothing'*|*'Uninstall Pi'*|*'Reinstall Pi (default)'*|\
+		*'Install Pi (default)'*|*'Migrate Pi to a managed installation'*)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+installer_answer_is_keypress() {
+	# installer_answer_is_keypress <line> -> 0 when the answer is a bare key
+	#
+	# Every other question here is read a line at a time, so its answer is sent
+	# with Enter. Pi's action menu is not: choose_pi_action() puts the terminal
+	# in -icanon and reads exactly one byte (dd bs=1 count=1), so an Enter sent
+	# after the key is not consumed by the menu at all. It stays in the
+	# terminal's input queue and is read by the *next* prompt — which is
+	# "Start pi now? [Y/n]", whose default is yes. Pi's own interface would then
+	# start in the pane, never exit, and the install would sit there until the
+	# deadline and roll back. Sending the key alone is what keeps that Enter
+	# from existing.
+	installer_line_is_pi_menu "$1"
+}
+
 # Answer one prompt. Prints the keys to send, or nothing when the line is not a
 # prompt we recognise.
 installer_answer_for() {
@@ -444,6 +521,39 @@ installer_answer_for() {
 	_iaf_line="$1"
 	_iaf_set=" $2 "
 	_iaf_mode="$3"
+
+	# Pi's action menu is asked before the case rather than inside it, because
+	# recognising it is a question about several lines — see
+	# installer_line_is_pi_menu() — and a case pattern cannot ask one.
+	if installer_line_is_pi_menu "$_iaf_line"; then
+		# y installs, u uninstalls, n does nothing. The key is sent on its own;
+		# see installer_answer_is_keypress().
+		#
+		# "u" is never sent, whichever row was read. Uninstalling an agent is
+		# not a thing an install was asked to do, and the row only exists on the
+		# menu at all when a pi is already installed.
+		case "$_iaf_mode" in
+			none)
+				# --no-agents is a decision, and installing Pi anyway would be
+				# the opposite of it. "n" leaves Pi alone.
+				printf 'n'
+				;;
+			set)
+				case "$_iaf_set" in
+					*" pi "*) printf 'y' ;;
+					*)        printf 'n' ;;
+				esac
+				;;
+			*)
+				# No opinion: take the menu's own default, which is the action
+				# Pi derived from what it found on disk — install when there is
+				# none, reinstall when there is.
+				printf 'y'
+				;;
+		esac
+		return 0
+	fi
+
 	case "$_iaf_line" in
 		# "Install Claude Code for fcc-claude? [Y/n]"
 		#
@@ -492,6 +602,27 @@ installer_answer_for() {
 			esac
 			return 0
 			;;
+		*'Start pi now?'*)
+			# Pi offers to launch its own interface in the terminal the install
+			# ran in. It is a full-screen program that stays until it is quit by
+			# hand, and that terminal belongs to the installer job — so yes ends
+			# the job by hanging it, and the deadline then rolls the install
+			# back. Declining is also what the Admin UI wants: it starts the
+			# agents itself, in their own sessions.
+			printf 'n'
+			return 0
+			;;
+		*'Pi needs Node.js'*)
+			# Only reached when the Node this package provisions is not there —
+			# provision_node() runs before the installer, and this question does
+			# not appear when it worked. Pi's own remedy is nodejs.org/dist,
+			# which publishes no musl build: answering yes installs a glibc Node
+			# that cannot execute on this image, and the install then fails
+			# further along with a worse reason than this one. Declining stops
+			# it here, with Pi's own sentence about what is missing.
+			printf 'n'
+			return 0
+			;;
 		*'token optimization'*)
 			# Section 3.6.5 is about coding agents; RTK and Headroom are a
 			# token-saving pair the user did not ask for, and upstream's own
@@ -512,6 +643,138 @@ installer_answer_for() {
 			;;
 	esac
 	return 1
+}
+
+# ---------------------------------------------------------------------------
+# Node.js — fetch the musl build the npm-based agents are installed with
+# ---------------------------------------------------------------------------
+# common.sh carries the measurements: Pi, DeepSeek Harness and Cline are npm
+# packages, their floor is Node ^22.19.0 or >=24.0.0, this image's own node is
+# below it, and the Pi installer's remedy — nodejs.org/dist — has no musl build,
+# so what it leaves behind cannot execute at all.
+#
+# The destination is the directory upstream's own PATH entry already names,
+# ${XDG_DATA_HOME:-$HOME/.local/share}/pi-node, and `current` is what that entry
+# points through — the same shape the Pi installer leaves when it works. Nothing
+# downstream has to be told where the Node went.
+#
+# Every failure here returns instead of dying: the install is not this step's to
+# abandon, and the agent that needed Node will fail a moment later with the
+# reason already in the log — which is the part that was missing before.
+provision_node() {
+	_pn_agents="$1"    # space separated ids needing a Node this image lacks
+
+	[ -n "$_pn_agents" ] || return 0
+
+	_pn_arch="$(fcc_node_arch)"
+	if [ -z "$_pn_arch" ]; then
+		fcc_log "$LOG" "node: no musl build exists for $(uname -m 2>/dev/null), so $_pn_agents cannot be installed here"
+		return 1
+	fi
+
+	_pn_base="${XDG_DATA_HOME:-$HOME/.local/share}/pi-node"
+
+	# A Node this function installed on an earlier run is already the answer.
+	# The check is made against the directory rather than against PATH, because
+	# the runtime's directories are added to PATH by run_installer() — which
+	# runs after this — so PATH would report the Node fetched a moment ago as
+	# missing and fetch it again, on every install, including the ones that
+	# change nothing.
+	_pn_still=""
+	for _pn_id in $_pn_agents; do
+		fcc_node_dir_ok_for "$_pn_base/current/bin" "$_pn_id" || _pn_still="$_pn_still $_pn_id"
+	done
+	_pn_agents="${_pn_still# }"
+	[ -n "$_pn_agents" ] || return 0
+
+	_pn_names=""
+	for _pn_id in $_pn_agents; do
+		_pn_name="$(fcc_agent_name "$_pn_id")"
+		[ -n "$_pn_name" ] || _pn_name="$_pn_id"
+		_pn_names="$_pn_names, $_pn_name"
+	done
+	_pn_names="${_pn_names#, }"
+
+	_pn_tmp="$ROOT/cache/node.$$"
+	mkdir -p "$_pn_tmp" "$_pn_base" 2>/dev/null || {
+		fcc_log "$LOG" "node: cannot write under $_pn_base"
+		return 1
+	}
+
+	fcc_log "$LOG" "node: $_pn_names need Node.js and this image has none that can run; fetching a musl build"
+
+	# The newest v22.x, read from the index rather than written down here. A
+	# pinned number goes stale without saying so, and a Node that is merely old
+	# is the exact failure this function exists to end.
+	_pn_index="$_pn_tmp/index.json"
+	if ! curl --fail --silent --show-error --location \
+			--proto '=https' --tlsv1.2 --max-time 120 --retry 2 --retry-delay 2 \
+			--output "$_pn_index" "$FCC_NODE_DIST_BASE/index.json"; then
+		fcc_log "$LOG" "node: could not reach $FCC_NODE_DIST_BASE"
+		rm -rf "$_pn_tmp"
+		return 1
+	fi
+	_pn_v="$(grep -o '"version":"v22\.[0-9.]*"' "$_pn_index" 2>/dev/null \
+		| head -n 1 | sed 's/.*"v/v/; s/"$//')"
+	if [ -z "$_pn_v" ]; then
+		fcc_log "$LOG" "node: no v22 build is listed at $FCC_NODE_DIST_BASE"
+		rm -rf "$_pn_tmp"
+		return 1
+	fi
+
+	# The checksum comes from the same release directory as the tarball, and is
+	# checked before anything is unpacked: this is a 30 MB binary from a third
+	# party being placed where the agents will run it from.
+	_pn_file="node-${_pn_v}-linux-${_pn_arch}-musl.tar.xz"
+	_pn_shas="$_pn_tmp/SHASUMS256.txt"
+	if ! curl --fail --silent --show-error --location \
+			--proto '=https' --tlsv1.2 --max-time 120 --retry 2 --retry-delay 2 \
+			--output "$_pn_shas" "$FCC_NODE_DIST_BASE/$_pn_v/SHASUMS256.txt"; then
+		fcc_log "$LOG" "node: could not fetch the checksums for $_pn_v"
+		rm -rf "$_pn_tmp"
+		return 1
+	fi
+	_pn_want="$(awk -v f="$_pn_file" '$2 == f { print $1; exit }' "$_pn_shas" 2>/dev/null)"
+	if [ -z "$_pn_want" ]; then
+		fcc_log "$LOG" "node: $_pn_v has no $_pn_file"
+		rm -rf "$_pn_tmp"
+		return 1
+	fi
+
+	_pn_tar="$_pn_tmp/$_pn_file"
+	if ! curl --fail --silent --show-error --location \
+			--proto '=https' --tlsv1.2 --max-time 600 --retry 2 --retry-delay 2 \
+			--output "$_pn_tar" "$FCC_NODE_DIST_BASE/$_pn_v/$_pn_file"; then
+		fcc_log "$LOG" "node: could not download $_pn_file"
+		rm -rf "$_pn_tmp"
+		return 1
+	fi
+	_pn_got="$(sha256_of "$_pn_tar")"
+	if [ "$_pn_got" != "$_pn_want" ]; then
+		fcc_log "$LOG" "node: $_pn_file failed its checksum (expected $_pn_want, got ${_pn_got:-nothing})"
+		rm -rf "$_pn_tmp"
+		return 1
+	fi
+
+	# Extracted beside the previous one rather than over it, so a failure here
+	# leaves whatever was working alone; `current` moves only once the tree is
+	# on disk. The tarball's own top-level directory is what the name expects.
+	_pn_dir="$_pn_base/node-${_pn_v}-linux-${_pn_arch}-musl"
+	rm -rf "$_pn_dir" 2>/dev/null
+	if ! tar -xf "$_pn_tar" -C "$_pn_base" 2>/dev/null; then
+		fcc_log "$LOG" "node: could not extract $_pn_file"
+		rm -rf "$_pn_tmp" "$_pn_dir"
+		return 1
+	fi
+	rm -f "$_pn_base/current" 2>/dev/null
+	if ! ln -s "$_pn_dir" "$_pn_base/current" 2>/dev/null; then
+		fcc_log "$LOG" "node: could not point $_pn_base/current at $_pn_dir"
+		rm -rf "$_pn_tmp" "$_pn_dir"
+		return 1
+	fi
+	rm -rf "$_pn_tmp" 2>/dev/null
+	fcc_log "$LOG" "node: installed $_pn_v (musl, $_pn_arch) at $_pn_dir"
+	return 0
 }
 
 run_installer() {
@@ -634,7 +897,13 @@ run_installer() {
 			esac
 			_ri_answered="$_ri_answered|$_ri_line|"
 			fcc_log "$LOG" "installer prompt answered: $_ri_line -> $_ri_ans"
-			tmux send-keys -t "$(installer_session)" "$_ri_ans" Enter 2>/dev/null
+			# Enter or not is part of the answer, not a detail of sending it:
+			# see installer_answer_is_keypress().
+			if installer_answer_is_keypress "$_ri_line"; then
+				tmux send-keys -t "$(installer_session)" "$_ri_ans" 2>/dev/null
+			else
+				tmux send-keys -t "$(installer_session)" "$_ri_ans" Enter 2>/dev/null
+			fi
 		else
 			# Nothing in the table matches this line. Most of what the installer
 			# prints has no rule and should have none — step banners, progress
@@ -1146,6 +1415,39 @@ cmd_runtime() {
 	_cr_hash="$(sha256_of "$_cr_script")"
 	fcc_log "$LOG" "installer downloaded from $FCC_INSTALLER_URL sha256=$_cr_hash"
 	printf '%s  %s\n' "$_cr_hash" "$FCC_INSTALLER_URL" >> "$ROOT/cache/installer-hashes.log" 2>/dev/null
+
+	# --- Node.js, for the agents that are npm packages ---------------------
+	# Pi, DeepSeek Harness and Cline are all npm packages, all of them want a
+	# Node this image's own node is below, and the Pi installer's remedy —
+	# nodejs.org/dist — publishes no musl build, so what it leaves behind cannot
+	# execute here at all. Section 104.29 has the measurements. Upstream stops
+	# at the first agent that fails and rolls the whole run back, so this is not
+	# one agent's problem: without a Node that runs, no install completes.
+	#
+	# Fetching one first is skipped entirely when the box already has what they
+	# need, which is what happens on every run after the first.
+	#
+	# A failure here does not stop the install. The agents that needed it will
+	# fail a moment later with upstream's own reason in the transcript, and that
+	# is a better report than one this function could write — it names the agent
+	# and what it was doing. See the comment on provision_node().
+	_cr_node_wanted=""
+	if [ "$_cr_none" = 1 ]; then
+		: # --no-agents: nothing is being installed, so nothing needs a Node
+	elif [ -n "$_cr_agents" ]; then
+		_cr_node_wanted="$(fcc_node_agents_in "$_cr_agents")"
+	else
+		# No selection means upstream's own answers, and upstream's default for
+		# every agent it does not already find is yes — so all of them.
+		_cr_node_wanted="$(fcc_node_agents_in "$FCC_NODE_AGENTS")"
+	fi
+	_cr_node_missing=""
+	for _cr_node_id in $_cr_node_wanted; do
+		fcc_node_ok_for "$_cr_node_id" || _cr_node_missing="$_cr_node_missing $_cr_node_id"
+	done
+	if [ -n "${_cr_node_missing# }" ]; then
+		provision_node "${_cr_node_missing# }"
+	fi
 
 	# --- section 23 step 9: update ----------------------------------------
 	run_installer "$_cr_script" "$_cr_agents" "$_cr_none"

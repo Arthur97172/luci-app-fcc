@@ -670,18 +670,24 @@ fcc_agents_need_bash() {
 }
 
 # ---------------------------------------------------------------------------
-# fold: the one tool the Codex installer needs, and BusyBox may not have
+# Tools an agent installer needs, that this image's BusyBox may not provide
 # ---------------------------------------------------------------------------
-# The Codex installer resolves the release it is about to install before it
-# downloads anything, by piping the release JSON through
+# Every entry here is a gap measured on a real router (OpenWrt 24.10.8 x86_64,
+# BusyBox v1.36.1), not a guess about what an installer might want. Two kinds
+# have been seen, and the second is the reason this is a table rather than a
+# single name.
+#
+# **The applet was not compiled in.** The Codex installer resolves the release
+# it is about to install before it downloads anything, by piping the release
+# JSON through
 #
 #     LC_ALL=C fold -b -w 4096 | LC_ALL=C awk '…'
 #
 # fold bounds the awk record size — the comment above it in upstream's script
 # says compact single-line JSON stays fast because of those record boundaries —
 # so the pipeline is not decoration. fold is POSIX and BusyBox provides it, but
-# only when the applet was compiled in, and on OpenWrt 24.10.8 x86_64 it was
-# not: `busybox fold` answers "fold: applet not found". The shell then prints
+# only when the applet was compiled in, and here it was not: `busybox fold`
+# answers "fold: applet not found". The shell then prints
 #
 #     /tmp/fcc-install.XXXXXX: line 215: fold: not found
 #
@@ -690,16 +696,213 @@ fcc_agents_need_bash() {
 #
 #     error: Codex installation failed with exit code 1.
 #
-# which names an exit code and nothing else. Measured on the router with its
-# own Codex installer: with fold absent the resolver exits 1; after
-# `opkg install coreutils-fold` the same function prints "tag_name
-# rust-v0.162.1" and exits 0.
+# which names an exit code and nothing else. Measured on the router with its own
+# Codex installer: with fold absent the resolver exits 1; after `opkg install
+# coreutils-fold` the same function prints "tag_name rust-v0.162.1" and exits 0.
 #
-# Codex is the only agent listed because it is the only one whose installer has
-# been observed to need fold. That is not a claim that no other installer ever
-# will: install.sh names whatever tool a future one turns out to want, so a gap
-# this table does not know about still reaches the log with the command in it.
-FCC_FOLD_AGENTS="codex"
+# **The applet is there but the capability is not.** The Pi installer animates
+# its logo with fractional sleeps — `sleep 0.075` through `sleep 0.45`, sixteen
+# of them — and this BusyBox was built without fractional support, so the first
+# one stops the installer dead:
+#
+#     sleep: invalid number '0.075'
+#     error: Pi installation failed with exit code 1.
+#
+# `command -v sleep` finds it, `sleep --version` is not a BusyBox option, and
+# the failure is a bare exit code again. `opkg install coreutils-sleep` gives
+# GNU sleep 9.7 and the animation runs.
+#
+# The two are why the check below asks a *capability* question per tool rather
+# than testing for the binary: for sleep, "is it installed" is the wrong
+# question and answers yes.
+#
+# The agent lists name only what has been observed to need each tool. That is
+# not a claim about the ones not listed: install.sh reports the tool name out of
+# the installer's own transcript, so a gap this table has never heard of still
+# reaches the log with the command in it and the line it failed on.
+FCC_INSTALLER_TOOLS="fold sleep"
+
+fcc_tool_package() {
+	# fcc_tool_package <tool> -> the package that provides it here
+	case "$1" in
+		fold)  printf 'coreutils-fold' ;;
+		sleep) printf 'coreutils-sleep' ;;
+	esac
+}
+
+fcc_tool_agents() {
+	# fcc_tool_agents <tool> -> space separated ids whose installer needs it
+	case "$1" in
+		fold)  printf 'codex' ;;
+		sleep) printf 'pi' ;;
+	esac
+}
+
+fcc_tool_works() {
+	# fcc_tool_works <tool> -> 0 when the tool is usable *here*
+	#
+	# A capability probe, not a presence test. fold is asked whether it exists,
+	# because BusyBox either has the applet or does not. sleep is asked to do the
+	# thing the Pi installer asks of it, because the applet is present on every
+	# image and only some of them can do it.
+	case "$1" in
+		fold)  command -v fold >/dev/null 2>&1 ;;
+		sleep) sleep 0.075 2>/dev/null ;;
+		*)     command -v "$1" >/dev/null 2>&1 ;;
+	esac
+}
+
+fcc_tool_purpose() {
+	# fcc_tool_purpose <tool> -> one clause saying what needs it
+	case "$1" in
+		fold)  printf 'the Codex installer reads the latest release through it' ;;
+		sleep) printf 'the Pi installer animates its logo with fractional sleeps' ;;
+	esac
+}
+
+# ---------------------------------------------------------------------------
+# Node.js: the runtime three of the agents are installed with
+# ---------------------------------------------------------------------------
+# Pi, DeepSeek Harness and Cline are not binaries but npm packages, and their
+# installers state a Node.js floor in upstream's own words:
+#
+#     Pi     requires Node.js 22.19.0 or newer
+#     DSH    requires Node.js ^22.19.0 or >=24.0.0 and npm
+#     Cline  requires npm
+#
+# This image satisfies none of them. OpenWrt ships node 20.20.2, below Pi's and
+# DSH's floor, and the Pi installer's own remedy cannot work here either: it
+# fetches https://nodejs.org/dist/latest-v22.x, which carries no musl build, so
+# what lands on the box is a glibc binary. Measured on OpenWrt 24.10.8 x86_64:
+# /lib64/ld-linux-x86-64.so.2 does not exist (the system is musl —
+# /lib/ld-musl-x86_64.so.1 is what is there), the file is present and
+# executable, and
+#
+#     node --version   ->   ash: node: not found        (rc 127)
+#
+# because the kernel cannot find the interpreter, so execve fails with ENOENT
+# and the shell reports a missing command for a file that is right there. Pi's
+# preflight reads that as an empty version and stops with "Pi requires Node.js
+# 22.19.0 or newer. Found ." The same installer's 1853 lines contain the string
+# "musl" zero times.
+#
+# So this package fetches the musl build itself, into the directory upstream's
+# PATH entry already reserves for it:
+#
+#     ${XDG_DATA_HOME:-$HOME/.local/share}/pi-node/current/bin
+#
+# With a musl Node v22.23.3 there, Pi's preflight passes, it asks nothing about
+# Node, and the install completes — verified on the router end to end, through
+# "Pi was installed successfully."
+#
+# The floor is per agent because upstream's requirement is. Cline's installer
+# checks that npm exists and never looks at its version, so a check demanding
+# 22.19 of a Cline-only install would download 30 MB to satisfy a rule upstream
+# does not have — and section 104.25 makes that download a real cost on a box
+# whose flash is the reason the agent set was chosen at all.
+FCC_NODE_AGENTS="pi dsh cline"
+
+# Node.js publishes no musl build; its own project keeps them here. This is not
+# nodejs.org/dist, which is where the Pi installer looks and where only the
+# glibc builds are.
+FCC_NODE_DIST_BASE="https://unofficial-builds.nodejs.org/download/release"
+
+fcc_node_floor() {
+	# fcc_node_floor <id> -> that agent's Node.js floor, "npm" when its
+	# installer only needs npm, or nothing when it needs no Node.js at all
+	case "$1" in
+		pi|dsh) printf '22.19' ;;
+		cline)  printf 'npm' ;;
+	esac
+}
+
+fcc_node_arch() {
+	# fcc_node_arch -> Node's own name for this CPU, or nothing when there is
+	# no musl build for it
+	case "$(uname -m 2>/dev/null)" in
+		x86_64|amd64)  printf 'x64' ;;
+		aarch64|arm64) printf 'arm64' ;;
+		armv7l)        printf 'armv7l' ;;
+	esac
+}
+
+fcc_node_version() {
+	# fcc_node_version -> the version of the node on PATH, or nothing
+	command -v node >/dev/null 2>&1 || return 1
+	_nv_out="$(node --version 2>/dev/null)" || return 1
+	_nv_v="${_nv_out#v}"
+	case "$_nv_v" in
+		[0-9]*.[0-9]*.[0-9]*) printf '%s' "$_nv_v" ;;
+		*) return 1 ;;
+	esac
+}
+
+fcc_node_supported() {
+	# fcc_node_supported <version> -> 0 when upstream's agents accept it
+	#
+	# ^22.19.0 or >=24.0.0, transcribed from upstream's own
+	# dsh_node_version_is_supported() rather than paraphrased: 23.x is *not*
+	# accepted, and a check that accepted it would clear an install that then
+	# fails at the agent — the failure this exists to prevent.
+	_ns_v="$1"
+	_ns_major="${_ns_v%%.*}"
+	_ns_rest="${_ns_v#*.}"
+	[ "$_ns_rest" != "$_ns_v" ] || return 1
+	_ns_minor="${_ns_rest%%.*}"
+	case "$_ns_major:$_ns_minor" in
+		*[!0-9:]*|:*) return 1 ;;
+	esac
+	if [ "$_ns_major" -eq 22 ]; then
+		[ "$_ns_minor" -ge 19 ]
+		return
+	fi
+	[ "$_ns_major" -ge 24 ]
+}
+
+fcc_node_dir_ok_for() {
+	# fcc_node_dir_ok_for <bin-dir> <id> -> 0 when that one directory has what
+	# the agent's installer needs
+	#
+	# The same question as fcc_node_ok_for() below, asked of a directory rather
+	# than of PATH. install.sh needs this form because of when it asks: the
+	# runtime's own directories are added to PATH by run_installer(), which runs
+	# after the Node is provisioned, so a check that reads PATH would report the
+	# Node it installed a moment ago as missing and fetch it again on every
+	# install.
+	_ndo_dir="$1"
+	_ndo_floor="$(fcc_node_floor "$2")"
+	[ -n "$_ndo_floor" ] || return 0
+	[ -x "$_ndo_dir/npm" ] || return 1
+	[ "$_ndo_floor" = npm ] && return 0
+	_ndo_v="$("$_ndo_dir/node" --version 2>/dev/null || true)"
+	fcc_node_supported "${_ndo_v#v}"
+}
+
+fcc_node_ok_for() {
+	# fcc_node_ok_for <id> -> 0 when this image already provides what that
+	# agent's installer needs
+	_nof_floor="$(fcc_node_floor "$1")"
+	[ -n "$_nof_floor" ] || return 0
+	case "$_nof_floor" in
+		npm) command -v npm >/dev/null 2>&1 ;;
+		*)
+			command -v npm >/dev/null 2>&1 || return 1
+			_nof_v="$(fcc_node_version)" || return 1
+			fcc_node_supported "$_nof_v"
+			;;
+	esac
+}
+
+fcc_node_agents_in() {
+	# fcc_node_agents_in "<id[,id...]|id id...>" -> which of FCC_NODE_AGENTS
+	# that set contains, in the table's order
+	_nai_set="$(printf '%s' "$1" | tr ',' ' ')"
+	for _nai_id in $FCC_NODE_AGENTS; do
+		case " $_nai_set " in
+			*" $_nai_id "*) printf '%s ' "$_nai_id" ;;
+		esac
+	done
+}
 
 # ---------------------------------------------------------------------------
 # tar: the one tool uv's own installer needs, and the one BusyBox cannot be

@@ -260,57 +260,111 @@ else
 		"Not needed by the selected agents; add it before selecting one that needs it."
 fi
 
-# fold — required by the Codex installer, and not in every BusyBox.
+# Tools the agent installers need, and this image's BusyBox may not provide.
 #
-# The Codex installer resolves the release to install before it downloads
-# anything, piping the release JSON through `LC_ALL=C fold -b -w 4096 | awk …`
-# to bound the awk record size. Where BusyBox was built without the applet the
-# shell prints "fold: not found", the resolver gives up on releases.openai.com
-# and on its GitHub fallback, and the installer stops with "error: Codex
-# installation failed with exit code 1." — an exit code, and the name of
-# nothing. Measured on OpenWrt 24.10.8 x86_64, with the router's own Codex
-# installer: absent, the resolver exits 1; with coreutils-fold installed, the
-# same function prints "tag_name rust-v0.162.1" and exits 0.
+# One loop over FCC_INSTALLER_TOOLS, because the two gaps found so far differ
+# only in what they are called: fold is missing outright ("fold: not found"),
+# sleep is present but cannot do fractions ("sleep: invalid number '0.075'"),
+# and both end the same way — an installer that stops with an exit code and
+# names nothing. The table in common.sh carries the measurements; this decides
+# the verdict.
 #
-# A FAIL only when the Codex installer will actually run. ensure_codex() reuses
-# a Codex that is already on PATH and never fetches the installer, so on a box
-# that has one this is a warning: nothing needs fold today, and the check has no
-# business blocking an install that would work. That is the same reasoning as
-# the tar check above, and the opposite of the bash check, which cannot know
-# whether the agent's own installer will want it.
-_fold_v="$(fcc_detect_version fold --version 2>/dev/null || true)"
-if [ -n "$_fold_v" ]; then
-	add_result OK "fold" "$_fold_v" "needed to install Codex" ""
-else
-	_fold_will_run=""
-	_fold_present=""
-	for _fo_id in $FCC_FOLD_AGENTS; do
+# A FAIL only when the installer that needs the tool will actually run. The
+# agent may already be installed (its installer is then never fetched), or not
+# selected at all — and a FAIL here clears install_allowed, which would block an
+# install that works. That is the same reasoning as the tar check above, and the
+# opposite of the bash check, which cannot know whether the agent's own
+# installer will want it.
+for _tl_tool in $FCC_INSTALLER_TOOLS; do
+	_tl_agents="$(fcc_tool_agents "$_tl_tool")"
+	# The tool's own name, not the package's: the row is about what is missing
+	# from this image, and the package that fills the gap is in the hint.
+	if fcc_tool_works "$_tl_tool"; then
+		_tl_v="$(fcc_detect_version "$_tl_tool" --version 2>/dev/null || true)"
+		# sleep has no --version under BusyBox and fold has none when the applet
+		# is absent, so an empty value here is not a failure — fcc_tool_works
+		# already answered the question that matters.
+		add_result OK "$_tl_tool" "${_tl_v:-present}" "needed to install an agent" ""
+		continue
+	fi
+
+	_tl_will_run=""
+	_tl_present=""
+	for _tl_id in $_tl_agents; do
 		case " $_effective_set " in
-			*" $_fo_id "*)
+			*" $_tl_id "*)
 				# The id stands in when the registry cannot name it, for the
 				# same reason as the bash check above: these two lists decide
 				# the verdict, and one that an empty name can collapse would
 				# report a doomed install as a warning.
-				_fo_name="$(fcc_agent_name "$_fo_id")"
-				[ -n "$_fo_name" ] || _fo_name="$_fo_id"
+				_tl_name="$(fcc_agent_name "$_tl_id")"
+				[ -n "$_tl_name" ] || _tl_name="$_tl_id"
 				case " $_installed_set " in
-					*" $_fo_id "*) _fold_present="$_fold_present, $_fo_name" ;;
-					*) _fold_will_run="$_fold_will_run, $_fo_name" ;;
+					*" $_tl_id "*) _tl_present="$_tl_present, $_tl_name" ;;
+					*) _tl_will_run="$_tl_will_run, $_tl_name" ;;
 				esac
 				;;
 		esac
 	done
-	_fold_will_run="${_fold_will_run#, }"
-	_fold_present="${_fold_present#, }"
-	if [ -n "$_fold_will_run" ]; then
-		add_result FAIL "fold" "not found" "needed to install Codex" \
-			"$(fcc_pkg_install_hint coreutils-fold) — the Codex installer reads the latest release through fold, and without it stops with \"Failed to resolve the latest Codex release version.\" Required by $_fold_will_run."
-	elif [ -n "$_fold_present" ]; then
-		add_result WARN "fold" "not found" "needed to install Codex" \
-			"$_fold_present is already installed, so its installer is not run — but reinstalling Codex needs fold: $(fcc_pkg_install_hint coreutils-fold)."
+	_tl_will_run="${_tl_will_run#, }"
+	_tl_present="${_tl_present#, }"
+
+	# "not found" is the wrong word for a tool that is there and cannot do the
+	# job — BusyBox's sleep exists and refuses the fraction the Pi installer
+	# animates its logo with. The two are told apart by asking whether the
+	# command is there at all, rather than by listing the tools that can be
+	# limited: the next gap of this kind will be a different applet, and a
+	# reader who is told a present tool is missing goes looking for it, finds
+	# it, and is back where they started.
+	_tl_state="not found"
+	command -v "$_tl_tool" >/dev/null 2>&1 && _tl_state="too limited"
+	_tl_pkg="$(fcc_tool_package "$_tl_tool")"
+	_tl_why="$(fcc_tool_purpose "$_tl_tool")"
+
+	if [ -n "$_tl_will_run" ]; then
+		add_result FAIL "$_tl_tool" "$_tl_state" "needed to install an agent" \
+			"$(fcc_pkg_install_hint "$_tl_pkg") — $_tl_why. Required by $_tl_will_run."
+	elif [ -n "$_tl_present" ]; then
+		add_result WARN "$_tl_tool" "$_tl_state" "needed to install an agent" \
+			"$_tl_present is already installed, so its installer is not run — but reinstalling it needs $_tl_tool: $(fcc_pkg_install_hint "$_tl_pkg")."
 	else
-		add_result WARN "fold" "not found" "needed to install Codex" \
+		add_result WARN "$_tl_tool" "$_tl_state" "needed to install an agent" \
 			"Not needed by the selected agents; add it before selecting one that needs it."
+	fi
+done
+
+# Node.js — the runtime Pi, DeepSeek Harness and Cline are installed with.
+#
+# An absent Node is a WARN and not a FAIL, which is the opposite of every other
+# row here, because this package fixes this one: the installer fetches a musl
+# build before it runs the upstream installer (common.sh has the measurements).
+# Reporting a FAIL would clear install_allowed and block an install that works.
+#
+# The FAIL is kept for the case it cannot fix — a CPU with no musl build — since
+# that is a real dead end, and without it the install would run for minutes and
+# then stop at the first npm-based agent.
+_node_ids="$(fcc_node_agents_in "$_effective_set")"
+if [ -n "$_node_ids" ]; then
+	_node_names=""
+	_node_unsatisfied=""
+	for _node_id in $_node_ids; do
+		_node_name="$(fcc_agent_name "$_node_id")"
+		[ -n "$_node_name" ] || _node_name="$_node_id"
+		fcc_node_ok_for "$_node_id" || _node_unsatisfied="$_node_unsatisfied, $_node_name"
+		_node_names="$_node_names, $_node_name"
+	done
+	_node_names="${_node_names#, }"
+	_node_unsatisfied="${_node_unsatisfied#, }"
+	_node_v="$(fcc_node_version 2>/dev/null || true)"
+	_node_req="needed to install $_node_names"
+	if [ -z "$_node_unsatisfied" ]; then
+		add_result OK "node" "$_node_v" "$_node_req" ""
+	elif [ -z "$(fcc_node_arch)" ]; then
+		add_result FAIL "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
+			"No Node.js build exists for this CPU ($(uname -m 2>/dev/null)), so $_node_unsatisfied cannot be installed here."
+	else
+		add_result WARN "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
+			"The installer fetches a musl Node.js for them before it runs; nothing to do by hand."
 	fi
 fi
 

@@ -3359,7 +3359,13 @@ test_doctor_bash_check_follows_the_agent_set() {
 test_doctor_fold_check_follows_the_agent_set() {
 	setup_sandbox
 	make_standin_tool curl 'exit 0' >/dev/null
-	_dfc_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl mktemp mkdir rm tar"
+	# A sleep that takes a fraction, so that the Pi row — the other row this
+	# table drives — is satisfied and fold is the only thing the assertions
+	# below can be about. Without it the cases that select Pi would close the
+	# gate on the sleep row instead, and "install_allowed" would be answering a
+	# different question than the one this test asks.
+	make_standin_tool sleep 'exit 0' >/dev/null
+	_dfc_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl $SANDBOX/standin/sleep mktemp mkdir rm tar"
 
 	# Codex selected and no fold: a failure, naming the package and the agent.
 	_dfc_fail="$(sh_doctor_tools "$_dfc_tools" 'FCC_AGENT_SELECTION=codex' --json |
@@ -3409,6 +3415,144 @@ test_doctor_fold_check_follows_the_agent_set() {
 		'"install_allowed": true' \
 		"and it does not block an install that would work"
 	rm -rf "$SANDBOX/opt/fcc"
+}
+
+# The sleep check, which exists for the same reason as the fold one and was
+# found the same way — by running the installer on the router and reading the
+# screen. BusyBox ships a sleep, so nothing is missing here and "not found"
+# never appears; what this image's sleep will not do is take a fraction:
+#
+#   sleep: invalid number '0.075'
+#
+# The Pi installer animates its logo with sixteen of those before it does
+# anything else, and pi_installer_main() runs under `set -eu`, so the first one
+# ends the whole script. A check that only looked for a missing command would
+# report this image as ready to install Pi, and the install would stop a second
+# later with an exit code and nothing else.
+#
+# The outcomes are produced deliberately rather than read off the machine
+# running the tests, because the check reads PATH — a host whose sleep happens
+# to take a fraction would otherwise make the "FAIL" case unreachable and the
+# assertion would hold for the wrong reason.
+test_doctor_sleep_check_follows_the_agent_set() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	make_standin_tool fold 'exit 0' >/dev/null
+	_dsc_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl $SANDBOX/standin/fold mktemp mkdir rm tar"
+
+	# Pi selected, no sleep at all: a failure, naming the package and the agent.
+	_dsc_fail="$(sh_doctor_tools "$_dsc_tools" 'FCC_AGENT_SELECTION=pi' --json |
+		grep '"name": "sleep"')"
+	assert_contains "$_dsc_fail" '"status": "FAIL"' \
+		"a selected Pi with no sleep is a failure"
+	assert_contains "$_dsc_fail" 'opkg install coreutils-sleep' \
+		"and the report says which package provides it"
+	assert_contains "$_dsc_fail" 'Required by Pi' \
+		"and names the agent whose installer needs it"
+	assert_contains "$_dsc_fail" 'not found' \
+		"and says the tool is not there, because it is not"
+	assert_contains "$(sh_doctor_tools "$_dsc_tools" 'FCC_AGENT_SELECTION=pi' --json)" \
+		'"install_allowed": false' "and a missing sleep is what closes the gate"
+
+	# The gap the router actually had: a sleep that is present and refuses the
+	# fraction. That is a failure too, and it must not be reported as absent —
+	# a reader told the tool is missing goes looking for it, finds it, and is
+	# back where they started.
+	make_standin_tool sleep 'case "$1" in *.*) exit 1 ;; esac' >/dev/null
+	_dsc_lim="$(sh_doctor_tools "$_dsc_tools $SANDBOX/standin/sleep" 'FCC_AGENT_SELECTION=pi' --json |
+		grep '"name": "sleep"')"
+	assert_contains "$_dsc_lim" '"status": "FAIL"' \
+		"a sleep that refuses a fraction is a failure too"
+	assert_contains "$_dsc_lim" 'too limited' \
+		"and the report says the tool is there but not capable"
+	assert_not_contains "$_dsc_lim" 'not found' \
+		"and does not claim it is missing"
+
+	# An agent that does not need it: a warning, and the gate stays open.
+	_dsc_warn="$(sh_doctor_tools "$_dsc_tools" 'FCC_AGENT_SELECTION=codex' --json |
+		grep '"name": "sleep"')"
+	assert_contains "$_dsc_warn" '"status": "WARN"' \
+		"an agent that does not need sleep does not fail the check"
+	assert_contains "$_dsc_warn" 'Not needed by the selected agents' \
+		"and the report says why it is only a warning"
+	assert_contains "$(sh_doctor_tools "$_dsc_tools" 'FCC_AGENT_SELECTION=codex' --json)" \
+		'"install_allowed": true' "and the gate stays open for that install"
+
+	# sleep present and capable: OK, and nothing left to install.
+	make_standin_tool sleep 'exit 0' >/dev/null
+	_dsc_ok="$(sh_doctor_tools "$_dsc_tools $SANDBOX/standin/sleep" 'FCC_AGENT_SELECTION=pi' --json |
+		grep '"name": "sleep"')"
+	assert_contains "$_dsc_ok" '"status": "OK"' "a sleep that takes a fraction is OK"
+	assert_contains "$(sh_doctor_tools "$_dsc_tools $SANDBOX/standin/sleep" 'FCC_AGENT_SELECTION=pi' --json)" \
+		'"install_allowed": true' "and installing it is what reopens the gate"
+
+	# Pi already installed and the sleep still limited: a warning. ensure_pi()
+	# reuses a Pi that is already on PATH and never runs the installer that
+	# animates the logo, so nothing needs the fraction — and blocking here would
+	# refuse an install that would have worked.
+	mkdir -p "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data/.local/bin"
+	: > "$SANDBOX/opt/fcc/data/.local/bin/pi"
+	chmod +x "$SANDBOX/opt/fcc/data/.local/bin/pi"
+	make_standin_tool sleep 'case "$1" in *.*) exit 1 ;; esac' >/dev/null
+	_dsc_have="$(sh_doctor_tools "$_dsc_tools $SANDBOX/standin/sleep" 'FCC_AGENT_SELECTION=pi' --json |
+		grep '"name": "sleep"')"
+	assert_contains "$_dsc_have" '"status": "WARN"' \
+		"a Pi that is already installed makes sleep a warning"
+	assert_contains "$_dsc_have" 'already installed' \
+		"and the report says why nothing needs it yet"
+	assert_contains "$(sh_doctor_tools "$_dsc_tools $SANDBOX/standin/sleep" 'FCC_AGENT_SELECTION=pi' --json)" \
+		'"install_allowed": true' \
+		"and it does not block an install that would work"
+	rm -rf "$SANDBOX/opt/fcc"
+}
+
+# The Node check. Pi, DeepSeek Harness and Cline are npm packages, all three
+# want a Node this image's own node is below, and the Pi installer's own remedy
+# — nodejs.org/dist — publishes no musl build at all, so what it installs
+# cannot execute here. This package fetches a musl Node itself before the
+# installer runs, which is why the row is a warning rather than a failure:
+# there is nothing for the reader to do.
+#
+# It is a failure on exactly one box — a CPU no Node build exists for — because
+# there the promise cannot be kept, and a warning would read as "handled".
+test_doctor_node_check_follows_the_agent_set() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	make_standin_tool fold 'exit 0' >/dev/null
+	make_standin_tool sleep 'exit 0' >/dev/null
+	_dnc_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl $SANDBOX/standin/fold $SANDBOX/standin/sleep mktemp mkdir rm tar"
+
+	# An npm agent selected and no node on PATH: a warning that says the
+	# installer handles it, and a gate that stays open.
+	_dnc_warn="$(sh_doctor_tools "$_dnc_tools" 'FCC_AGENT_SELECTION=pi' --json |
+		grep '"name": "node"')"
+	assert_contains "$_dnc_warn" '"status": "WARN"' \
+		"a missing node is a warning, because this package installs one"
+	assert_contains "$_dnc_warn" 'fetches a musl Node.js' \
+		"and the report says so rather than leaving the reader to do it"
+	assert_contains "$_dnc_warn" 'needed to install Pi' \
+		"and names the agent that needs it"
+	assert_contains "$(sh_doctor_tools "$_dnc_tools" 'FCC_AGENT_SELECTION=pi' --json)" \
+		'"install_allowed": true' "and it does not close the gate"
+
+	# An agent that is not an npm package: no node row at all. A row saying
+	# "not needed" about a runtime the reader never heard of is noise.
+	assert_not_contains "$(sh_doctor_tools "$_dnc_tools" 'FCC_AGENT_SELECTION=claude' --json)" \
+		'"name": "node"' "an agent that needs no node gets no node row"
+
+	# A CPU no Node build exists for: a failure. Nothing this package can do
+	# makes those agents installable there, and the row says which CPU it asked
+	# about rather than leaving the reader to guess.
+	make_standin_tool uname 'echo mips' >/dev/null
+	_dnc_fail="$(sh_doctor_tools "$_dnc_tools $SANDBOX/standin/uname" 'FCC_AGENT_SELECTION=pi' --json |
+		grep '"name": "node"')"
+	assert_contains "$_dnc_fail" '"status": "FAIL"' \
+		"a CPU with no Node build is a failure"
+	assert_contains "$_dnc_fail" 'No Node.js build exists for this CPU' \
+		"and the report says exactly that"
+	assert_contains "$_dnc_fail" 'mips' "and names the CPU it asked about"
+	assert_contains "$(sh_doctor_tools "$_dnc_tools $SANDBOX/standin/uname" 'FCC_AGENT_SELECTION=pi' --json)" \
+		'"install_allowed": false' "and it closes the gate, because it cannot be fixed here"
 }
 
 # The tar check, which exists because uv's own installer cannot unpack its
@@ -4142,6 +4286,315 @@ test_a_missing_tool_is_named_in_the_log() {
 	assert_ok "the failed-install branch hands the diagnosis the transcript" \
 		grep -q 'installer_explain_failure "\$_cr_script" "\$_cr_reason" "\$ROOT/logs/installer.out"' \
 			"$_fd_src"
+}
+
+# The second shape of "the installer needed something this image does not have",
+# and the one that never contains the words "not found": a command that is
+# there and refuses the argument it is given.
+#
+#   sleep: invalid number '0.075'
+#
+# BusyBox's sleep is in every OpenWrt image; what it will not do is take a
+# fraction. The Pi installer animates its logo with sixteen of them under
+# `set -eu`, so the first one ends the run — and the line the reader was left
+# with was "error: Pi installation failed with exit code 1.", which is the same
+# report the fold gap produced for the same reason: the reason was in the
+# transcript and the transcript was not in the log.
+test_a_limited_tool_is_named_in_the_log() {
+	setup_sandbox
+	_dlt_script="$(write_installer_fixture)"
+	_dlt_logs="$SANDBOX/diaglogs"
+	_dlt_out="$SANDBOX/installer.out"
+	mkdir -p "$_dlt_logs"
+
+	{
+		printf '\033[?25l  Pi Installer\r\n'
+		printf "sleep: invalid number '0.075'\r\n"
+		printf 'error: Pi installation failed with exit code 1.\r\n'
+		printf '   \r\n'
+	} > "$_dlt_out"
+
+	: > "$_dlt_logs/fcc-runtime.log"
+	sh_install "fcc_dir_logs() { printf '%s' '$_dlt_logs'; }
+		installer_explain_failure '$_dlt_script' \
+			'error: Pi installation failed with exit code 1.' '$_dlt_out'" \
+		>/dev/null 2>&1
+	_dlt_log="$(cat "$_dlt_logs/fcc-runtime.log" 2>/dev/null || true)"
+
+	assert_contains "$_dlt_log" "the installer needed 'sleep'" \
+		"the log names the command whose argument was refused"
+	assert_contains "$_dlt_log" 'opkg install coreutils-sleep' \
+		"and the package that provides a sleep which takes a fraction"
+	assert_contains "$_dlt_log" 'too limited' \
+		"and says the tool is there but not capable, not that it is missing"
+	assert_not_contains "$_dlt_log" 'does not provide' \
+		"and does not send the reader looking for a tool that exists"
+	assert_contains "$_dlt_log" 'animates its logo' \
+		"and says what the installer wanted it for"
+
+	# The name is read out of the line, and what comes back is a command name or
+	# nothing: the reader is handed text out of a log line.
+	printf "sleep: invalid number '0.075'\n" > "$_dlt_out"
+	assert_eq "sleep" "$(sh_install "installer_missing_tool '$_dlt_out'")" \
+		"the tool is read out of the line the applet printed"
+	printf "/tmp/fcc-install.x: line 12: sleep: invalid number '0.5'\n" > "$_dlt_out"
+	assert_eq "sleep" "$(sh_install "installer_missing_tool '$_dlt_out'")" \
+		"and out of the same line when the shell prefixes it"
+
+	# A line that merely mentions a version is not this. The match is anchored
+	# on "<command>: invalid number", so the installer's own prose about a
+	# version cannot be read as a tool called "requires".
+	printf 'error: Pi requires Node.js 22.19.0 or newer. Found v20.20.2.\n' > "$_dlt_out"
+	assert_eq "" "$(sh_install "installer_missing_tool '$_dlt_out'")" \
+		"prose about a version is not a tool"
+}
+
+# The three questions the Pi installer asks that upstream's installer does not
+# ask on its behalf. All three were found by running it on the router and
+# reading the screen, and the first one stops the run dead if it goes
+# unanswered — it is a menu, and nothing in this package's prompt table matched
+# it, so the loop sat there until FCC_INSTALLER_TIMEOUT rolled the install back
+# half an hour later.
+test_the_pi_installers_own_questions_are_answered() {
+	setup_sandbox
+
+	# The action menu. It is a block — "Choose an action:", then a row per key —
+	# and what the pane's last line is, is the last row, so the row is what the
+	# matcher can anchor on. That is also the right anchor: Pi prints the action
+	# it took the moment the menu is answered, so the row is gone by the next
+	# poll and the loop's "already answered this" guard is not tripped by a menu
+	# that is still on the screen.
+	_dpq_menu='  n    Do nothing'
+	assert_eq "y" \
+		"$(sh_install "installer_answer_for '$_dpq_menu' 'claude pi' set")" \
+		"a selected Pi is installed from the menu"
+	assert_eq "n" \
+		"$(sh_install "installer_answer_for '$_dpq_menu' 'claude' set")" \
+		"a Pi that was not selected is left alone"
+	assert_eq "n" \
+		"$(sh_install "installer_answer_for '$_dpq_menu' '' none")" \
+		"--no-agents leaves Pi alone"
+	assert_eq "y" \
+		"$(sh_install "installer_answer_for '$_dpq_menu' '' default")" \
+		"and no opinion takes the menu's own default, which is what Pi derived"
+	# The row for the key that is never sent. "u" uninstalls, which is not a
+	# thing an install was asked to do, and the row is only on the menu at all
+	# when a pi is already installed.
+	assert_eq "y" \
+		"$(sh_install "installer_answer_for '  u    Uninstall Pi' 'claude pi' set")" \
+		"the uninstall row is not a key this package presses"
+
+	# Every row of the menu, not only the bottom one — a pane shorter than the
+	# block shows only its bottom, and a row that is not recognised is a
+	# question nobody answers. The rows are spelled as Pi spells them, which is
+	# also how they read once installer_pane_text() has stripped the colour out
+	# from between the key and the label.
+	assert_ok "the row that installs a Pi that is not there yet" \
+		sh_install "installer_line_is_pi_menu '  y    Install Pi (default)'"
+	assert_ok "the row that reinstalls one that is" \
+		sh_install "installer_line_is_pi_menu '  y    Reinstall Pi (default)'"
+	assert_ok "the row that migrates an npm-installed one" \
+		sh_install "installer_line_is_pi_menu '  y    Migrate Pi to a managed installation (default)'"
+
+	# And what is NOT a row of it. Pi prints the action it took the moment the
+	# menu is answered, and that sentence must not be read as a menu that is
+	# still waiting: answering it a second time would put a second key into the
+	# terminal, and the *next* prompt — "Start pi now?" — would read it as its
+	# answer, whose default is yes. Every one of those sentences is lower case,
+	# and every row is not, which is what keeps the two apart.
+	assert_no "the sentence Pi prints after the menu is not the menu" \
+		sh_install "installer_line_is_pi_menu 'Will install Pi.'"
+	assert_no "nor the one for a reinstall" \
+		sh_install "installer_line_is_pi_menu 'Will reinstall Pi.'"
+	assert_no "nor the one for an uninstall" \
+		sh_install "installer_line_is_pi_menu 'Will uninstall Pi.'"
+	assert_no "nor the one it prints when nothing was chosen" \
+		sh_install "installer_line_is_pi_menu 'Chose to do nothing. Exiting.'"
+	assert_no "nor a yes/no prompt that merely mentions Pi" \
+		sh_install "installer_line_is_pi_menu 'Install Pi for fcc-pi? [Y/n]'"
+
+	# The menu is the one prompt answered with a bare key. Everything else is
+	# read a line at a time, and an Enter sent to this one is not consumed by
+	# it — it is read by "Start pi now?" as that prompt's default, which is
+	# yes. Pi's own interface then starts in the installer's terminal and the
+	# install sits there until the deadline.
+	assert_ok "the menu answer is sent without Enter" \
+		sh_install "installer_answer_is_keypress '$_dpq_menu'"
+	assert_no "and every other prompt is sent with it" \
+		sh_install "installer_answer_is_keypress 'Install Pi for fcc-pi? [Y/n]'"
+
+	# Pi offers to launch its own interface in the terminal the install ran in.
+	# It is a full-screen program that stays until it is quit by hand, and that
+	# terminal belongs to the installer job — so yes ends the job by hanging it.
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Start pi now? [Y/n]" "claude pi" set')" \
+		"Pi is not started in the installer's terminal"
+
+	# And its offer to install Node itself. Pi's remedy is nodejs.org/dist,
+	# which publishes no musl build: yes installs a glibc Node that cannot
+	# execute on this image, and the install then fails further along with a
+	# worse reason than this one. Declining stops it here.
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Pi needs Node.js 22.19.0 or newer and npm. Install them now with standalone Node.js? [Y/n]" "pi" set')" \
+		"Pi's own Node install is declined, because its build cannot run here"
+
+	# And the loop asks. A predicate nobody calls is the same as no predicate,
+	# and this is the one whose absence reintroduces the hang above.
+	_dpq_src="$LIBEXEC/install.sh"
+	assert_ok "the answer loop asks whether the answer is a keystroke" \
+		grep -q 'installer_answer_is_keypress "\$_ri_line"' "$_dpq_src"
+}
+
+# provision_node's three fetches, answered from files instead of the network.
+#
+# The release is real — an archive holding a node and an npm, which the tests
+# then run — and the checksum in SHASUMS256.txt is the checksum of that
+# archive, so the verification is exercised rather than stubbed out. A URL the
+# function builds wrongly resolves to a file that is not there, and the
+# stand-in then fails the way curl fails, so a test cannot pass by accident.
+#
+# The architecture is read from the function under test rather than written
+# down, so this works on a build host that is not x86_64; it prints the release
+# directory's name.
+#
+# The stand-in curl goes in a directory of its own rather than in $SANDBOX/bin.
+# That PATH entry is shared by every test in the run, and the tests run in
+# alphabetical order rather than in the order they are written — so a curl left
+# there is still on PATH for test_rollback_* and test_server_health_*, which both
+# talk to a real listener. The tests below put this directory on PATH themselves
+# instead.
+make_node_release_fixture() {
+	_nrf_arch="$(sh_common 'fcc_node_arch')"
+	[ -n "$_nrf_arch" ] || return 1
+	_nrf_name="node-v22.23.3-linux-$_nrf_arch-musl"
+
+	rm -rf "$SANDBOX/nodebin" "$SANDBOX/fixture"
+	mkdir -p "$SANDBOX/nodebin" "$SANDBOX/fixture/http" "$SANDBOX/fixture/$_nrf_name/bin"
+	printf '#!/bin/sh\nprintf "v22.23.3\\n"\n' > "$SANDBOX/fixture/$_nrf_name/bin/node"
+	printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/fixture/$_nrf_name/bin/npm"
+	chmod +x "$SANDBOX/fixture/$_nrf_name/bin/node" "$SANDBOX/fixture/$_nrf_name/bin/npm"
+	( cd "$SANDBOX/fixture" && tar -czf "http/$_nrf_name.tar.xz" "$_nrf_name" ) || return 1
+
+	# The index is newest-first, as the real one is, and holds a second release
+	# so that taking the wrong entry is a failure rather than a coincidence.
+	printf '%s\n' '[{"version":"v22.23.3"},{"version":"v22.22.1"}]' \
+		> "$SANDBOX/fixture/http/index.json"
+	printf '%s  %s\n' \
+		"$(sha256sum "$SANDBOX/fixture/http/$_nrf_name.tar.xz" | awk '{print $1}')" \
+		"$_nrf_name.tar.xz" > "$SANDBOX/fixture/http/SHASUMS256.txt"
+
+	# A curl that answers out of that directory, and fails the way curl fails
+	# for anything it has no answer for.
+	{
+		printf '#!/bin/sh\n'
+		printf 'while [ $# -gt 0 ]; do\n'
+		printf '  case "$1" in\n'
+		printf '    --output) out="$2"; shift 2 ;;\n'
+		printf '    -*) shift ;;\n'
+		printf '    *) url="$1"; shift ;;\n'
+		printf '  esac\n'
+		printf 'done\n'
+		printf 'f=%s\n' "$SANDBOX/fixture/http/\${url##*/}"
+		printf '[ -f "$f" ] || exit 22\n'
+		printf 'cp "$f" "$out"\n'
+	} > "$SANDBOX/nodebin/curl"
+	chmod +x "$SANDBOX/nodebin/curl"
+
+	printf '%s' "$_nrf_name"
+}
+
+# The Node this package fetches for the npm agents, before the installer runs.
+#
+# Three of the ten agents are npm packages — Pi, DeepSeek Harness and Cline —
+# and all three want a Node this image's own node is below. The Pi installer
+# will offer to install one, but its remedy is nodejs.org/dist, which publishes
+# no musl build: what it leaves behind cannot execute on this image at all, and
+# the kernel reports the missing ELF interpreter as if the file were not there.
+# Upstream stops at the first agent that fails and rolls the whole run back, so
+# this is not one agent's problem — without a Node that runs, no install
+# completes, which is the symptom that started all of this.
+#
+# The build comes from unofficial-builds.nodejs.org, which is where the Node
+# project itself keeps the musl builds it does not publish, and it lands in
+# ${XDG_DATA_HOME:-$HOME/.local/share}/pi-node — the directory upstream's own
+# PATH entry already reserves, so nothing downstream has to be told where it
+# went.
+test_provision_node_fetches_a_musl_build() {
+	setup_sandbox
+	_dpn_name="$(make_node_release_fixture)" || skip "no musl Node architecture on this host"
+	_dpn_base="$SANDBOX/xdg/pi-node"
+	_dpn_logs="$SANDBOX/diaglogs"
+	mkdir -p "$_dpn_logs"
+	: > "$_dpn_logs/fcc-runtime.log"
+
+	sh_install "fcc_dir_logs() { printf '%s' '$_dpn_logs'; }
+		PATH='$SANDBOX/nodebin':\$PATH
+		XDG_DATA_HOME='$SANDBOX/xdg' provision_node pi" >/dev/null 2>&1
+
+	assert_exec "$_dpn_base/current/bin/node" \
+		"the node lands in the directory upstream's PATH entry already reserves"
+	assert_eq "v22.23.3" "$("$_dpn_base/current/bin/node" 2>/dev/null)" \
+		"and it is the release the index named"
+	assert_exec "$_dpn_base/current/bin/npm" "and npm comes with it"
+	assert_eq "$_dpn_base/$_dpn_name" "$(readlink "$_dpn_base/current")" \
+		"and current points at the release directory rather than holding a copy"
+	assert_contains "$(cat "$_dpn_logs/fcc-runtime.log")" 'installed v22.23.3' \
+		"and the log says which release was installed"
+
+	# A second call does not fetch again: the Node is there and already
+	# satisfies the floor. This is not an optimisation — the check is made
+	# against the directory rather than against PATH precisely because the
+	# runtime's directories are added to PATH by the step that runs *after*
+	# this one, so a PATH check would report the Node fetched a moment ago as
+	# missing and download 30 MB again on every install, including the ones
+	# that change nothing.
+	#
+	# The proof is that curl is broken for the second call: a fetch that
+	# happened anyway would fail, and the failure would be in the log.
+	printf '#!/bin/sh\nexit 22\n' > "$SANDBOX/nodebin/curl"
+	chmod +x "$SANDBOX/nodebin/curl"
+	: > "$_dpn_logs/fcc-runtime.log"
+	sh_install "fcc_dir_logs() { printf '%s' '$_dpn_logs'; }
+		PATH='$SANDBOX/nodebin':\$PATH
+		XDG_DATA_HOME='$SANDBOX/xdg' provision_node pi" >/dev/null 2>&1
+	assert_eq "" "$(cat "$_dpn_logs/fcc-runtime.log")" \
+		"a node that is already installed is not fetched again"
+	assert_exec "$_dpn_base/current/bin/node" "and it is left where it was"
+}
+
+# The checksum, which is the whole reason this download is allowed to happen.
+# This is a third-party binary placed where the agents will run it from, and
+# the archive is checked before anything is unpacked — so an archive that does
+# not match its own release's SHASUMS256.txt installs nothing at all.
+#
+# This one installs into an XDG directory of its own. The test above leaves a
+# working Node in $SANDBOX/xdg, and provision_node() is idempotent by design —
+# so sharing that directory would mean this test measured the early return
+# instead of the check, and passed or failed according to which of the two ran
+# first rather than according to what it is about.
+test_provision_node_refuses_an_archive_that_does_not_match() {
+	setup_sandbox
+	_dpn_name="$(make_node_release_fixture)" || skip "no musl Node architecture on this host"
+	_dpn_base="$SANDBOX/xdgcheck/pi-node"
+	_dpn_logs="$SANDBOX/diaglogs"
+	mkdir -p "$_dpn_logs"
+
+	# The release's own checksum file, with one character changed. Everything
+	# else about the download is right, so the only thing that can stop it is
+	# the check.
+	_dpn_wrong="$(printf '%s' "$(cat "$SANDBOX/fixture/http/SHASUMS256.txt")" |
+		sed 's/^./0/')"
+	printf '%s\n' "$_dpn_wrong" > "$SANDBOX/fixture/http/SHASUMS256.txt"
+
+	: > "$_dpn_logs/fcc-runtime.log"
+	sh_install "fcc_dir_logs() { printf '%s' '$_dpn_logs'; }
+		PATH='$SANDBOX/nodebin':\$PATH
+		XDG_DATA_HOME='$SANDBOX/xdgcheck' provision_node pi" >/dev/null 2>&1
+
+	assert_no "an archive that fails its checksum is not installed" \
+		test -e "$_dpn_base/current"
+	assert_contains "$(cat "$_dpn_logs/fcc-runtime.log")" 'failed its checksum' \
+		"and the log says why rather than leaving a missing node unexplained"
 }
 
 tests_main
