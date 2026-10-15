@@ -239,6 +239,119 @@ installer_failure_reason() {
 	printf '%s' "$_ifr_line"
 }
 
+installer_download_url_for() {
+	# installer_download_url_for <installer-script> <label> -> URL, or nothing.
+	#
+	# The upstream installer names a failed download by the label it was handed
+	# — "Could not download the Codex installer (curl exit code 35)." — and that
+	# label is the only handle on which *host* could not be reached. The host is
+	# the fact a reader needs and the one the message does not carry: it is what
+	# says whether the router's own network is the problem, and it is what a
+	# person has to be able to test.
+	#
+	# Both halves of the answer are read out of the installer that was actually
+	# run rather than kept in a table here. Those URLs belong to upstream and
+	# change without telling anyone; a copy of them in this package would go
+	# stale silently, and a stale table names the wrong host — which is worse
+	# than naming none at all. At every call site the variable and the label sit
+	# on one line, `download_and_run "$CODEX_INSTALL_URL" sh "Codex"`, so the
+	# pair can be recovered from that line and the assignment above it.
+	#
+	# The label is matched literally (grep -F), because it is text out of a log
+	# line and not a pattern: "Codex" must not also match "Codex Something".
+	_idu_script="$1"
+	_idu_label="$2"
+	[ -r "$_idu_script" ] || return 1
+	[ -n "$_idu_label" ] || return 1
+
+	_idu_line="$(grep -o 'download_and_run "\$[A-Za-z_][A-Za-z_0-9]*"[^"]*"[^"]*"' \
+			"$_idu_script" 2>/dev/null \
+		| grep -F "\"$_idu_label\"" | head -n 1)"
+	[ -n "$_idu_line" ] || return 1
+
+	_idu_var="${_idu_line#download_and_run \"\$}"
+	_idu_var="${_idu_var%%\"*}"
+	[ -n "$_idu_var" ] || return 1
+
+	_idu_url="$(grep -m 1 "^${_idu_var}=\"https://" "$_idu_script" 2>/dev/null || true)"
+	[ -n "$_idu_url" ] || return 1
+	_idu_url="${_idu_url#*=}"
+	_idu_url="${_idu_url#\"}"
+	_idu_url="${_idu_url%\"}"
+	printf '%s' "$_idu_url"
+}
+
+installer_explain_failure() {
+	# installer_explain_failure <installer-script> <reason>
+	#
+	# Section 103: when something cannot work, say exactly why instead of leaving
+	# the reader with a number. "curl exit code 35" is not something a person can
+	# act on, and the host it happened to is not in the installer's message at
+	# all — so the two facts that turn a failed install into a diagnosable one
+	# are added here, to the log the job panel shows. This is what the router
+	# reported before the change, and it is why the question had to be asked:
+	#
+	#   installer reported: error: Could not download the Codex installer
+	#   (curl exit code 35).
+	#
+	# Silent for every failure that is not a download. The rest are the
+	# installer's own business and this function has nothing to add to them.
+	_ief_script="$1"
+	_ief_reason="$2"
+
+	case "$_ief_reason" in
+		*'Could not download the '*) : ;;
+		*) return 0 ;;
+	esac
+
+	# "…download the Codex installer (curl exit code 35)." -> "Codex".
+	# The label is the whole of what upstream gives, and it is the same string it
+	# passed to download_and_run, which is what makes the lookup above possible.
+	_ief_label="${_ief_reason#*Could not download the }"
+	_ief_label="${_ief_label%% installer*}"
+
+	_ief_code=""
+	case "$_ief_reason" in
+		*'(curl exit code '*)
+			_ief_code="${_ief_reason#*(curl exit code }"
+			_ief_code="${_ief_code%%)*}"
+			;;
+	esac
+	case "$_ief_code" in
+		''|*[!0-9]*) _ief_code="" ;;
+	esac
+
+	_ief_url="$(installer_download_url_for "$_ief_script" "$_ief_label" 2>/dev/null || true)"
+	_ief_host=""
+	if [ -n "$_ief_url" ]; then
+		_ief_host="${_ief_url#https://}"
+		_ief_host="${_ief_host%%/*}"
+	fi
+
+	# Only the codes a download can actually produce, and only the ones whose
+	# meaning is not the message itself. 22 (an HTTP error status) and 23 (a
+	# write failure) say what they are; 35 does not, and it is the one this
+	# package has been asked about.
+	_ief_why=""
+	case "$_ief_code" in
+		6)  _ief_why="the host name could not be resolved" ;;
+		7)  _ief_why="the connection was refused" ;;
+		28) _ief_why="the request timed out" ;;
+		35) _ief_why="the TLS handshake with the server did not complete" ;;
+		56) _ief_why="the connection was closed while the response was being read" ;;
+		60) _ief_why="the server's certificate was not accepted" ;;
+		*)  _ief_why="" ;;
+	esac
+
+	[ -n "$_ief_host" ] && fcc_log "$LOG" "installer: $_ief_label is downloaded from $_ief_url"
+	[ -n "$_ief_why" ] && fcc_log "$LOG" "installer: curl exit code $_ief_code means $_ief_why"
+	[ -n "$_ief_host" ] && fcc_log "$LOG" "installer: that is the network path to $_ief_host, not an FCC failure; check it with: curl -v -o /dev/null $_ief_url"
+	# The consequence, stated rather than implied. Upstream's fail() exits, and
+	# section 79's rollback then puts the box back where it started, so "the
+	# install failed" is not the same as "some agents were installed".
+	fcc_log "$LOG" "installer: upstream stops at the first agent it cannot download, so this attempt installed no agent"
+}
+
 # Answer one prompt. Prints the keys to send, or nothing when the line is not a
 # prompt we recognise.
 installer_answer_for() {
@@ -957,7 +1070,6 @@ cmd_runtime() {
 	# --- section 23 step 9: update ----------------------------------------
 	run_installer "$_cr_script" "$_cr_agents" "$_cr_none"
 	_cr_rc=$?
-	rm -f "$_cr_script"
 
 	if [ "$_cr_rc" -ne 0 ]; then
 		fcc_log "$LOG" "installer exited with status $_cr_rc; see logs/installer.out"
@@ -969,10 +1081,17 @@ cmd_runtime() {
 		# that line is quoted here verbatim so the panel shows it.
 		_cr_reason="$(installer_failure_reason "$ROOT/logs/installer.out" 2>/dev/null || true)"
 		[ -n "$_cr_reason" ] && fcc_log "$LOG" "installer reported: $_cr_reason"
+		# The installer's line names the agent and an exit code and stops there.
+		# The host it could not reach is read out of the script that just ran, so
+		# this has to happen before the script is deleted — hence the rm below,
+		# in both paths rather than once above the branch.
+		installer_explain_failure "$_cr_script" "$_cr_reason"
+		rm -f "$_cr_script"
 		rollback_runtime "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"
 		return "$_cr_rc"
 	fi
+	rm -f "$_cr_script"
 
 	# --- section 23 step 10: verify ---------------------------------------
 	if ! "$ROOT/bin/fcc-server" --version >/dev/null 2>&1; then

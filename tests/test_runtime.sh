@@ -3859,4 +3859,124 @@ rc=1" "$_tr_calls" "a removal that fails stops the reinstall"
 	assert_eq "rc=3" "$_tr_calls" "the install's status is the reinstall's status"
 }
 
+# ---------------------------------------------------------------------------
+# Explaining a failed download
+# ---------------------------------------------------------------------------
+#
+# The upstream installer reports a failed download as
+#
+#   error: Could not download the Codex installer (curl exit code 35).
+#
+# which names the agent and a number and stops there. The host it could not
+# reach — the one fact that tells a reader whether the router's own network is
+# the problem — is not in the message, and "curl exit code 35" is not something
+# a person can act on. install.sh reads both back out of the installer that ran.
+#
+# write_installer_fixture holds the two lines that lookup depends on, copied
+# from upstream's own text: the URL assignment, and the download_and_run call
+# that pairs a variable with the label upstream reports a failure by. The third
+# agent is there to be *absent* from the answer — Aider is installed with uv, not
+# downloaded, so there is no URL for it and inventing one would send the reader
+# to a host that was never involved.
+write_installer_fixture() {
+	_fx_path="$SANDBOX/installer-fixture.sh"
+	cat > "$_fx_path" <<'FIXTURE'
+CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
+CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
+
+ensure_claude() {
+        download_and_run "$CLAUDE_INSTALL_URL" bash "Claude Code"
+}
+
+ensure_codex() {
+        download_and_run "$CODEX_INSTALL_URL" sh "Codex" 1
+}
+
+ensure_aider() {
+        run uv tool install aider-chat
+}
+FIXTURE
+	printf '%s' "$_fx_path"
+}
+
+test_a_failed_download_is_traced_to_its_host() {
+	setup_sandbox
+	_fd_script="$(write_installer_fixture)"
+
+	assert_eq "https://chatgpt.com/codex/install.sh" \
+		"$(sh_install "installer_download_url_for '$_fd_script' Codex")" \
+		"the label upstream reports is resolved to the URL it would have fetched"
+	assert_eq "https://claude.ai/install.sh" \
+		"$(sh_install "installer_download_url_for '$_fd_script' 'Claude Code'")" \
+		"a label of two words resolves the same way"
+
+	# An agent that is not downloaded has no URL, and no answer is the right
+	# answer: a plausible-looking host would be a fabricated fact in a log a
+	# person is meant to act on.
+	assert_no "an agent that is not downloaded has no URL" \
+		sh_install "installer_download_url_for '$_fd_script' Aider"
+	assert_no "a label the installer never used has no URL" \
+		sh_install "installer_download_url_for '$_fd_script' Nonesuch"
+	assert_no "an unreadable installer has no URL" \
+		sh_install "installer_download_url_for '$_fd_script.absent' Codex"
+	assert_no "an empty label has no URL" \
+		sh_install "installer_download_url_for '$_fd_script' ''"
+}
+
+test_a_failed_download_explains_itself_in_the_log() {
+	setup_sandbox
+	_fd_script="$(write_installer_fixture)"
+	_fd_logs="$SANDBOX/diaglogs"
+
+	sh_install "fcc_dir_logs() { printf '%s' '$_fd_logs'; }
+		installer_explain_failure '$_fd_script' \
+			'error: Could not download the Codex installer (curl exit code 35).'" \
+		>/dev/null 2>&1
+	_fd_log="$(cat "$_fd_logs/fcc-runtime.log" 2>/dev/null || true)"
+
+	assert_contains "$_fd_log" "https://chatgpt.com/codex/install.sh" \
+		"the log names the URL the download was meant to come from"
+	assert_contains "$_fd_log" "the network path to chatgpt.com" \
+		"and the host, which is the part a person can go and test"
+	assert_contains "$_fd_log" "curl exit code 35 means the TLS handshake" \
+		"and what the exit code means, because the number alone is not actionable"
+	assert_contains "$_fd_log" "installed no agent" \
+		"and that the attempt left nothing installed"
+
+	# An exit code the diagnosis does not know still gets the host and the
+	# consequence: the two facts it can supply do not depend on recognising it.
+	sh_install "fcc_dir_logs() { printf '%s' '$_fd_logs'; }
+		installer_explain_failure '$_fd_script' \
+			'error: Could not download the Claude Code installer (curl exit code 99).'" \
+		>/dev/null 2>&1
+	_fd_log="$(cat "$_fd_logs/fcc-runtime.log" 2>/dev/null || true)"
+	assert_contains "$_fd_log" "the network path to claude.ai" \
+		"an unrecognised exit code still names the host"
+	assert_not_contains "$_fd_log" "curl exit code 99 means" \
+		"but no meaning is invented for it"
+
+	# Every other failure the installer reports is its own business, and the log
+	# has to stay quiet about them: a download diagnosis printed over a uv
+	# failure would name a host that was never involved.
+	_fd_before="$(wc -l < "$_fd_logs/fcc-runtime.log" 2>/dev/null | tr -d ' ')"
+	sh_install "fcc_dir_logs() { printf '%s' '$_fd_logs'; }
+		installer_explain_failure '$_fd_script' \
+			'error: uv installation failed with exit code 1.'" >/dev/null 2>&1
+	_fd_after="$(wc -l < "$_fd_logs/fcc-runtime.log" 2>/dev/null | tr -d ' ')"
+	assert_eq "$_fd_before" "$_fd_after" \
+		"a failure that is not a download adds nothing to the log"
+
+	# And the diagnosis has to be reached. A function that explains a failure to
+	# nobody is the same as no function at all, and the failed-install branch is
+	# its only caller — so the call is asserted here, and so is the order it has
+	# with the deletion of the script it reads. The lookup opens that script, so
+	# a delete that ran first would leave every diagnosis without a host and the
+	# tests above would still pass, because they call the function directly.
+	_fd_src="$LIBEXEC/install.sh"
+	_fd_call="$(grep -n 'installer_explain_failure "\$_cr_script"' "$_fd_src" | head -n 1 | cut -d: -f1)"
+	_fd_rm="$(grep -n 'rm -f "\$_cr_script"' "$_fd_src" | head -n 1 | cut -d: -f1)"
+	assert_ok "the diagnosis runs before the installer script is deleted" \
+		test "$_fd_call" -lt "$_fd_rm"
+}
+
 tests_main
