@@ -66,14 +66,24 @@ failed_names=""
 
 for f in $selected; do
 	suites=$((suites + 1))
+	# Captured either way, because a suite that reported nothing is a failure
+	# and silence is only visible once it has been read back. tests_main() in
+	# tests/lib.sh prints a "== <name> ==" banner and a summary for every run;
+	# a file that never calls it exits 0 having said nothing at all, which is
+	# what tests/test_proxy.sh did for as long as it existed — it was reported
+	# as passing while running zero checks.
+	out=$(sh "$f" 2>&1)
+	rc=$?
 	if [ "$QUIET" = 1 ]; then
 		# Keep the summary line and any failure detail, drop the per-test noise.
-		out=$(sh "$f" 2>&1)
-		rc=$?
 		printf '%s\n' "$out" | grep -E '^(==|    (FAIL|SKIP)|failed checks:|  [a-z_]+:)' || true
 	else
-		sh "$f"
-		rc=$?
+		printf '%s\n' "$out"
+	fi
+	if ! printf '%s\n' "$out" | grep -q '^== '; then
+		printf '%s reported nothing — is tests_main missing from it?\n' \
+			"$(basename "$f")" >&2
+		rc=1
 	fi
 	if [ "$rc" -ne 0 ]; then
 		failed=$((failed + 1))
