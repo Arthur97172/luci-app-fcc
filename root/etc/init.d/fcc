@@ -90,6 +90,11 @@ start_service() {
 
 	_ss_bind="$(uci_get bind 127.0.0.1)"
 	valid_bind "$_ss_bind" || _ss_bind=127.0.0.1
+	# A bind to one specific interface is not one the Admin UI can be reached
+	# through, so it is narrowed to loopback here — the same rule status.sh
+	# reports and the Configuration page's description states. See
+	# fcc_effective_bind() in common.sh and section 104.23.
+	command -v fcc_effective_bind >/dev/null 2>&1 && _ss_bind="$(fcc_effective_bind "$_ss_bind")"
 	_ss_port="$(uci_get port 8082)"
 	valid_port "$_ss_port" || _ss_port=8082
 	_ss_lvl="$(uci_get log_level info)"

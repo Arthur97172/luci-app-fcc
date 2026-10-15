@@ -183,8 +183,16 @@ test_translations_are_actually_translated() {
 	# Guards against a .po that was copied from the .pot and "translated" by
 	# pasting the same text back. Most strings in this UI are prose, so the
 	# overwhelming majority of translations must contain non-ASCII bytes.
+	#
+	# Counted over parsed entries rather than by grepping the file for
+	# `msgstr "..."`. A multi-line msgstr opens with a bare `msgstr ""` and
+	# continues on the following lines, so the grep matched every wrapped
+	# translation in the catalogue — a Chinese sentence spread over three lines
+	# counted as a pure-ASCII one, and the check got harder to pass the more
+	# prose there was to translate. It failed on exactly that once the bind
+	# description grew long enough to wrap.
 	_ts_total="$(po_pairs "$PO" | wc -l | tr -d ' ')"
-	_ts_ascii="$(LC_ALL=C grep -c '^msgstr "[ -~]*"$' "$PO")"
+	_ts_ascii="$(po_pairs "$PO" | awk -F'\t' '$2 != "" && $2 ~ /^[ -~]*$/ { n++ } END { print n + 0 }')"
 	# Allow a handful of legitimately ASCII translations (product names, "OK").
 	_ts_budget=$(( _ts_total / 10 ))
 	[ "$_ts_ascii" -le "$_ts_budget" ] \

@@ -533,58 +533,17 @@ end
 check("agents/launchers_are_fcc_prefixed", bad_launcher == nil, bad_launcher)
 check("agents/probes_never_are_launchers", bad_probe == nil, bad_probe)
 
--- The recommendation is a single agent, not the whole upstream default set:
--- Claude Code, the first entry the registry marks as installed by default.
-eq("agents/default_ids", table.concat(agents.default_ids(), ","), "claude")
+-- The registry's default_install column is still parsed, because the shell
+-- still reasons about upstream's own default set: doctor.sh's pre-install
+-- checks call fcc_default_agents() to know what "no selection" would install.
+eq("agents/claude_is_default", agents.get("claude").default, true)
 check("agents/cline_not_default", agents.get("cline").default == false)
 
--- Section 3.6.5: the preselected agent has to be one the device can hold. Both
--- budgets are optional and independent, and the registry order is the priority
--- order, so the assertions below are about which agent survives, not just how
--- many.
-eq("agents/default_ids_no_budgets", table.concat(agents.default_ids(nil, nil), ","),
-	table.concat(agents.default_ids(), ","))
-eq("agents/default_ids_generous", table.concat(agents.default_ids(99999, 99999), ","),
-	"claude")
-
--- A 150 MB RAM ceiling rules out claude (180) and codex (160), so the answer
--- moves down the registry to pi (140) rather than going empty.
-eq("agents/default_ids_by_ram", table.concat(agents.default_ids(150, nil), ","),
-	"pi")
-
--- 300 MB of flash holds claude (140), so nothing further down is considered.
-eq("agents/default_ids_by_disk", table.concat(agents.default_ids(nil, 300), ","),
-	"claude")
-
--- Both at once, which is the case that matters on a real router.
-eq("agents/default_ids_by_both", table.concat(agents.default_ids(150, 300), ","),
-	"pi")
-
--- A real device: 233 MB free, which is enough for claude (140) and no reason to
--- look further. This is the shape the configuration page shows.
-eq("agents/default_ids_real_device", table.concat(agents.default_ids(512, 233), ","),
-	"claude")
-
--- Nothing fits, and that is a real answer: an empty list, not the full set.
-eq("agents/default_ids_starved", table.concat(agents.default_ids(0, 0), ","), "")
-
--- A budget that is not a number is treated as "unknown", never as zero.
-eq("agents/default_ids_nan_is_unknown",
-	table.concat(agents.default_ids("abc", nil), ","),
-	table.concat(agents.default_ids(), ","))
-
--- Whatever the budget, the answer is at most one agent: the recommendation
--- pre-ticks boxes, and a box the user did not ask for spends their space.
-check("agents/default_ids_is_never_a_set",
-	#agents.default_ids(99999, 99999) <= 1 and
-	#agents.default_ids(150, nil) <= 1 and
-	#agents.default_ids(nil, 300) <= 1 and
-	#agents.default_ids(512, 233) <= 1)
-
--- Cline is not a default at any budget.
-check("agents/default_ids_never_includes_non_defaults",
-	not agents.default_ids(99999, 99999)[5] or
-	table.concat(agents.default_ids(99999, 99999), ","):find("cline") == nil)
+-- What is gone is the Lua policy that turned that column into a recommendation
+-- for the Configuration page. It picked a single agent to pre-tick, against a
+-- RAM and flash budget, for a tick box that no longer exists: the page has no
+-- agent table (section 104.25) and an install now takes the whole registry.
+check("agents/default_ids_is_gone", agents.default_ids == nil)
 
 check("agents/exists_yes", agents.exists("codex"))
 check("agents/exists_no",  not agents.exists("nosuchagent"))

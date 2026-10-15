@@ -111,34 +111,6 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 	font-size: .85em;
 }
 
-/* Agent selection (DESIGN_SPEC.md section 3.6.5) lives in the agent table
- * itself: the tick box is the first column, so the size and memory floor that
- * decide the choice sit on the same row as the box rather than in a second
- * list repeating every agent name. */
-.fcc-pick-head {
-	width: 2.2em;
-	padding-right: 0;
-}
-
-.fcc-pick-cell {
-	width: 2.2em;
-	padding-right: 0;
-	text-align: center;
-}
-
-/* The label wraps only the box, so clicking anywhere in the cell toggles it
- * without the label stretching across the table and stealing the row. */
-.fcc-pick-only {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 100%;
-	padding: .35em 0;
-	cursor: pointer;
-}
-
-.fcc-pick-box { margin: 0; }
-
 /* A header cell that names a control which has no visible text needs the name
  * for screen readers and nothing on screen. */
 .fcc-sr-only {
@@ -151,19 +123,9 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 	border: 0;
 }
 
-/* Requirements are short and read as one unit ("about 140 MB · needs 180 MB
- * RAM"); the existing .fcc-nowrap above already keeps them on one line. */
-
-/* On a phone the seven columns do not fit, and the two that carry no decision
- * are the ones to drop: the launcher name is implied by the agent, and the
- * version is on the Basic Information page. The tick box, the name, the size
- * and the action stay. */
-@media screen and (max-width: 600px) {
-	#fcc-agent-table th:nth-child(3),
-	#fcc-agent-table td:nth-child(3),
-	#fcc-agent-table th:nth-child(4),
-	#fcc-agent-table td:nth-child(4) { display: none; }
-}
+/* The agent table and its tick-box column are gone (DESIGN_SPEC.md section
+ * 104.25), and with them .fcc-pick-* and the phone-width column rule: there is
+ * no table left on this page to drop columns from. */
 
 .fcc-dot {
 	display: inline-block;
@@ -332,23 +294,7 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 .fcc-note.warn { border-left-color: var(--fcc-warn); }
 .fcc-note.fail { border-left-color: var(--fcc-fail); }
 
-/* The hidden attribute is how the Admin note is taken off the page when it does
- * not apply. Stated explicitly rather than left to the UA stylesheet, because
- * the rule above gives .fcc-note a box of its own and a later display: would
- * win over [hidden] without this. */
-.fcc-note[hidden] { display: none; }
-
-/* A control that cannot act must not look like one that can.
- *
- * The Admin link loses its href when the server is bound to loopback — there is
- * genuinely no URL that works from a browser — and without this it rendered
- * exactly like the Start and Restart buttons beside it. That is what "clicking
- * Open FCC Admin does nothing" looks like from the outside: not a control that
- * refuses, but a control that appears to ignore you.
- *
- * Qualified with the element so it outranks .cbi-button, which also styles
- * <a class="cbi-button"> and is loaded from LuCI's own sheet. */
-a.fcc-disabled {
-	opacity: .55;
-	cursor: not-allowed;
-}
+/* The rule that dimmed a dead Admin link, and the rule that un-hid the note
+ * explaining it, are both gone with the note. The link was the only control
+ * ever dimmed and the note the only one ever un-hidden; the link now points at
+ * the LuCI reverse proxy and is always live (section 104.22). */

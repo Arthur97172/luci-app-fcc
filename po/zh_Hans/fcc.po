@@ -19,20 +19,18 @@ msgstr ""
 msgid "%d agent session(s) are running and will be left as they are."
 msgstr "%d 个智能体会话正在运行，将保持原状。"
 
-msgid "Actions"
-msgstr "操作"
-
 msgid ""
-"Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach "
-"the FCC Admin page from another device on your LAN. This router's own LAN "
-"address is the safest choice — binding to a specific address needs no "
-"firewall change. Binding to 0.0.0.0 adds a LAN-only firewall rule, and the "
-"port is never opened to the WAN."
+"Address the FCC server listens on. The FCC Admin page is served through "
+"LuCI, which reaches the server on 127.0.0.1, so keep that unless another "
+"device must reach the FCC API directly. Only 0.0.0.0 exposes the server to "
+"the LAN, and it adds a LAN-only firewall rule; the port is never opened to "
+"the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page "
+"cannot be reached through one."
 msgstr ""
-"FCC 服务器监听的地址。除非需要从局域网内的其他设备访问 FCC Admin 页面，否则请"
-"保持 127.0.0.1。最安全的选择是本机自己的局域网地址——绑定到具体地址无需修改防"
-"火墙。绑定到 0.0.0.0 会添加一条仅限局域网的防火墙规则，该端口绝不会对 WAN 开"
-"放。"
+"FCC 服务器监听的地址。FCC Admin 页面通过 LuCI 提供，LuCI 会以 127.0.0.1 访问服"
+"务器，因此除非有其他设备需要直接访问 FCC API，否则请保持该值。只有 0.0.0.0 会"
+"把服务器暴露到局域网，并会添加一条仅限局域网的防火墙规则；该端口绝不会对 WAN 开"
+"放。其他任何地址都会被收窄为 127.0.0.1，因为无法通过这类地址打开 Admin 页面。"
 
 msgid "Agent"
 msgstr "智能体"
@@ -95,9 +93,6 @@ msgstr "正在检查…"
 msgid "Clean up finished sessions"
 msgstr "清理已结束的会话"
 
-msgid "Close its session first."
-msgstr "请先关闭其会话。"
-
 msgid "Close session"
 msgstr "关闭会话"
 
@@ -146,11 +141,16 @@ msgstr "隐藏"
 msgid "Install"
 msgstr "安装"
 
-msgid "Install / reinstall"
-msgstr "安装 / 重新安装"
-
 msgid "Install an agent first (Configuration → Agents)."
 msgstr "请先安装一个智能体（配置管理 → 智能体）。"
+
+msgid ""
+"Install downloads the FCC runtime and every coding agent in the registry, so "
+"one install makes them all usable. This can take several minutes on a "
+"router; progress is shown below."
+msgstr ""
+"安装过程会下载 FCC 运行时以及注册表中的全部智能体，因此一次安装即可让它们全部可"
+"用。在路由器上这可能需要数分钟；进度显示在下方。"
 
 msgid "Install path"
 msgstr "安装路径"
@@ -161,21 +161,11 @@ msgstr "在未通过的检查项通过之前，安装已被阻止。"
 msgid "Installed"
 msgstr "已安装"
 
-msgid ""
-"Installing downloads the FCC runtime and the selected agents. This can take "
-"several minutes on a router; progress is shown below."
-msgstr ""
-"安装过程会下载 FCC 运行时和选定的智能体。在路由器上这可能需要数分钟；进度显示"
-"在下方。"
-
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr "已在防火墙中开放局域网访问。WAN 不受影响。"
 
 msgid "Latest"
 msgstr "最新"
-
-msgid "Launcher"
-msgstr "启动器"
 
 msgid "Listening on"
 msgstr "监听于"
@@ -210,9 +200,6 @@ msgstr "没有活动会话。新建一个以打开终端。"
 msgid "No agent sessions are running."
 msgstr "当前没有正在运行的智能体会话。"
 
-msgid "No agents are registered."
-msgstr "没有已注册的 Agent。"
-
 msgid "No agents in the registry."
 msgstr "注册表中没有智能体。"
 
@@ -228,9 +215,6 @@ msgstr "未安装"
 msgid "Open FCC Admin"
 msgstr "打开 FCC Admin"
 
-msgid "Opens the FCC Admin page in a new tab."
-msgstr "在新标签页中打开 FCC 管理页面。"
-
 msgid "PID"
 msgstr "进程 ID"
 
@@ -239,9 +223,6 @@ msgstr "平台"
 
 msgid "Port"
 msgstr "端口"
-
-msgid "Press “Save & Apply” to bind the server to %s."
-msgstr "请按“保存并应用”，把服务器绑定到 %s。"
 
 msgid "Re-detect versions"
 msgstr "重新检测版本"
@@ -252,8 +233,18 @@ msgstr "重新连接"
 msgid "Refresh"
 msgstr "刷新"
 
-msgid "Remove"
-msgstr "移除"
+msgid "Reinstall"
+msgstr "重新安装"
+
+msgid ""
+"Reinstall removes the runtime and installs it again with every agent, "
+"keeping your configuration and data. Use it when an install is incomplete or "
+"an agent is broken: the upstream installer does not reinstall an agent that "
+"is already present, so nothing short of this will."
+msgstr ""
+"重新安装会先移除运行时，然后连同全部智能体一起重新安装，并保留你的配置和数据。"
+"当某次安装不完整或某个智能体损坏时使用它：上游安装器不会重新安装已存在的智能体，"
+"因此只有这样做才能重装。"
 
 msgid ""
 "Remove the FCC runtime and all of its data? This deletes the runtime, the "
@@ -263,12 +254,15 @@ msgstr ""
 "操作无法撤销。"
 
 msgid ""
+"Remove the FCC runtime and install it again with every agent? Your "
+"configuration and data under the install path are kept."
+msgstr ""
+"移除 FCC 运行时，并连同全部智能体一起重新安装？安装路径下的配置和数据将被保留。"
+
+msgid ""
 "Remove the FCC runtime? Your configuration and data under the install path "
 "are kept."
 msgstr "移除 FCC 运行时？安装路径下的配置和数据将被保留。"
-
-msgid "Reset to recommended"
-msgstr "恢复推荐选择"
 
 msgid "Restart"
 msgstr "重启"
@@ -306,9 +300,6 @@ msgstr "设置"
 
 msgid "Settings saved."
 msgstr "设置已保存。"
-
-msgid "Size / RAM"
-msgstr "体积 / 内存"
 
 msgid "Start"
 msgstr "启动"
@@ -373,14 +364,6 @@ msgstr "操作失败。"
 msgid "This log is empty."
 msgstr "此日志为空。"
 
-msgid ""
-"Tick the agents to install, then install the runtime. The defaults are "
-"picked to fit this device's memory and free space; an agent that does not "
-"fit is left unticked rather than failing the install."
-msgstr ""
-"勾选要安装的 Agent，然后安装运行时。默认选项会根据本机内存和可用空间挑选；放"
-"不下的 Agent 会保持未勾选，而不是让安装失败。"
-
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
 
@@ -398,9 +381,6 @@ msgid ""
 msgstr ""
 "卸载会移除运行时和智能体，但保留安装路径下的配置，以便日后重新安装时自动沿"
 "用。卸载并清除所有数据还会删除该配置及所有已保存的备份，且无法撤销。"
-
-msgid "Unknown"
-msgstr "未知"
 
 msgid "Update"
 msgstr "更新"
@@ -426,9 +406,6 @@ msgstr ""
 msgid "Uptime"
 msgstr "运行时间"
 
-msgid "Use %s"
-msgstr "使用 %s"
-
 msgid "Version"
 msgstr "版本"
 
@@ -440,9 +417,6 @@ msgstr "查看日志"
 
 msgid "Web Console"
 msgstr "Web 控制台"
-
-msgid "about %d MB"
-msgstr "约 %d MB"
 
 msgid "available"
 msgstr "可用"
@@ -464,9 +438,6 @@ msgstr "已安装"
 
 msgid "listening"
 msgstr "监听中"
-
-msgid "needs %d MB RAM"
-msgstr "需要 %d MB 内存"
 
 msgid "not checked"
 msgstr "未检查"
@@ -491,3 +462,65 @@ msgstr "有可用更新"
 
 msgid "uptime"
 msgstr "运行时间"
+
+#~ msgid "Actions"
+#~ msgstr "操作"
+
+#~ msgid ""
+#~ "Address the FCC server listens on. Keep 127.0.0.1 unless you need to "
+#~ "reach the FCC Admin page from another device on your LAN. This router's "
+#~ "own LAN address is the safest choice — binding to a specific address "
+#~ "needs no firewall change. Binding to 0.0.0.0 adds a LAN-only firewall "
+#~ "rule, and the port is never opened to the WAN."
+#~ msgstr ""
+#~ "FCC 服务器监听的地址。除非需要从局域网内的其他设备访问 FCC Admin 页面，否"
+#~ "则请保持 127.0.0.1。最安全的选择是本机自己的局域网地址——绑定到具体地址无需"
+#~ "修改防火墙。绑定到 0.0.0.0 会添加一条仅限局域网的防火墙规则，该端口绝不会"
+#~ "对 WAN 开放。"
+
+#~ msgid "Close its session first."
+#~ msgstr "请先关闭其会话。"
+
+#~ msgid "Install / reinstall"
+#~ msgstr "安装 / 重新安装"
+
+#~ msgid "Launcher"
+#~ msgstr "启动器"
+
+#~ msgid "No agents are registered."
+#~ msgstr "没有已注册的 Agent。"
+
+#~ msgid "Opens the FCC Admin page in a new tab."
+#~ msgstr "在新标签页中打开 FCC 管理页面。"
+
+#~ msgid "Press “Save & Apply” to bind the server to %s."
+#~ msgstr "请按“保存并应用”，把服务器绑定到 %s。"
+
+#~ msgid "Remove"
+#~ msgstr "移除"
+
+#~ msgid "Reset to recommended"
+#~ msgstr "恢复推荐选择"
+
+#~ msgid "Size / RAM"
+#~ msgstr "体积 / 内存"
+
+#~ msgid ""
+#~ "Tick the agents to install, then install the runtime. The defaults are "
+#~ "picked to fit this device's memory and free space; an agent that does not "
+#~ "fit is left unticked rather than failing the install."
+#~ msgstr ""
+#~ "勾选要安装的 Agent，然后安装运行时。默认选项会根据本机内存和可用空间挑选；"
+#~ "放不下的 Agent 会保持未勾选，而不是让安装失败。"
+
+#~ msgid "Unknown"
+#~ msgstr "未知"
+
+#~ msgid "Use %s"
+#~ msgstr "使用 %s"
+
+#~ msgid "about %d MB"
+#~ msgstr "约 %d MB"
+
+#~ msgid "needs %d MB RAM"
+#~ msgstr "需要 %d MB 内存"

@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.2))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=7
+PKG_RELEASE:=8
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -66,7 +66,10 @@ define Package/luci-app-fcc
   # TAR_XZ defaults to y and xz-utils to n, so the gate is false and defconfig
   # silently drops the symbol. 24.10 expressed the same thing as EXTRA_DEPENDS,
   # which does not propagate to dependents, so only 25.12 is affected.
-  DEPENDS:=+luci-base +luci-compat +curl +ca-bundle +tmux
+  # +luci-lib-httpclient is what the FCC Admin reverse proxy makes its upstream
+  # requests with (luasrc/fcc/adminproxy.lua). It brings luci-lib-base, for
+  # ltn12, and luci-lib-nixio with it. Section 104.22.
+  DEPENDS:=+luci-base +luci-compat +luci-lib-httpclient +curl +ca-bundle +tmux
   PKGARCH:=all
   URL:=https://github.com/Arthur97172/luci-app-fcc
 endef
@@ -124,6 +127,7 @@ define Package/luci-app-fcc/install
 	# luasrc/ maps onto /usr/lib/lua/luci/, so luasrc/fcc/util.lua is the module
 	# luci.fcc.util. Installing it anywhere else makes require() fail.
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/fcc
+	$(INSTALL_DATA) ./luasrc/fcc/adminproxy.lua $(1)/usr/lib/lua/luci/fcc/adminproxy.lua
 	$(INSTALL_DATA) ./luasrc/fcc/agents.lua $(1)/usr/lib/lua/luci/fcc/agents.lua
 	$(INSTALL_DATA) ./luasrc/fcc/paths.lua $(1)/usr/lib/lua/luci/fcc/paths.lua
 	$(INSTALL_DATA) ./luasrc/fcc/util.lua $(1)/usr/lib/lua/luci/fcc/util.lua

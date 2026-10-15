@@ -328,7 +328,12 @@ COMM_MAP="$(build_comm_map)"
 	printf '  "luci_fcc": {"version": %s},\n' "$(fcc_json_str "$(fcc_luci_version)")"
 	printf '  "fcc": {"installed": %s, "version": %s},\n' \
 		"$fcc_installed" "$(fcc_json_str_or_null "${fcc_version:-}")"
-	printf '  "server": {"running": %s, "pid": %s, "version": %s, "uptime": %s, "memory_rss_kb": %s, "port": %s, "bind": %s, "listening": %s, "http_status": %s, "healthy": %s},\n' \
+	# "bind" is what the configuration says; "bind_effective" is what the server
+	# is actually given, and the two differ whenever the configured value names
+	# one interface — see fcc_effective_bind() in common.sh. Both are reported
+	# rather than only the effective one, because a page that showed 127.0.0.1
+	# beside a configuration file saying otherwise would be its own puzzle.
+	printf '  "server": {"running": %s, "pid": %s, "version": %s, "uptime": %s, "memory_rss_kb": %s, "port": %s, "bind": %s, "bind_effective": %s, "listening": %s, "http_status": %s, "healthy": %s},\n' \
 		"$server_running" \
 		"$(fcc_json_num_or_null "$server_pid")" \
 		"$(fcc_json_str_or_null "${server_version:-}")" \
@@ -336,6 +341,7 @@ COMM_MAP="$(build_comm_map)"
 		"$(fcc_json_num_or_null "$server_rss")" \
 		"$server_port" \
 		"$(fcc_json_str "$(fcc_uci_get main bind 127.0.0.1)")" \
+		"$(fcc_json_str "$(fcc_effective_bind)")" \
 		"$server_listening" \
 		"$(fcc_json_num_or_null "${server_http:-}")" \
 		"$server_healthy"

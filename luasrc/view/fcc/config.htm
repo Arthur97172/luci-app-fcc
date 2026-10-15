@@ -1,9 +1,15 @@
 <%#
  luci-app-fcc — Configuration.
 
- Settings, the FCC runtime lifecycle (install / update / uninstall), the agent
- set, and the FCC server service controls. Long-running work is started in the
+ Settings, the FCC runtime lifecycle (install / reinstall / update / uninstall),
+ and the FCC server service controls. Long-running work is started in the
  background and polled, so nothing here blocks on a multi-minute install.
+
+ There is no agent list on this page. Section 3.6.5 had one — a table of tick
+ boxes, a recommended set and per-agent install buttons — and it asked the user
+ to choose a subset before installing. It is gone, and an install now takes the
+ whole registry (section 104.25): the choice it offered was one the FCC runtime
+ does not really support, and the table was most of what this page was.
 -%>
 
 <%+header%>
@@ -46,7 +52,7 @@
 				<div class="cbi-value-field">
 					<input type="text" id="fcc-bind" class="cbi-input-text" spellcheck="false">
 					<div class="cbi-value-description">
-						<%:Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN. This router's own LAN address is the safest choice — binding to a specific address needs no firewall change. Binding to 0.0.0.0 adds a LAN-only firewall rule, and the port is never opened to the WAN.%>
+						<%:Address the FCC server listens on. The FCC Admin page is served through LuCI, which reaches the server on 127.0.0.1, so keep that unless another device must reach the FCC API directly. Only 0.0.0.0 exposes the server to the LAN, and it adds a LAN-only firewall rule; the port is never opened to the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page cannot be reached through one.%>
 					</div>
 				</div>
 			</div>
@@ -97,23 +103,27 @@
 				<button class="cbi-button cbi-button-reset" data-op="stop"><%:Stop%></button>
 				<button class="cbi-button" data-op="restart"><%:Restart%></button>
 				<div class="spacer"></div>
-				<a id="fcc-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"><%:Open FCC Admin%></a>
+				<!-- Section 13. The Admin UI is served by the FCC server, which
+				     refuses every admin route to anything but a loopback peer —
+				     so this points at the LuCI reverse proxy, not at the FCC
+				     port. The link therefore works from any device that can
+				     reach LuCI, whatever the bind address is. Section 104.22. -->
+				<a id="fcc-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
+				   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
 			</div>
 			<div id="fcc-server-status"></div>
-			<!-- Section 3.6.9. Filled by updateAdminLink() only when the Admin
-			     link cannot work, and hidden the rest of the time. -->
-			<div id="fcc-admin-note" class="fcc-note warn" hidden></div>
 		</div>
 	</div>
 
-	<!-- --------------------------------------------------- runtime + agents -->
+	<!-- --------------------------------------------------------- runtime -->
 	<div class="cbi-section">
 		<h3><%:FCC Runtime%></h3>
 		<div class="cbi-section-node">
 			<div id="fcc-runtime-state" class="fcc-card"><%:Loading…%></div>
 
 			<div class="fcc-toolbar">
-				<button id="fcc-runtime-install" class="cbi-button cbi-button-apply"><%:Install / reinstall%></button>
+				<button id="fcc-runtime-install" class="cbi-button cbi-button-apply"><%:Install%></button>
+				<button id="fcc-runtime-reinstall" class="cbi-button"><%:Reinstall%></button>
 				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
 				<div class="spacer"></div>
 				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
@@ -121,7 +131,11 @@
 			</div>
 
 			<p class="fcc-muted">
-				<%:Installing downloads the FCC runtime and the selected agents. This can take several minutes on a router; progress is shown below.%>
+				<%:Install downloads the FCC runtime and every coding agent in the registry, so one install makes them all usable. This can take several minutes on a router; progress is shown below.%>
+			</p>
+
+			<p class="fcc-muted">
+				<%:Reinstall removes the runtime and installs it again with every agent, keeping your configuration and data. Use it when an install is incomplete or an agent is broken: the upstream installer does not reinstall an agent that is already present, so nothing short of this will.%>
 			</p>
 
 			<p class="fcc-muted">
@@ -132,38 +146,6 @@
 				<div class="fcc-progress"><span id="fcc-job-bar" style="width:0"></span></div>
 				<pre class="fcc-log" id="fcc-job-log"></pre>
 			</div>
-
-			<h4><%:Agents%></h4>
-
-			<p class="fcc-muted">
-				<%:Tick the agents to install, then install the runtime. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unticked rather than failing the install.%>
-			</p>
-
-			<!-- The table is the picker (section 3.6.5): one row per agent
-			     carrying its size and memory floor beside a tick box, instead of
-			     a checkbox list repeating every name above the table. -->
-			<table class="fcc-table" id="fcc-agent-table">
-				<thead>
-					<tr>
-						<th class="fcc-pick-head"><span class="fcc-sr-only"><%:Install%></span></th>
-						<th><%:Agent%></th>
-						<th><%:Launcher%></th>
-						<th><%:Version%></th>
-						<th><%:Size / RAM%></th>
-						<th><%:State%></th>
-						<th class="fcc-right"><%:Actions%></th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr><td colspan="7" class="fcc-muted"><%:Loading…%></td></tr>
-				</tbody>
-			</table>
-
-			<div class="fcc-toolbar">
-				<button id="fcc-install-agents-defaults" class="cbi-button"><%:Reset to recommended%></button>
-				<button id="fcc-agent-refresh" class="cbi-button"><%:Re-detect versions%></button>
-			</div>
-			<div id="fcc-agent-status"></div>
 		</div>
 	</div>
 

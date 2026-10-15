@@ -33,6 +33,16 @@
 	<div class="cbi-section">
 		<h3><%:Agents%></h3>
 		<div class="cbi-section-node">
+			<!-- The version column is a cache, written when an agent is installed.
+			     An agent upgraded by hand on the router — or by opkg — would keep
+			     showing the old number until this runs, so the one control the
+			     table needs is the one that re-reads it. It used to sit on the
+			     Configuration page beside the agent list that was removed
+			     (section 104.25); the list is here now, so the control is too. -->
+			<div class="fcc-toolbar">
+				<button id="fcc-info-agent-versions" class="cbi-button"><%:Re-detect versions%></button>
+				<div class="spacer"></div>
+			</div>
 			<table class="fcc-table" id="fcc-info-agents">
 				<thead>
 					<tr>
@@ -46,6 +56,7 @@
 				</thead>
 				<tbody></tbody>
 			</table>
+			<div id="fcc-info-agent-status"></div>
 		</div>
 	</div>
 

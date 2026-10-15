@@ -39,14 +39,13 @@ function index()
 	local actions = {
 		status = "act_status", status_refresh = "act_status_refresh",
 		agents = "act_agents", agent_versions = "act_agent_versions",
-		agent_defaults = "act_agent_defaults",
-		agent_install = "act_agent_install", agent_remove = "act_agent_remove",
 		sessions = "act_sessions", session_create = "act_session_create",
 		session_output = "act_session_output", session_input = "act_session_input",
 		session_resize = "act_session_resize", session_capture = "act_session_capture",
 		session_close = "act_session_close", session_cleanup = "act_session_cleanup",
 		server = "act_server",
 		install_runtime = "act_install_runtime",
+		reinstall_runtime = "act_reinstall_runtime",
 		uninstall_runtime = "act_uninstall_runtime",
 		job = "act_job",
 		doctor = "act_doctor",
@@ -62,6 +61,23 @@ function index()
 		-- is never listed in a menu and never treated as a parent.
 		e.leaf = true
 	end
+
+	-- The FCC Admin UI, served through LuCI.
+	--
+	-- It gets a route of its own rather than an action under /api because it is
+	-- not an API: the browser loads the whole single-page application from here,
+	-- its assets included, and the paths below this node are the SPA's own.
+	-- leaf = true is what makes that work — the dispatcher turns it into a
+	-- wildcard, so every path underneath reaches this one action, which forwards
+	-- it upstream unchanged.
+	--
+	-- The node is inside the admin tree, so the route is behind LuCI's
+	-- authentication and its ACLs. That is the point of proxying rather than
+	-- listening on a second port: the FCC admin API is not authenticated at all,
+	-- so anything that reaches it directly reaches all of it. Section 104.22.
+	-- No title, so the menu leaves it out: the dispatcher lists a child only
+	-- when it has one.
+	entry({ "admin", "services", "fcc", "adminproxy" }, call("act_admin_proxy")).leaf = true
 end
 
 -- ---------------------------------------------------------------------------
@@ -172,6 +188,13 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Agents
+--
+-- A report, not a control: the agent list lives on Basic Information, and the
+-- only thing that acts on it is the version re-detect. Per-agent install and
+-- remove were the two actions behind the Configuration page's agent table, and
+-- they went with it (section 104.25) — an install now takes the whole registry,
+-- and the shell's `agent.sh install|remove <id>` is still there for the command
+-- line.
 -- ---------------------------------------------------------------------------
 function act_agents()
 	relay("agent", { "list" })
@@ -180,32 +203,6 @@ end
 function act_agent_versions()
 	if not require_post() then return end
 	relay("agent", { "versions", "--refresh" })
-end
-
---- Which agents to preselect at install (DESIGN_SPEC.md section 3.6.5).
---
--- The caller passes the budgets it already has from the status call rather than
--- this reading /proc and df again: the page has just fetched both, and two
--- sources for "how much memory is there" would eventually disagree. The policy
--- itself lives in luci.fcc.agents so it is testable on its own.
-function act_agent_defaults()
-	local ram  = util.valid_int(http.formvalue("ram_mb") or "", 0, 4194304)
-	local free = util.valid_int(http.formvalue("free_mb") or "", 0, 16777216)
-	json_out('{"ids":' .. util.json_encode(agents.default_ids(ram, free)) .. '}')
-end
-
-function act_agent_install()
-	if not require_post() then return end
-	local id = util.valid_agent(http.formvalue("id"))
-	if not id or not agents.exists(id) then return fail("unknown agent") end
-	start_job({ "agent", "install", id }, "fcc-runtime.log", "install")
-end
-
-function act_agent_remove()
-	if not require_post() then return end
-	local id = util.valid_agent(http.formvalue("id"))
-	if not id or not agents.exists(id) then return fail("unknown agent") end
-	start_job({ "agent", "remove", id }, "fcc-runtime.log", "install")
 end
 
 -- ---------------------------------------------------------------------------
@@ -361,31 +358,32 @@ end
 -- ---------------------------------------------------------------------------
 -- FCC runtime lifecycle
 -- ---------------------------------------------------------------------------
+--- Install the runtime and every agent in the registry.
+--
+-- The page used to send a ticked subset (section 3.6.5) and this relayed it.
+-- It no longer sends one: the agent table is gone from the page (section
+-- 104.25), and an install now takes the whole registry, so one install makes
+-- every agent usable. The set is named by flag rather than listed here, so the
+-- registry stays the only place it is written down.
+--
+-- The cost of the whole set is real and is not hidden: a device that cannot
+-- hold it fails the install's own precheck, which names the check that failed
+-- and stops before downloading anything. That is a better answer than silently
+-- installing a subset nobody chose.
 function act_install_runtime()
 	if not require_post() then return end
-	-- `agents` is a comma-separated subset of the registry.
-	--
-	-- The field being absent and the field being empty mean different things
-	-- (section 3.6.5): absent is "no opinion, use the defaults", empty is "the
-	-- user unchecked every agent". Collapsing the two would quietly install
-	-- agents onto a device whose owner asked for none.
-	local raw = http.formvalue("agents")
-	local argv = { "install", "runtime" }
-	if raw ~= nil then
-		local list = {}
-		for part in raw:gmatch("[^,]+") do
-			local id = util.valid_agent(util.trim(part))
-			if not id or not agents.exists(id) then return fail("unknown agent: " .. part) end
-			list[#list + 1] = id
-		end
-		if #list > 0 then
-			argv[#argv + 1] = "--agents"
-			argv[#argv + 1] = table.concat(list, ",")
-		else
-			argv[#argv + 1] = "--no-agents"
-		end
-	end
-	start_job(argv, "fcc-runtime.log", "install")
+	start_job({ "install", "runtime", "--all-agents" }, "fcc-runtime.log", "install")
+end
+
+--- Remove the runtime and install it again with every agent.
+--
+-- Distinct from act_install_runtime, and the difference is not cosmetic: the
+-- upstream installer reconciles the agent set and never reinstalls an agent
+-- that is already present, so only removing the runtime makes the agents get
+-- installed again. See cmd_reinstall() in install.sh.
+function act_reinstall_runtime()
+	if not require_post() then return end
+	start_job({ "install", "reinstall" }, "fcc-runtime.log", "install")
 end
 
 function act_uninstall_runtime()
@@ -520,6 +518,31 @@ function act_session_cleanup()
 	if not require_post() then return end
 	local _, code = run("session", { "cleanup" })
 	json_out('{"ok":' .. (code == 0 and "true" or "false") .. '}')
+end
+
+-- ---------------------------------------------------------------------------
+-- FCC Admin reverse proxy
+-- ---------------------------------------------------------------------------
+--- Serve the FCC Admin UI and its API through LuCI.
+--
+-- The module is required here rather than at the top of this file on purpose:
+-- it pulls in luci.httpclient, and a controller that cannot load is a page that
+-- does not render at all. Everything else on this page keeps working when the
+-- proxy's dependency is missing, and the route is the only thing that fails.
+--
+-- require_post() is deliberately not applied. The proxy relays whatever method
+-- it was given, including the POSTs the admin API makes, and it does not decide
+-- what may be posted — the FCC server does. What protects it is LuCI's own
+-- authentication, which every request to this path has already passed.
+function act_admin_proxy()
+	local ok_mod, proxy = pcall(require, "luci.fcc.adminproxy")
+	if not ok_mod or type(proxy) ~= "table" then
+		pcall(function() http.status(500, "Internal Server Error") end)
+		http.prepare_content("text/plain")
+		http.write("the FCC Admin proxy is unavailable: " .. tostring(proxy) .. "\n")
+		return
+	end
+	proxy.serve()
 end
 
 -- ---------------------------------------------------------------------------

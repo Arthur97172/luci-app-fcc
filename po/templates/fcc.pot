@@ -21,10 +21,7 @@ msgstr ""
 msgid "%d agent session(s) are running and will be left as they are."
 msgstr ""
 
-msgid "Actions"
-msgstr ""
-
-msgid "Address the FCC server listens on. Keep 127.0.0.1 unless you need to reach the FCC Admin page from another device on your LAN. This router's own LAN address is the safest choice — binding to a specific address needs no firewall change. Binding to 0.0.0.0 adds a LAN-only firewall rule, and the port is never opened to the WAN."
+msgid "Address the FCC server listens on. The FCC Admin page is served through LuCI, which reaches the server on 127.0.0.1, so keep that unless another device must reach the FCC API directly. Only 0.0.0.0 exposes the server to the LAN, and it adds a LAN-only firewall rule; the port is never opened to the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page cannot be reached through one."
 msgstr ""
 
 msgid "Agent"
@@ -67,9 +64,6 @@ msgid "Checking…"
 msgstr ""
 
 msgid "Clean up finished sessions"
-msgstr ""
-
-msgid "Close its session first."
 msgstr ""
 
 msgid "Close session"
@@ -120,10 +114,10 @@ msgstr ""
 msgid "Install"
 msgstr ""
 
-msgid "Install / reinstall"
+msgid "Install an agent first (Configuration → Agents)."
 msgstr ""
 
-msgid "Install an agent first (Configuration → Agents)."
+msgid "Install downloads the FCC runtime and every coding agent in the registry, so one install makes them all usable. This can take several minutes on a router; progress is shown below."
 msgstr ""
 
 msgid "Install path"
@@ -135,16 +129,10 @@ msgstr ""
 msgid "Installed"
 msgstr ""
 
-msgid "Installing downloads the FCC runtime and the selected agents. This can take several minutes on a router; progress is shown below."
-msgstr ""
-
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr ""
 
 msgid "Latest"
-msgstr ""
-
-msgid "Launcher"
 msgstr ""
 
 msgid "Listening on"
@@ -180,9 +168,6 @@ msgstr ""
 msgid "No agent sessions are running."
 msgstr ""
 
-msgid "No agents are registered."
-msgstr ""
-
 msgid "No agents in the registry."
 msgstr ""
 
@@ -198,9 +183,6 @@ msgstr ""
 msgid "Open FCC Admin"
 msgstr ""
 
-msgid "Opens the FCC Admin page in a new tab."
-msgstr ""
-
 msgid "PID"
 msgstr ""
 
@@ -208,9 +190,6 @@ msgid "Platform"
 msgstr ""
 
 msgid "Port"
-msgstr ""
-
-msgid "Press “Save & Apply” to bind the server to %s."
 msgstr ""
 
 msgid "Re-detect versions"
@@ -222,16 +201,19 @@ msgstr ""
 msgid "Refresh"
 msgstr ""
 
-msgid "Remove"
+msgid "Reinstall"
+msgstr ""
+
+msgid "Reinstall removes the runtime and installs it again with every agent, keeping your configuration and data. Use it when an install is incomplete or an agent is broken: the upstream installer does not reinstall an agent that is already present, so nothing short of this will."
 msgstr ""
 
 msgid "Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone."
 msgstr ""
 
-msgid "Remove the FCC runtime? Your configuration and data under the install path are kept."
+msgid "Remove the FCC runtime and install it again with every agent? Your configuration and data under the install path are kept."
 msgstr ""
 
-msgid "Reset to recommended"
+msgid "Remove the FCC runtime? Your configuration and data under the install path are kept."
 msgstr ""
 
 msgid "Restart"
@@ -265,9 +247,6 @@ msgid "Settings"
 msgstr ""
 
 msgid "Settings saved."
-msgstr ""
-
-msgid "Size / RAM"
 msgstr ""
 
 msgid "Start"
@@ -327,9 +306,6 @@ msgstr ""
 msgid "This log is empty."
 msgstr ""
 
-msgid "Tick the agents to install, then install the runtime. The defaults are picked to fit this device's memory and free space; an agent that does not fit is left unticked rather than failing the install."
-msgstr ""
-
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr ""
 
@@ -340,9 +316,6 @@ msgid "Uninstall and remove all data"
 msgstr ""
 
 msgid "Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo."
-msgstr ""
-
-msgid "Unknown"
 msgstr ""
 
 msgid "Update"
@@ -363,9 +336,6 @@ msgstr ""
 msgid "Uptime"
 msgstr ""
 
-msgid "Use %s"
-msgstr ""
-
 msgid "Version"
 msgstr ""
 
@@ -376,9 +346,6 @@ msgid "View Log"
 msgstr ""
 
 msgid "Web Console"
-msgstr ""
-
-msgid "about %d MB"
 msgstr ""
 
 msgid "available"
@@ -400,9 +367,6 @@ msgid "installed"
 msgstr ""
 
 msgid "listening"
-msgstr ""
-
-msgid "needs %d MB RAM"
 msgstr ""
 
 msgid "not checked"

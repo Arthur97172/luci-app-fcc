@@ -11,7 +11,13 @@
 # the runtime cache, its SHA-256 is computed and logged, and only then executed.
 #
 # Usage:
-#   install.sh runtime [--agents a,b,c]   Install/refresh the FCC runtime
+#   install.sh runtime [--agents a,b,c] [--all-agents]
+#                                         Install/refresh the FCC runtime. With
+#                                         --all-agents the whole registry is
+#                                         requested, which is what the
+#                                         Configuration page installs.
+#   install.sh reinstall                  Remove the runtime and install it
+#                                         again with every agent (keeps data)
 #   install.sh uninstall [--purge]        Remove the runtime (keeps data unless --purge)
 #   install.sh check                      Pre-install compatibility report (JSON)
 #
@@ -819,10 +825,16 @@ rollback_runtime() {
 cmd_runtime() {
 	_cr_agents=""
 	_cr_none=0
+	_cr_all=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--agents)   _cr_agents="$(printf '%s' "${2:-}" | tr ',' ' ')"; shift 2 ;;
 			--agents=*) _cr_agents="$(printf '%s' "${1#--agents=}" | tr ',' ' ')"; shift ;;
+			# Every agent in the registry. The Configuration page installs the
+			# whole set (section 104.25), and it asks for that by name rather
+			# than by listing the ids, so the registry stays the one place the
+			# set is written down.
+			--all-agents) _cr_all=1; shift ;;
 			# Section 3.6.5 lets the user uncheck every agent. That is a
 			# different request from "no opinion, use the defaults", and an
 			# empty --agents cannot express it, so it gets its own flag.
@@ -830,6 +842,10 @@ cmd_runtime() {
 			*) shift ;;
 		esac
 	done
+
+	# After the loop, so an explicit --agents wins over it whatever order the
+	# two arrive in.
+	[ "$_cr_all" = 1 ] && _cr_agents="$(fcc_all_agents)"
 
 	fcc_ensure_dirs
 	_cr_lock="$(fcc_lock_acquire install)" || { fcc_die "another install/update is already running"; return 1; }
@@ -1025,9 +1041,33 @@ cmd_uninstall() {
 	return 0
 }
 
+# Reinstall: remove the runtime and put it back with every agent.
+#
+# Why this is not simply "install again". The upstream installer *reconciles*
+# the agent set rather than reinstalling it: an agent that is already present is
+# not asked about again, and the only lever this package has over the set is
+# which agents it requests — that is how agent.sh remove works, by re-running
+# the installer with a smaller set. So there is no way to ask upstream to
+# reinstall an agent that is already there, and the only operation that
+# genuinely reinstalls them is to remove the runtime that carries them and
+# install it again.
+#
+# The configuration and the user data are kept: this is the same no-purge
+# uninstall the page's Uninstall button performs, so sessions, configuration and
+# backups survive. What it costs is the runtime itself — if the download then
+# fails there is nothing left to fall back to, which is why this is a separate
+# button rather than what "Install" does. Section 103: what this cannot do is
+# reinstall one agent on its own, and it does not claim to.
+cmd_reinstall() {
+	fcc_log "$LOG" "reinstall requested: removing the runtime, keeping data"
+	cmd_uninstall || return 1
+	cmd_runtime --all-agents
+}
+
 case "${1:-}" in
 	runtime)   shift; cmd_runtime "$@" ;;
+	reinstall) cmd_reinstall ;;
 	uninstall) shift; cmd_uninstall "$@" ;;
 	check)     check_report ;;
-	*) echo "usage: install.sh {runtime [--agents a,b] | uninstall [--purge] | check}" >&2; exit 2 ;;
+	*) echo "usage: install.sh {runtime [--agents a,b] [--all-agents] | reinstall | uninstall [--purge] | check}" >&2; exit 2 ;;
 esac

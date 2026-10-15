@@ -303,81 +303,132 @@ test_the_translation_package_does_not_depend_on_the_app() {
 }
 
 # ---------------------------------------------------------------------------
-# The agent table is also the agent picker
+# The Configuration page has no agent table
 #
-# Section 3.6.5's selection used to be a second checkbox list above the table,
-# repeating every agent name beside the size and memory floor that decide the
-# choice. It is now the table's own first column, so each agent is named once
-# and the two lists cannot disagree. There is no DOM harness here, so the
-# invariant is pinned against the markup and the renderer that fills it.
+# Section 3.6.5 asked for a picker, and for a while the page had one: a table
+# whose first column was a tick box, plus a recommended set and a per-row
+# Install/Remove. It is gone (section 104.25). The install now takes the whole
+# registry, so there is no selection to make, and the page carries two buttons
+# instead — Install and Reinstall — that both act on every agent.
+#
+# There is no DOM harness here, so the invariant is pinned against the markup
+# and the script: the table and everything that fed it must be absent, and the
+# two buttons must be present.
 # ---------------------------------------------------------------------------
 
-test_agent_picker_is_the_agent_table() {
+test_the_config_page_has_no_agent_table() {
 	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
 
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-agent-table"' "the view has the agent table"
-	assert_not_contains "$(cat "$_ts_view")" 'fcc-agent-picker' "the separate picker is gone from the view"
-	assert_not_contains "$(cat "$_ts_js")" 'fcc-agent-picker' "no script still renders a separate picker"
-	assert_not_contains "$(cat "$_ts_js")" 'renderAgentPicker' "the old picker renderer is gone"
+	assert_not_contains "$(cat "$_ts_view")" 'fcc-agent-table' "the view has no agent table"
+	assert_not_contains "$(cat "$_ts_js")" 'fcc-agent-table' "and no script renders one"
 
-	# The header and the renderer must agree on the column count, or every row
-	# after the tick box lands under the wrong heading.
-	# `<th[ >]`, not `<th`: the latter also counts the `<thead>` element.
-	_ts_cols="$(sed -n '/id="fcc-agent-table"/,/<\/thead>/p' "$_ts_view" | grep -c '<th[ >]')"
-	assert_eq "7" "$_ts_cols" "the table has seven columns including the tick box"
-	assert_contains "$(cat "$_ts_js")" "colspan: '7'" "the placeholder row spans the same seven"
+	# The machinery that existed only to serve the table. Each of these is a
+	# name the table needed and nothing else does; any one of them coming back
+	# means the picker came back with it.
+	for _ts_dead in renderAgents agentSelection agentRegistry agentRecommended \
+	                selectedAgentIds applyRecommended loadRecommended \
+	                refreshVersions requirementText fcc-agent-status \
+	                fcc-install-agents-defaults fcc-agent-refresh; do
+		assert_not_contains "$(cat "$_ts_js")" "$_ts_dead" "the table's $_ts_dead is gone"
+	done
+
+	# The two buttons, and the point of them: neither sends an agent list.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' "the view has an Install button"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' "the view has a Reinstall button"
+	assert_contains "$(cat "$_ts_js")" "runJobAction('install_runtime', {}," \
+		"Install sends no agent list, so the backend installs the whole registry"
+	assert_contains "$(cat "$_ts_js")" "runJobAction('reinstall_runtime', {}," \
+		"and Reinstall is its own operation, not a flag on Install"
 }
 
 # ---------------------------------------------------------------------------
-# "Open FCC Admin" when there is nothing to open
+# One click installs every agent
 #
-# Section 3.6.9: the Admin page is served by the FCC server itself, so the link
-# only works when the server listens on an address the browser can reach. The
-# shipped default is 127.0.0.1, which in a browser is the *client's* loopback —
-# so on a fresh install there is genuinely no URL, and the control is inert by
-# design.
-#
-# Inert by design is not the same as inert and unexplained, and it was both.
-# The link lost its href, kept the class that makes it look exactly like the
-# Start and Restart buttons beside it, and put the reason in a title attribute.
-# Clicking it did nothing and said nothing. There is no DOM harness here, so
-# the three things that fix that are pinned against the files carrying them.
+# Section 104.25: the picker is gone, so an install is no longer a selection.
+# What has to hold across the three layers is that the button asks for the whole
+# registry *by flag* — the registry stays the only place the set is written
+# down, so an eleventh agent is installed by the same click that installs ten,
+# with no list to update. The runtime tests check what the flag resolves to; this
+# checks that the click still reaches it.
 # ---------------------------------------------------------------------------
 
-test_the_admin_link_says_why_when_it_cannot_open() {
+test_the_config_page_installs_every_agent() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+
+	# The view offers the two buttons, and they are the only way the page starts
+	# an install — the toolbar they sit in is asserted to carry no per-agent
+	# control by test_the_config_page_has_no_agent_table.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' \
+		"the Configuration page has an Install button"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' \
+		"and a Reinstall button beside it"
+
+	# Each button reaches its own action, and neither carries a payload: an
+	# empty object is what says "no selection", which is the whole point.
+	assert_contains "$(cat "$_ts_js")" "runJobAction('install_runtime', {}," \
+		"Install calls the install action with no agent list"
+	assert_contains "$(cat "$_ts_js")" "runJobAction('reinstall_runtime', {}," \
+		"Reinstall calls the reinstall action with no agent list"
+
+	# The action is the flag, spelled once, and it is a flag rather than a list
+	# of ids for the reason above: a list here would be a second place the agent
+	# set lives, and the two would drift the first time the registry changed.
+	assert_contains "$(cat "$_ts_ctrl")" '"install", "runtime", "--all-agents"' \
+		"the install action asks for the whole registry by flag"
+	assert_not_contains "$(cat "$_ts_ctrl")" '"install", "runtime", "--agents"' \
+		"and not by listing the ids"
+
+	# Reinstall is the remove-then-install verb, which install.sh implements.
+	# Sending the install verb with a flag instead would reconcile rather than
+	# reinstall, and the difference stays invisible on the page until an agent
+	# that is already present is the one that is broken.
+	assert_contains "$(cat "$_ts_ctrl")" '"install", "reinstall"' \
+		"the reinstall action asks for the verb that removes first"
+}
+
+# ---------------------------------------------------------------------------
+# "Open FCC Admin" goes through LuCI, not through the FCC port
+#
+# Section 13 wants the Admin UI reachable from a browser. It cannot be reached
+# through the FCC server's own port: every admin route there is refused unless
+# the TCP peer is loopback, so a browser on the LAN gets
+# {"detail":"Admin UI is local-only"} whatever the bind address is. The page
+# used to advise binding the server to the router's LAN address, which is
+# exactly the change that does not help.
+#
+# The link therefore points at the LuCI reverse proxy (section 104.22), which
+# reaches the server on 127.0.0.1 from the router itself and is behind LuCI's
+# own authentication. Nothing about the link depends on the bind address, so
+# there is no disabled state and no explanation to render.
+# ---------------------------------------------------------------------------
+
+test_the_admin_link_goes_through_the_luci_proxy() {
 	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
 	_ts_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
 
-	# Somewhere on the page for the reason to appear, off by default: it is only
-	# true while the server is bound to loopback.
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-admin-note"' \
-		"the view carries the element the reason goes in"
-	assert_contains "$(sed -n '/id="fcc-admin-note"/p' "$_ts_view")" 'hidden' \
-		"and it starts hidden"
+	# The link is the proxy route, always, with no href to add or remove. The
+	# anchor is spread over three lines, so the check reads the element rather
+	# than the line the id happens to sit on.
+	_ts_link="$(sed -n '/id="fcc-admin-link"/,/<\/a>/p' "$_ts_view")"
+	assert_contains "$_ts_link" 'admin/services/fcc/adminproxy' \
+		"the Admin link points at the LuCI proxy route"
 
-	# The renderer fills it on the loopback branch and empties it otherwise, so
-	# a working link does not keep an explanation of why it does not work.
-	assert_contains "$(cat "$_ts_js")" 'renderAdminNote' \
-		"the script renders the reason"
-	assert_contains "$(cat "$_ts_js")" 'note.hidden = true' \
-		"and takes it away again when the link works"
+	# Nothing left that disabled it or explained why it could not work.
+	assert_not_contains "$(cat "$_ts_view")" 'fcc-admin-note' "there is no note element to fill"
+	assert_not_contains "$(cat "$_ts_js")" 'renderAdminNote' "and no renderer for one"
+	assert_not_contains "$(cat "$_ts_js")" 'updateAdminLink' "nor anything that rewrites the link"
+	assert_not_contains "$(cat "$_ts_css")" 'fcc-disabled' "and no disabled-link style"
+	assert_not_contains "$(cat "$_ts_css")" 'not-allowed' "nor the cursor that went with it"
 
-	# The disabled control has to look disabled. This is the complaint itself: a
-	# dead <a> styled exactly like a live one.
-	assert_contains "$(cat "$_ts_css")" 'a.fcc-disabled' \
-		"a control that cannot act is styled as one"
-	assert_contains "$(cat "$_ts_css")" 'not-allowed' \
-		"with a cursor that says so"
-
-	# And the remedy is on the page rather than behind a hover: section 3.6.9
-	# prefers binding to the router's LAN address, so the note names the field
-	# that does it and offers the address the browser reached the router on.
-	assert_contains "$(cat "$_ts_js")" 'Bind address' \
-		"the note names the field that fixes it"
-	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-bind').value = host" \
-		"and offers the address this browser used"
+	# The advice that did not work must not come back as text either: a bind to
+	# a specific address is narrowed to loopback precisely because it cannot
+	# open the Admin page (section 104.23).
+	assert_not_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-bind').value = host" \
+		"the page no longer tells the user to bind the server to the LAN address"
 }
 
 # ---------------------------------------------------------------------------

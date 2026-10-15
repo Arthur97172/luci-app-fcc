@@ -89,6 +89,52 @@ fcc_uci_get() {
 }
 
 # ---------------------------------------------------------------------------
+# Server bind address
+#
+# The FCC Admin UI is served through LuCI (luci.fcc.adminproxy), and the proxy
+# reaches the server at 127.0.0.1:<port>. That request has to arrive *from*
+# loopback, because upstream refuses every admin route to anything else — see
+# free_claude_code/api/admin_security.py, require_loopback_admin(), which checks
+# the TCP peer address, the Host header and the Origin header and answers
+#
+#   403 {"detail":"Admin UI is local-only"}
+#
+# when any of them is not local. A browser on another machine fails the first
+# check whatever the server is bound to, which is why "set the bind address to
+# this router's LAN address" — the advice the Configuration page used to give —
+# could only ever produce that 403. Section 104.23.
+#
+# A wildcard bind is the exception and is honoured as written: 0.0.0.0 covers
+# 127.0.0.1 as well, so the proxy still reaches the server, and the FCC *API* is
+# then reachable from the LAN — which is the one thing a wildcard bind is for,
+# and why the LAN-only firewall rule in section 50 exists.
+#
+# Anything else names a single interface, and that interface is not loopback, so
+# the server would be one the Admin UI cannot reach at all. Such a value is
+# narrowed to 127.0.0.1. Narrowing is the safe direction: it can never expose
+# the server on an interface the configuration did not name, and the reverse —
+# widening a specific address to a wildcard — is exactly what must not happen.
+# ---------------------------------------------------------------------------
+fcc_effective_bind() {
+	# fcc_effective_bind [configured] -> the address the server should listen on
+	_eb_b="${1:-$(fcc_uci_get main bind 127.0.0.1)}"
+	case "$_eb_b" in
+		# Wildcards. These are bare literals, not the bracketed form a URL
+		# authority uses: a bracket cannot appear in a stored bind at all
+		# (valid_bind() accepts only [0-9a-fA-F:%.] — luasrc/fcc/util.lua),
+		# so accepting one here would mean reporting a bind the init script
+		# would never use. This function has to be the single decision point,
+		# because status.sh calls it on the raw UCI value while init.d calls
+		# it after valid_bind — the two only agree if anything valid_bind
+		# would reject also narrows here.
+		0.0.0.0|'::') printf '%s' "$_eb_b"; return 0 ;;
+		# Loopback. 127.0.0.0/8 is all loopback, and ::1 is its IPv6 form.
+		127.*|'::1') printf '%s' "$_eb_b"; return 0 ;;
+	esac
+	printf '%s' "127.0.0.1"
+}
+
+# ---------------------------------------------------------------------------
 # Install-path canonicalisation
 #
 # UCI `install_path` is treated as a *base* directory. The FCC root is
@@ -577,6 +623,24 @@ fcc_default_agents() {
 	$(fcc_agents_each)
 	EOF
 	printf '%s' "$_fda_out"
+}
+
+fcc_all_agents() {
+	# Every id in the registry, in registry order, space separated.
+	#
+	# This is what the Configuration page installs (section 104.25). It used to
+	# be a set the user ticked, and the page carried a table to tick it in; the
+	# table is gone and an install now takes the whole registry, so the list is
+	# built from the registry itself rather than from anything a request said.
+	# One install, every agent usable.
+	_faa_out=""
+	while IFS='|' read -r _faa_id _faa_rest; do
+		case "$_faa_id" in ''|\#*) continue ;; esac
+		_faa_out="$_faa_out $_faa_id"
+	done <<-EOF
+	$(fcc_agents_each)
+	EOF
+	printf '%s' "$_faa_out"
 }
 
 # ---------------------------------------------------------------------------

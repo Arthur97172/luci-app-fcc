@@ -43,12 +43,16 @@ action_body() {
 
 # Actions that change state. Each must refuse a GET, so that a browser prefetch,
 # an <img> tag or a link cannot start an install or type into a terminal.
+#
+# agent_install and agent_remove were here until the Configuration page's agent
+# table was removed (section 104.25); the actions went with it. reinstall_runtime
+# is new and is the one that removes the runtime before installing again.
 mutating_actions() {
 	cat <<'EOF'
-act_agent_install
-act_agent_remove
+act_agent_versions
 act_config_set
 act_install_runtime
+act_reinstall_runtime
 act_server
 act_session_cleanup
 act_session_close
@@ -177,10 +181,35 @@ test_mutating_actions_require_post() {
 test_every_action_is_declared() {
 	# A new act_* function that nobody routed is dead code; a route to a missing
 	# function is a 500. Both are caught by comparing the two lists.
+	#
+	# Two ways to be routed, because there are two kinds of route: the JSON API
+	# is one leaf per entry in the actions table, and a route that serves a page
+	# rather than an action — the FCC Admin proxy — is its own entry() call with
+	# a literal function name. Collecting both keeps the check strict: an act_*
+	# that appears in neither list still fails.
 	_ts_declared="$(grep -o '^function act_[a-z_]*' "$CTRL" | sed 's/^function //' | LC_ALL=C sort)"
-	_ts_routed="$(sed -n '/^\tlocal actions = {/,/^\t}/p' "$CTRL" \
-		| grep -o 'act_[a-z_]*' | LC_ALL=C sort -u)"
+	_ts_routed="$({
+		sed -n '/^\tlocal actions = {/,/^\t}/p' "$CTRL" | grep -o 'act_[a-z_]*'
+		grep -o 'call("act_[a-z_]*")' "$CTRL" | sed 's/^call("//; s/")$//'
+	} | LC_ALL=C sort -u)"
 	assert_eq "$_ts_routed" "$_ts_declared" "every act_* function is routed and every route has a function"
+}
+
+test_the_proxy_route_is_a_leaf() {
+	# The proxy is not an API action, so it is routed by hand — and a hand-written
+	# entry needs the two things the actions loop sets for it: leaf = true, so the
+	# dispatcher treats it as a terminal endpoint, and no title, so the menu does
+	# not list it. Without the title being absent the page would appear as a menu
+	# entry named "adminproxy".
+	_ts_route="$(grep -n 'adminproxy' "$CTRL")"
+	assert_contains "$_ts_route" 'call("act_admin_proxy")' "the proxy route calls the proxy action"
+	assert_contains "$(action_body act_admin_proxy)" 'proxy.serve()' \
+		"and the action serves the proxy"
+	assert_contains "$(action_body act_admin_proxy)" 'pcall(require, "luci.fcc.adminproxy")' \
+		"loading the proxy module is guarded, so a missing file is a message and not a 500"
+	assert_contains "$_ts_route" '.leaf = true' "the route is a leaf"
+	assert_not_contains "$_ts_route" 'adminproxy"), _(' \
+		"and it has no title, so it is not a menu entry"
 }
 
 test_require_post_rejects_non_post() {

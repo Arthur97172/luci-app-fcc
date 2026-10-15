@@ -1,11 +1,18 @@
 /*
  * luci-app-fcc — Configuration page.
  *
- * Settings, FCC server control, runtime lifecycle and the agent table.
+ * Settings, FCC server control and the runtime lifecycle.
  *
  * Installs and updates take minutes, so they are started through the API and
  * then polled: .../api/job reports whether the install lock is still held and
  * returns the tail of the log, which is what the progress panel renders.
+ *
+ * There is no agent table here any more. It was the picker (section 3.6.5) and
+ * the reason this file carried a selection, a registry, a recommendation and a
+ * set of per-row actions; an install now takes the whole registry and the
+ * backend builds that set, so none of it has anything left to do. The agent
+ * list that remains is on Basic Information, which is a report and not a
+ * control. Section 104.25.
  */
 (function () {
 	'use strict';
@@ -14,18 +21,6 @@
 
 	var jobTimer = null;
 	var jobStart = 0;
-
-	/* The agent table is also the picker (section 3.6.5): one row per agent
-	 * carrying its size and memory floor, with a box to tick, rather than a
-	 * separate checkbox list repeating every name above it.
-	 *
-	 * The selection is held here rather than read back out of the DOM, because
-	 * the table is redrawn whenever a job finishes and a redraw must not
-	 * quietly undo the boxes the user ticked. */
-	var agentSelection = {};
-	var agentRegistry = {};
-	var agentRecommended = [];
-	var agentReady = false;
 
 	/* ------------------------------------------------------------- settings */
 
@@ -38,7 +33,6 @@
 			FCC.$('#fcc-bind').value = c.bind || '127.0.0.1';
 			FCC.$('#fcc-port').value = c.port || 8082;
 			FCC.$('#fcc-log-level').value = c.log_level || 'info';
-			updateAdminLink(c.bind, c.port);
 			return d;
 		});
 	}
@@ -68,92 +62,21 @@
 				msg += ' ' + FCC._('The firewall rule could not be added — the server is bound to every interface without one.');
 			}
 			FCC.notice(FCC.$('#fcc-config-status'), r.path_changed ? 'warn' : 'ok', msg);
-			updateAdminLink(body.bind, body.port);
 			refreshAll();
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 	}
 
-	/**
-	 * The FCC Admin page is served by the FCC server itself, on the router. A
-	 * browser can only reach it if the server is bound to an address the
-	 * browser can route to — 127.0.0.1 means "the router's own loopback", which
-	 * is not reachable from a client machine.
-	 *
-	 * The shipped default is 127.0.0.1, so on a fresh install there is no URL
-	 * that works and the link is genuinely inert. Two things follow, and the
-	 * first was missing: the control must look inert (see a.fcc-disabled in
-	 * fcc.css — it used to render exactly like the live buttons beside it), and
-	 * the reason must be on the page. Section 3.6.9 names the remedy, and a
-	 * tooltip is not somewhere a person looks when a button does nothing.
-	 */
-	function updateAdminLink(bind, port) {
-		var link = FCC.$('#fcc-admin-link');
-		if (!link) { return; }
-		var note = FCC.$('#fcc-admin-note');
-		port = port || 8082;
-
-		if (bind === '127.0.0.1' || bind === '::1' || bind === 'localhost') {
-			link.removeAttribute('href');
-			link.classList.add('fcc-disabled');
-			link.setAttribute('aria-disabled', 'true');
-			link.title = FCC._('The server is bound to loopback. Bind it to this router\'s LAN address to open the Admin page from your computer.');
-			renderAdminNote(note);
-		} else {
-			/* Section 13's target is http://<LAN-IP>:8082/admin. Two details
-			 * matter: the path is /admin, not /, and the scheme is http, not
-			 * location.protocol — the FCC server speaks plain HTTP, so an
-			 * https:// link would simply fail to connect. */
-			link.href = 'http://' + location.hostname + ':' + port + '/admin';
-			link.removeAttribute('aria-disabled');
-			link.classList.remove('fcc-disabled');
-			link.title = FCC._('Opens the FCC Admin page in a new tab.');
-			if (note) {
-				note.hidden = true;
-				note.innerHTML = '';
-			}
-		}
-	}
-
-	/* Why the Admin button is inert, and what to do about it — beside the
-	 * button, not behind a hover.
-	 *
-	 * The remedy is the one section 3.6.9 prefers: bind the server to the
-	 * router's LAN address. It is already supported — the Bind address field is
-	 * a few sections up, and binding to a specific address needs no firewall
-	 * change — so this only has to say which field, and offer the address when
-	 * the browser has told us what it is. Nothing is saved from here: opening a
-	 * port to the LAN is the user's decision, made with Save & Apply like every
-	 * other setting. */
-	function renderAdminNote(note) {
-		if (!note) { return; }
-		var host = location.hostname;
-		note.innerHTML = '';
-		note.appendChild(FCC.el('div', {
-			text: FCC._('The FCC Admin page is served by the FCC server itself, and it is listening on 127.0.0.1 — the router\'s own loopback, which this browser cannot reach. There is no address that would open it.')
-		}));
-		note.appendChild(FCC.el('div', {
-			text: FCC._('Set “Bind address” above to this router\'s LAN address and press Save & Apply. The Admin page then opens from this computer. Binding to a specific address needs no firewall change.')
-		}));
-		/* Only offered for a literal IPv4 address: that is what the browser
-		 * reached the router on, so it is an address the router holds. A
-		 * hostname may resolve elsewhere, and binding to one that does not
-		 * resolve on the router itself would leave the server unable to start. */
-		if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-			var use = FCC.el('button', {
-				class: 'cbi-button', type: 'button',
-				text: FCC._('Use %s').replace('%s', host)
-			});
-			use.addEventListener('click', function () {
-				FCC.$('#fcc-bind').value = host;
-				FCC.notice(FCC.$('#fcc-config-status'), 'warn',
-					FCC._('Press “Save & Apply” to bind the server to %s.').replace('%s', host));
-			});
-			note.appendChild(use);
-		}
-		note.hidden = false;
-	}
+		/* The Admin link needs no script at all now: it points at the LuCI reverse
+	 * proxy (section 104.22), which reaches the server on 127.0.0.1 whatever
+	 * the bind address is, so it works from any device that can reach LuCI.
+	 * What used to live here — disabling the link and explaining how to bind
+	 * the server to the LAN address — was built on the premise that a LAN bind
+	 * makes the FCC port reachable. It does not: the server refuses every admin
+	 * route to a non-loopback peer, so that advice ended in
+	 * {"detail":"Admin UI is local-only"} and the link was never worth
+	 * rewiring. */
 
 	/* --------------------------------------------------------- server state */
 
@@ -227,145 +150,6 @@
 		});
 	}
 
-	/* ------------------------------------------------------------- agents */
-
-	/* Section 3.6.5's two figures, as one cell.
-	 *
-	 * They are a property of the agent, not a measurement of this device — the
-	 * recommendation is the guess about what fits — so they read as
-	 * requirements. An agent with neither recorded shows a dash rather than a
-	 * zero. */
-	function requirementText(a) {
-		var bits = [];
-		if (a.approx_size_mb) {
-			bits.push(FCC._('about %d MB').replace('%d', a.approx_size_mb));
-		}
-		if (a.min_ram_mb) {
-			bits.push(FCC._('needs %d MB RAM').replace('%d', a.min_ram_mb));
-		}
-		return bits.length ? bits.join(' · ') : '—';
-	}
-
-	/* One row per agent, and the row is the picker too: the box on the left is
-	 * what Install/reinstall acts on, and the size and memory floor that used to
-	 * be repeated in a second list above are columns here.
-	 *
-	 * Everything comes from the batched status document (section 3.8), which
-	 * carries the registry metadata as well as the live state. Asking the agents
-	 * relay for the same list would be a second process per refresh for a
-	 * subset of the same answer.
-	 *
-	 * The list of agents is the status document's, not a cached one: an agent
-	 * added to the registry must appear on the next refresh without a reload. */
-	function renderAgents(agents) {
-		var tbody = FCC.$('#fcc-agent-table tbody');
-		if (!tbody) { return; }
-
-		agentRegistry = agents || {};
-		var ids = Object.keys(agentRegistry).sort(function (a, b) {
-			var an = String((agentRegistry[a] || {}).name || a).toLowerCase();
-			var bn = String((agentRegistry[b] || {}).name || b).toLowerCase();
-			return an < bn ? -1 : (an > bn ? 1 : 0);
-		});
-
-		tbody.innerHTML = '';
-		if (!ids.length) {
-			tbody.appendChild(FCC.el('tr', {}, [
-				FCC.el('td', {
-					colspan: '7', class: 'fcc-muted',
-					text: FCC._('No agents are registered.')
-				})
-			]));
-			agentReady = true;
-			return;
-		}
-
-		var rec = {};
-		agentRecommended.forEach(function (id) { rec[id] = true; });
-		ids.forEach(function (id) {
-			if (!(id in agentSelection)) { agentSelection[id] = !!rec[id]; }
-		});
-
-		ids.forEach(function (id) {
-			var a = agentRegistry[id] || {};
-
-			var box = FCC.el('input', {
-				type: 'checkbox', value: id, id: 'fcc-pick-' + id, class: 'fcc-pick-box'
-			});
-			/* Set the property, not the attribute: setAttribute('checked', false)
-			 * still checks the box. */
-			box.checked = !!agentSelection[id];
-			box.addEventListener('change', function () { agentSelection[id] = box.checked; });
-
-			var state = a.running
-				? FCC.el('span', { class: 'fcc-badge ok', text: FCC._('running') })
-				: (a.installed
-					? FCC.el('span', { class: 'fcc-badge', text: FCC._('installed') })
-					: FCC.el('span', { class: 'fcc-badge off', text: FCC._('not installed') }));
-
-			var action = a.installed
-				? FCC.el('button', {
-					class: 'cbi-button cbi-button-remove',
-					text: FCC._('Remove'),
-					disabled: a.running ? 'disabled' : null,
-					title: a.running ? FCC._('Close its session first.') : '',
-					onclick: function () { agentOp('agent_remove', id); }
-				})
-				: FCC.el('button', {
-					class: 'cbi-button cbi-button-apply',
-					text: FCC._('Install'),
-					onclick: function () { agentOp('agent_install', id); }
-				});
-
-			tbody.appendChild(FCC.el('tr', {}, [
-				/* The label is what makes the whole cell clickable; the box keeps
-				 * its own id so the header and the row still name the same
-				 * control for anything reading the DOM. */
-				FCC.el('td', { class: 'fcc-pick-cell' }, [
-					FCC.el('label', { class: 'fcc-pick-only', for: 'fcc-pick-' + id }, [box])
-				]),
-				FCC.el('td', { text: a.name }),
-				FCC.el('td', { class: 'fcc-mono', text: a.command }),
-				/* Section 44: an installed agent whose version could not be read
-				 * shows "Unknown" and says why in the tooltip, never a guessed
-				 * number. An agent that simply is not installed shows a dash:
-				 * the two cases are different and the page keeps them apart. */
-				FCC.el('td', {
-					class: 'fcc-mono',
-					text: a.version || (a.version_error ? FCC._('Unknown') : '—'),
-					title: a.version_error || ''
-				}),
-				FCC.el('td', { class: 'fcc-muted fcc-nowrap', text: requirementText(a) }),
-				FCC.el('td', {}, [state]),
-				FCC.el('td', { class: 'fcc-right' }, [action])
-			]));
-		});
-
-		agentReady = true;
-	}
-
-	function agentOp(action, id) {
-		FCC.notice(FCC.$('#fcc-agent-status'), '', '');
-		FCC.api(action, { id: id }, { method: 'POST' }).then(function () {
-			startJobWatch('install', 'fcc-runtime.log');
-		}).catch(function (err) {
-			/* Same reasoning as runJobAction: the log is where a refusal explains
-			 * itself, so the panel opens either way. */
-			startJobWatch('install', 'fcc-runtime.log');
-			FCC.notice(FCC.$('#fcc-agent-status'), 'fail', err.message);
-		});
-	}
-
-	function refreshVersions() {
-		FCC.notice(FCC.$('#fcc-agent-status'), '', FCC._('Detecting versions…'));
-		FCC.api('agent_versions', {}, { method: 'POST' }).then(function () {
-			FCC.notice(FCC.$('#fcc-agent-status'), 'ok', FCC._('Versions updated.'));
-			refreshAll().catch(function () {});
-		}).catch(function (err) {
-			FCC.notice(FCC.$('#fcc-agent-status'), 'fail', err.message);
-		});
-	}
-
 	/* -------------------------------------------------------- runtime + jobs */
 
 	function renderRuntime(d) {
@@ -382,71 +166,6 @@
 				text: f.installed ? '  v' + (f.version || '?') : ''
 			})
 		]));
-	}
-
-	/* ------------------------------------------------------ agent selection */
-
-	/* Section 3.6.5: which agents to install is a decision the user makes
-	 * before the install starts. The recommended set comes from the server,
-	 * which knows each agent's size and memory floor, but the boxes stay
-	 * editable — the recommendation is a guess about this device, not a rule.
-	 *
-	 * The server recommends a single agent (see luci.fcc.agents.default_ids),
-	 * so this is normally one ticked box rather than a set: the rest are there
-	 * to be chosen, not to be spent by default.
-	 *
-	 * An empty selection is meaningful and is sent as such: the API takes an
-	 * absent `agents` field to mean "use the defaults" and an empty one to mean
-	 * "install none", so the picker must not fall back to defaults when the
-	 * user has unchecked everything. */
-
-	function selectedAgentIds() {
-		return Object.keys(agentSelection).filter(function (id) {
-			return agentSelection[id];
-		});
-	}
-
-	/* Reset to recommended. The whole map is replaced, so an agent the user
-	 * unticked comes back and one the registry no longer lists goes away. */
-	function applyRecommended() {
-		agentSelection = {};
-		agentRecommended.forEach(function (id) { agentSelection[id] = true; });
-		renderAgents(agentRegistry);
-	}
-
-	/* The recommended set, computed against the budget the status document has
-	 * already reported. Reading /proc and df again here would make two sources
-	 * for "how much memory is there", and they would eventually disagree. */
-	function loadRecommended(sys) {
-		var s = sys || {};
-		var params = {};
-		if (s.memory_total_kb) {
-			params.ram_mb = Math.floor(s.memory_total_kb / 1024);
-		}
-		if (s.storage_free_bytes) {
-			params.free_mb = Math.floor(s.storage_free_bytes / 1048576);
-		}
-
-		/* If the policy endpoint is unreachable, fall back to the registry's own
-		 * default flags rather than leaving every box unticked — an install must
-		 * not be blocked by a nicety. Only the first one, though: the endpoint
-		 * recommends a single agent, and a fallback that ticked every default
-		 * would quietly recommend a far larger set than the page ever shows.
-		 * The status document lists the registry in file order, so the first
-		 * default here is the agent the endpoint would have picked. */
-		var fallback = [];
-		var ids = Object.keys(agentRegistry);
-		for (var i = 0; i < ids.length; i++) {
-			if (agentRegistry[ids[i]] && agentRegistry[ids[i]].default) {
-				fallback = [ids[i]];
-				break;
-			}
-		}
-
-		return FCC.api('agent_defaults', params, { method: 'GET' })
-			.then(function (r) { return (r && r.ids) || fallback; })
-			.catch(function () { return fallback; })
-			.then(function (ids) { agentRecommended = ids; });
 	}
 
 	/* The install script prints PRECHECK_FAILED as the machine-readable verdict
@@ -594,26 +313,14 @@
 		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
 			renderServer(d);
 			renderRuntime(d);
-			renderAgents(d.agents);
 			return d;
 		});
 	}
 
-	/* The first paint has one ordering requirement the later refreshes do not:
-	 * the recommended set must be known before the table is drawn, because the
-	 * table is where the tick boxes live. So the status call comes first, the
-	 * recommendation is computed from the budget it reported, and the table is
-	 * drawn once — rather than drawn unticked and immediately redrawn. */
-	function firstPaint() {
-		return FCC.api('status', {}, { method: 'GET' }).then(function (d) {
-			renderServer(d);
-			renderRuntime(d);
-			agentRegistry = d.agents || {};
-			return loadRecommended(d.system);
-		}).then(function () {
-			renderAgents(agentRegistry);
-		});
-	}
+	/* There is no ordering requirement left on the first paint. It used to have
+	 * one — the recommended set had to be known before the table was drawn,
+	 * because the table was where the tick boxes lived — and with the table gone
+	 * the first paint is just the first refresh. Section 104.25. */
 
 	function init() {
 		FCC.$('#fcc-save').addEventListener('click', saveConfig);
@@ -625,16 +332,22 @@
 			}
 		);
 
+		/* Install takes the whole registry, and the backend builds that set: the
+		 * button sends no agent list at all. It used to send the ticked boxes
+		 * (section 3.6.5), which is why the page carried a selection — and an
+		 * empty selection meant "install none", so a press before the table had
+		 * been drawn had to be special-cased. Nothing to special-case now. */
 		FCC.$('#fcc-runtime-install').addEventListener('click', function () {
-			var params = {};
-			/* Only send the selection once the table has been drawn. Before
-			 * that the map is empty because nothing has been shown to the user
-			 * yet, and an empty `agents` field does not mean "no opinion" — it
-			 * means "install none" (section 3.6.5). Leaving the field off lets
-			 * the backend apply its own defaults, which is what an install
-			 * pressed before the page finished loading should do. */
-			if (agentReady) { params.agents = selectedAgentIds().join(','); }
-			runJobAction('install_runtime', params, 'install', 'fcc-runtime.log');
+			runJobAction('install_runtime', {}, 'install', 'fcc-runtime.log');
+		});
+		/* Reinstall is its own operation, not a flavour of Install: it removes
+		 * the runtime first, because the upstream installer reconciles the agent
+		 * set rather than reinstalling what is already there (section 104.25). */
+		FCC.$('#fcc-runtime-reinstall').addEventListener('click', function () {
+			if (!window.confirm(FCC._('Remove the FCC runtime and install it again with every agent? Your configuration and data under the install path are kept.'))) {
+				return;
+			}
+			runJobAction('reinstall_runtime', {}, 'install', 'fcc-runtime.log');
 		});
 		FCC.$('#fcc-runtime-update').addEventListener('click', function () {
 			runJobAction('update_runtime', {}, 'install', 'fcc-update.log');
@@ -656,15 +369,12 @@
 			runJobAction('uninstall_runtime', { purge: 1 }, 'install', 'fcc-runtime.log');
 		});
 
-		FCC.$('#fcc-install-agents-defaults').addEventListener('click', applyRecommended);
-
-		FCC.$('#fcc-agent-refresh').addEventListener('click', refreshVersions);
 		FCC.$('#fcc-doctor-run').addEventListener('click', runDoctor);
 
 		loadConfig().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
-		firstPaint().catch(function (err) {
+		refreshAll().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 	}

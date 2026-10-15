@@ -192,6 +192,31 @@
 		});
 	}
 
+	/* Re-read every installed agent's version.
+	 *
+	 * The version column is a cache, written when an agent is installed, so an
+	 * agent upgraded on the router by hand would keep showing the old number
+	 * indefinitely. This is the only thing that rewrites that cache, and it is
+	 * a POST because it shells out to each agent's --version — a GET that costs
+	 * ten processes is one a proxy or a prefetch is entitled to repeat.
+	 *
+	 * It lives on this page because the agent list does. It used to be on
+	 * Configuration, beside the agent table that was removed (section 104.25). */
+	function refreshAgentVersions(btn) {
+		var status = FCC.$('#fcc-info-agent-status');
+		FCC.notice(status, '', FCC._('Detecting versions…'));
+		btn.disabled = true;
+		FCC.api('agent_versions', {}, { method: 'POST' }).then(function () {
+			return loadStatus(false);
+		}).then(function () {
+			FCC.notice(status, 'ok', FCC._('Versions updated.'));
+		}).catch(function (err) {
+			FCC.notice(status, 'fail', err.message);
+		}).then(function () {
+			btn.disabled = false;
+		});
+	}
+
 	function loadStatus(refresh) {
 		var action = refresh ? 'status_refresh' : 'status';
 		var method = refresh ? 'POST' : 'GET';
@@ -363,6 +388,9 @@
 			runUpdate();
 		});
 		FCC.$('#fcc-info-log-load').addEventListener('click', loadLog);
+		FCC.$('#fcc-info-agent-versions').addEventListener('click', function () {
+			refreshAgentVersions(this);
+		});
 
 		loadStatus(false).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-info-fcc'), 'fail', err.message);

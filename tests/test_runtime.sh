@@ -3692,4 +3692,171 @@ test_an_installed_agent_is_reported_installed_without_being_on_path() {
 	assert_not_contains "$_tr_meta" '"codex"' "and does not name the ones that are not installed"
 }
 
+# ---------------------------------------------------------------------------
+# Section 104.23 — a bind to one interface is narrowed, not honoured
+# ---------------------------------------------------------------------------
+
+test_effective_bind_narrows_to_loopback() {
+	setup_sandbox
+
+	# The Admin UI is loopback-only upstream (section 104.22): the proxy is the
+	# only way in, and it connects from 127.0.0.1. A server bound to one
+	# specific interface does not listen on loopback, so binding to the router's
+	# own LAN address does not open the Admin page — it breaks the one path that
+	# does. What the setting still decides is which interfaces the server
+	# listens on, and narrowing is the only change made to it. Narrowing can
+	# only shrink the exposed surface, never widen it, which is why it is safe
+	# to do without asking.
+
+	# Kept as written. These are bare literals; the bracketed URL-authority
+	# spellings are deliberately not in this group, and the reason is below.
+	assert_eq "0.0.0.0" "$(sh_common 'fcc_effective_bind 0.0.0.0')" \
+		"a wildcard IPv4 bind is kept"
+	assert_eq "::" "$(sh_common 'fcc_effective_bind ::')" \
+		"a wildcard IPv6 bind is kept"
+	assert_eq "127.0.0.1" "$(sh_common 'fcc_effective_bind 127.0.0.1')" \
+		"loopback IPv4 is kept"
+	assert_eq "127.0.0.5" "$(sh_common 'fcc_effective_bind 127.0.0.5')" \
+		"the whole 127/8 range is loopback, not just .1"
+	assert_eq "::1" "$(sh_common 'fcc_effective_bind ::1')" \
+		"loopback IPv6 is kept"
+
+	# The reported case. A browser that reaches the port directly is refused by
+	# upstream whatever the bind is; narrowing is what keeps the setting from
+	# also taking out the proxy, which is the only path that works.
+	assert_eq "127.0.0.1" "$(sh_common 'fcc_effective_bind 192.168.5.3')" \
+		"the router's LAN address is narrowed to loopback"
+	assert_eq "127.0.0.1" "$(sh_common 'fcc_effective_bind 10.0.0.1')" \
+		"and so is any other interface address"
+
+	# The bracketed forms narrow too, and this pair is about agreement rather
+	# than exposure. status.sh calls this function on the raw UCI value while
+	# init.d calls it after valid_bind(); valid_bind rejects a bracket, so
+	# init.d would bind 127.0.0.1 while status.sh reported [::1] — the page's
+	# "listening on" and the server's actual bind, disagreeing. Both spellings
+	# narrow, so the two paths cannot diverge.
+	assert_eq "127.0.0.1" "$(sh_common 'fcc_effective_bind "[::1]"')" \
+		"a bracketed loopback is narrowed rather than reported verbatim"
+	assert_eq "127.0.0.1" "$(sh_common 'fcc_effective_bind "[::]"')" \
+		"and so is a bracketed wildcard"
+
+	# Anything at all. The fallback is loopback, never the input — this is the
+	# assertion the section's discrimination note names: echoing the argument
+	# back on the last line of the function turns the four cases above red.
+	assert_eq "127.0.0.1" "$(sh_common 'fcc_effective_bind not-an-address')" \
+		"a value the case statement has never seen falls back to loopback"
+}
+
+# ---------------------------------------------------------------------------
+# Section 104.25 — one click installs every agent
+# ---------------------------------------------------------------------------
+
+test_install_runtime_takes_the_whole_registry() {
+	setup_sandbox
+	make_uci_shim
+
+	# The registry, read here by a second implementation so the assertion is
+	# "these two agree" rather than "this equals a list copied from the file".
+	# A hardcoded list of ten would keep passing after an eleventh agent was
+	# added — and that agent would never be installed, which is the failure the
+	# page would then show as an agent that cannot be used.
+	_tr_ids="$(sed -n 's/^\([A-Za-z0-9_-]*\)|.*/\1/p' "$AGENTS_CONF" \
+		| LC_ALL=C sort | tr '\n' ' ')"
+	assert_eq "10" "$(printf '%s' "$_tr_ids" | wc -w | tr -d ' ')" \
+		"the registry read here holds ten agents"
+
+	# common.sh holds the rule: every id, and nothing else.
+	_tr_all="$(sh_common 'fcc_all_agents' | tr ' ' '\n' | grep . \
+		| LC_ALL=C sort | tr '\n' ' ')"
+	assert_eq "$_tr_ids" "$_tr_all" "fcc_all_agents is the whole registry"
+
+	# And install.sh's --all-agents is that function, not a second list. The
+	# controller asks for the whole set by flag for exactly this reason: the
+	# registry stays the only place the set is written down.
+	#
+	# The seam used to read the set back is the doctor. cmd_runtime hands the
+	# pre-install checks the same variable it later hands the installer —
+	# FCC_AGENT_SELECTION is set from $_cr_agents and exported, and run_installer
+	# is called with $_cr_agents — so asking the checks what they were given
+	# answers the question without running an install. precheck_ok is stubbed to
+	# report and then fail, which stops the run before the backup, the download
+	# and the lock's lifetime get interesting: the sandbox every test in this
+	# file shares, and /tmp's lock directory, are both left as they were found.
+	#
+	# The set is read back normalised, because what is asserted is which agents
+	# are in it, not the order they arrive in.
+	_tr_set="$(sh_install '
+		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
+		cmd_runtime runtime --all-agents' 2>&1 \
+		| sed -n 's/^SET=\[\(.*\)\]$/\1/p' | tr ' ' '\n' | grep . \
+		| LC_ALL=C sort | tr '\n' ' ')"
+	assert_eq "$_tr_all" "$_tr_set" "--all-agents resolves to the whole registry"
+
+	# The other direction, so the assertion above cannot pass for a reason that
+	# has nothing to do with the flag: an explicit list still means that list,
+	# and is not quietly widened to everything.
+	_tr_set="$(sh_install '
+		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
+		cmd_runtime runtime --agents claude' 2>&1 \
+		| sed -n 's/^SET=\[\(.*\)\]$/\1/p' | tr ' ' '\n' | grep . \
+		| LC_ALL=C sort | tr '\n' ' ')"
+	assert_eq "claude " "$_tr_set" "an explicit list is still exactly that list"
+
+	# And the set the checks are shown is the set the installer is given: one
+	# variable, read in both places. A change that widened one and not the other
+	# would be a page that checks for one thing and installs another, which is
+	# the shape of bug that leaves a device short of space halfway through.
+	assert_contains "$(cat "$LIBEXEC/install.sh")" \
+		'FCC_AGENT_SELECTION="$_cr_agents"' \
+		"the checks read the requested set"
+	assert_contains "$(cat "$LIBEXEC/install.sh")" \
+		'run_installer "$_cr_script" "$_cr_agents" "$_cr_none"' \
+		"and the installer is handed that same set"
+}
+
+test_reinstall_is_remove_then_install_everything() {
+	setup_sandbox
+
+	# "Reinstall" cannot mean "ask upstream to install again": upstream
+	# *reconciles* the agent set, so an agent already present is never asked
+	# about again, and the only lever this package has over the set is which
+	# agents it requests. The one operation that genuinely reinstalls them is to
+	# remove the runtime that carries them and install it again — which is what
+	# this pins, as control flow, because the sequencing is the whole of the
+	# function.
+	#
+	# The two commands it drives are stood in for so that the order and the
+	# arguments are what is read back; each is covered on its own elsewhere.
+	_tr_calls="$(sh_install '
+		cmd_uninstall() { printf "uninstall[%s]\n" "$*"; return 0; }
+		cmd_runtime()   { printf "runtime[%s]\n" "$*"; return 0; }
+		cmd_reinstall' 2>&1)"
+	assert_eq "uninstall[]
+runtime[--all-agents]" "$_tr_calls" \
+		"reinstall removes the runtime and then installs the whole registry"
+
+	# No --purge: the configuration, the sessions and the backups are the
+	# user's and survive. Only the runtime goes, which is the point — it is what
+	# the agents are re-fetched from.
+	assert_not_contains "$_tr_calls" "--purge" "the removal keeps the user's data"
+
+	# A removal that fails stops the sequence. Installing on top of a runtime
+	# that would not come out is the one outcome worse than not reinstalling at
+	# all: it would report success over a state nobody chose.
+	_tr_calls="$(sh_install '
+		cmd_uninstall() { printf "uninstall\n"; return 1; }
+		cmd_runtime()   { printf "runtime\n"; return 0; }
+		cmd_reinstall; echo "rc=$?"' 2>&1)"
+	assert_eq "uninstall
+rc=1" "$_tr_calls" "a removal that fails stops the reinstall"
+
+	# And the status the caller gets is the install's, so a reinstall that
+	# removed cleanly and then failed to install is not reported as a success.
+	_tr_calls="$(sh_install '
+		cmd_uninstall() { return 0; }
+		cmd_runtime()   { return 3; }
+		cmd_reinstall; echo "rc=$?"' 2>&1)"
+	assert_eq "rc=3" "$_tr_calls" "the install's status is the reinstall's status"
+}
+
 tests_main
