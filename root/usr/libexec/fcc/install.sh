@@ -199,6 +199,31 @@ installer_exit_status() {
 	printf '%s' "$_ies_rc"
 }
 
+installer_transcript() {
+	# installer_transcript <transcript> -> the screen's text, one line per line
+	#
+	# The transcript is a terminal screen rather than a text file: the installer
+	# colours its output, tmux writes into the same stream, and the final
+	# capture-pane adds a whole screen of trailing blanks. Carriage returns and
+	# escape sequences are stripped and blank lines dropped before any line is
+	# chosen from it. The escape is built with printf because BusyBox sed has no
+	# \x escape of its own.
+	#
+	# The parameter bytes are matched with the bracket written last inside its
+	# class, so this line holds no double open-bracket: the shell suite rejects
+	# that pair anywhere in the tree, and an escaped bracket followed by the
+	# class would spell it. Cursor-mode sequences carry a "?" among those bytes,
+	# and one left standing in front of an "error:" line would hide it from the
+	# anchored match in installer_failure_reason — which is why they are removed
+	# here, once, for every reader of the screen.
+	_it_file="$1"
+	[ -r "$_it_file" ] || return 1
+	_it_esc="$(printf '\033')"
+	tr -d '\r' < "$_it_file" 2>/dev/null \
+		| sed -e "s/${_it_esc}[0-9;?<>=[]*[A-Za-z]//g" \
+		| grep -v '^[[:space:]]*$'
+}
+
 installer_failure_reason() {
 	# installer_failure_reason <transcript> -> the installer's own last word
 	#
@@ -211,25 +236,8 @@ installer_failure_reason() {
 	# BusyBox tar produced a report of "always FAILED" with no reason in it.
 	# The line is copied into the runtime log now, which is the file the job
 	# panel and the Logs panel both show.
-	#
-	# The transcript is a terminal screen rather than a text file: the installer
-	# colours its output, tmux writes into the same stream, and the final
-	# capture-pane adds a whole screen of trailing blanks. Carriage returns and
-	# escape sequences are stripped before a line is chosen. The escape is built
-	# with printf because BusyBox sed has no \x escape of its own.
-	#
-	# The parameter bytes are matched with the bracket written last inside its
-	# class, so this line holds no double open-bracket: the shell suite rejects
-	# that pair anywhere in the tree, and an escaped bracket followed by the
-	# class would spell it. Cursor-mode sequences carry a "?" among those bytes,
-	# and one left standing in front of the "error:" line would hide it from the
-	# anchored match below — which is the whole point of this function.
 	_ifr_file="$1"
-	[ -r "$_ifr_file" ] || return 1
-	_ifr_esc="$(printf '\033')"
-	_ifr_txt="$(tr -d '\r' < "$_ifr_file" 2>/dev/null \
-		| sed -e "s/${_ifr_esc}[0-9;?<>=[]*[A-Za-z]//g" \
-		| grep -v '^[[:space:]]*$')"
+	_ifr_txt="$(installer_transcript "$_ifr_file")" || return 1
 	_ifr_line="$(printf '%s\n' "$_ifr_txt" | grep '^error: ' | tail -n 1)"
 	# No fail() line — the run was cut short by the timeout, or the installer
 	# died on a signal. The last thing it managed to print is the next best
@@ -237,6 +245,65 @@ installer_failure_reason() {
 	[ -n "$_ifr_line" ] || _ifr_line="$(printf '%s\n' "$_ifr_txt" | tail -n 1)"
 	[ -n "$_ifr_line" ] || return 1
 	printf '%s' "$_ifr_line"
+}
+
+installer_missing_tool() {
+	# installer_missing_tool <transcript> -> the command name, or nothing
+	#
+	# The installer's own last word names an exit code and nothing else —
+	# "error: Codex installation failed with exit code 1." The line that says
+	# what was actually missing is one the shell printed a moment earlier and
+	# upstream never repeated:
+	#
+	#   /tmp/fcc-install.iKaKoG: line 215: fold: not found
+	#
+	# BusyBox ash writes that form for a command inside a script it is running,
+	# and "ash: fold: not found" for one it cannot find at a prompt, so both are
+	# matched. The last match wins, because it is the one nearest the failure.
+	#
+	# The prefix is anchored to those two shapes rather than to "anything ending
+	# in ': not found'", because the loose form matches prose: the installer's
+	# own "Failed to resolve the latest Codex release version." is one word away
+	# from reading as a missing command called "resolve".
+	#
+	# The name is checked before it is handed back: it is text out of a log
+	# line, and the only thing this function is allowed to return is something
+	# shaped like a command.
+	_imt_txt="$(installer_transcript "$1")" || return 1
+	_imt_line="$(printf '%s\n' "$_imt_txt" \
+		| sed -e 's/^[[:space:]]*//' \
+		| grep -E '(^|: line [0-9]+: |^[A-Za-z0-9_.+-]+: )[A-Za-z0-9_.+-]+: not found$' \
+		| tail -n 1)"
+	[ -n "$_imt_line" ] || return 1
+	_imt_tool="${_imt_line%: not found}"
+	_imt_tool="${_imt_tool##*: }"
+	case "$_imt_tool" in
+		''|*[!A-Za-z0-9_.+-]*) return 1 ;;
+	esac
+	printf '%s' "$_imt_tool"
+}
+
+installer_explain_missing_tool() {
+	# installer_explain_missing_tool <transcript>
+	#
+	# Section 104.12: the reason has to reach whoever reads the log. This
+	# failure had the answer in the transcript — "fold: not found", twice — and
+	# the question in the log — "exit code 1" — so the one file a person opens
+	# was the one file that did not say.
+	_iem_tool="$(installer_missing_tool "$1" 2>/dev/null || true)"
+	[ -n "$_iem_tool" ] || return 0
+
+	fcc_log "$LOG" "installer: the installer needed '$_iem_tool', which this image does not provide"
+	# The package, for the tools whose provider has been verified. A short list
+	# rather than a guess from the name: "coreutils-<tool>" is the usual shape
+	# on OpenWrt and not a rule, and a package that does not exist is a second
+	# dead end after the first.
+	case "$_iem_tool" in
+		fold) _iem_pkg="coreutils-fold" ;;
+		*)    _iem_pkg="" ;;
+	esac
+	[ -n "$_iem_pkg" ] && fcc_log "$LOG" "installer: $_iem_tool is packaged separately here: $(fcc_pkg_install_hint "$_iem_pkg")"
+	fcc_log "$LOG" "installer: the Configuration page's check reports this before an install; the line itself is in logs/installer.out"
 }
 
 installer_download_url_for() {
@@ -282,7 +349,7 @@ installer_download_url_for() {
 }
 
 installer_explain_failure() {
-	# installer_explain_failure <installer-script> <reason>
+	# installer_explain_failure <installer-script> <reason> <transcript>
 	#
 	# Section 103: when something cannot work, say exactly why instead of leaving
 	# the reader with a number. "curl exit code 35" is not something a person can
@@ -294,10 +361,23 @@ installer_explain_failure() {
 	#   installer reported: error: Could not download the Codex installer
 	#   (curl exit code 35).
 	#
-	# Silent for every failure that is not a download. The rest are the
-	# installer's own business and this function has nothing to add to them.
+	# Two failures have a cause upstream's line does not carry: a download that
+	# could not reach a host, and a command this image does not have. The second
+	# is read out of the transcript and reported whatever the reason says,
+	# because the reason is the same exit-code line for every cause — that is
+	# how "fold: not found" came to be reported as "exit code 1".
+	#
+	# The transcript is optional rather than required, and the default is not
+	# politeness: this runs on the failure path, under `set -u`, where a missing
+	# argument is a hard error. A diagnosis that cannot crash the thing it is
+	# diagnosing matters more than one that refuses to run without its input.
+	# The one caller passes it — a test asserts that — so an empty one here
+	# means a caller that forgot, not a transcript that does not exist.
 	_ief_script="$1"
 	_ief_reason="$2"
+	_ief_transcript="${3:-}"
+
+	installer_explain_missing_tool "$_ief_transcript"
 
 	case "$_ief_reason" in
 		*'Could not download the '*) : ;;
@@ -1085,7 +1165,7 @@ cmd_runtime() {
 		# The host it could not reach is read out of the script that just ran, so
 		# this has to happen before the script is deleted — hence the rm below,
 		# in both paths rather than once above the branch.
-		installer_explain_failure "$_cr_script" "$_cr_reason"
+		installer_explain_failure "$_cr_script" "$_cr_reason" "$ROOT/logs/installer.out"
 		rm -f "$_cr_script"
 		rollback_runtime "$_cr_backup" "$_cr_was_running"
 		fcc_lock_release "$_cr_lock"

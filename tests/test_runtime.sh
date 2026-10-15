@@ -3337,6 +3337,80 @@ test_doctor_bash_check_follows_the_agent_set() {
 	rm -rf "$SANDBOX/opt/fcc"
 }
 
+# The fold check, which exists because the Codex installer resolves the release
+# it is about to install by piping the release JSON through GNU fold, and the
+# BusyBox on OpenWrt 24.10.8 x86_64 was built without the applet. Where it is
+# missing the shell prints "fold: not found", the resolver gives up on
+# releases.openai.com and again on its GitHub fallback, and the installer stops
+# with "error: Codex installation failed with exit code 1." — an exit code, and
+# the name of nothing.
+#
+# A FAIL only when the Codex installer will actually run, because ensure_codex()
+# reuses a Codex that is already on PATH and never fetches the installer. A
+# check that failed anyway would block an install that works, which is worse
+# than the gap it was written for.
+#
+# The gate is asserted rather than assumed, and the PATH is built so that fold
+# is the only thing that can close it: the doctor's own tools, plus tmux and
+# bash (which FAIL when absent) and a curl that answers without a network. The
+# stand-in is what makes "install_allowed" mean fold here — with the real curl
+# the check would reach github.com, and without any curl it would FAIL on its
+# own account and the assertion would hold for the wrong reason.
+test_doctor_fold_check_follows_the_agent_set() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	_dfc_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl mktemp mkdir rm tar"
+
+	# Codex selected and no fold: a failure, naming the package and the agent.
+	_dfc_fail="$(sh_doctor_tools "$_dfc_tools" 'FCC_AGENT_SELECTION=codex' --json |
+		grep '"name": "fold"')"
+	assert_contains "$_dfc_fail" '"status": "FAIL"' \
+		"a selected Codex with no fold is a failure"
+	assert_contains "$_dfc_fail" 'opkg install coreutils-fold' \
+		"and the report says which package provides it"
+	assert_contains "$_dfc_fail" 'Required by Codex' \
+		"and names the agent whose installer needs it"
+	assert_contains "$(sh_doctor_tools "$_dfc_tools" 'FCC_AGENT_SELECTION=codex' --json)" \
+		'"install_allowed": false' "and a missing fold is what closes the gate"
+
+	# Agents that do not need it: a warning. The install is fine without fold,
+	# so this must not be what stops it.
+	_dfc_warn="$(sh_doctor_tools "$_dfc_tools" 'FCC_AGENT_SELECTION=pi' --json |
+		grep '"name": "fold"')"
+	assert_contains "$_dfc_warn" '"status": "WARN"' \
+		"an agent that does not need fold does not fail the check"
+	assert_contains "$_dfc_warn" 'Not needed by the selected agents' \
+		"and the report says why it is only a warning"
+	assert_contains "$(sh_doctor_tools "$_dfc_tools" 'FCC_AGENT_SELECTION=pi' --json)" \
+		'"install_allowed": true' "and the gate stays open for that install"
+
+	# fold present: OK, whatever is selected, and nothing left to install.
+	_dfc_ok="$(sh_doctor_tools "$_dfc_tools fold" 'FCC_AGENT_SELECTION=codex' --json |
+		grep '"name": "fold"')"
+	assert_contains "$_dfc_ok" '"status": "OK"' "fold present is OK"
+	assert_not_contains "$_dfc_ok" 'not found' "and the report does not claim it is missing"
+	assert_contains "$(sh_doctor_tools "$_dfc_tools fold" 'FCC_AGENT_SELECTION=codex' --json)" \
+		'"install_allowed": true' "and installing it is what reopens the gate"
+
+	# Codex already installed and no fold: a warning, not a failure. The
+	# installer's Codex step reuses what is on PATH and never runs the script
+	# that wants fold, so nothing needs it — and blocking here would refuse an
+	# install that would have succeeded.
+	mkdir -p "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data/.local/bin"
+	: > "$SANDBOX/opt/fcc/data/.local/bin/codex"
+	chmod +x "$SANDBOX/opt/fcc/data/.local/bin/codex"
+	_dfc_have="$(sh_doctor_tools "$_dfc_tools" 'FCC_AGENT_SELECTION=codex' --json |
+		grep '"name": "fold"')"
+	assert_contains "$_dfc_have" '"status": "WARN"' \
+		"a Codex that is already installed makes fold a warning"
+	assert_contains "$_dfc_have" 'already installed' \
+		"and the report says why nothing needs it yet"
+	assert_contains "$(sh_doctor_tools "$_dfc_tools" 'FCC_AGENT_SELECTION=codex' --json)" \
+		'"install_allowed": true' \
+		"and it does not block an install that would work"
+	rm -rf "$SANDBOX/opt/fcc"
+}
+
 # The tar check, which exists because uv's own installer cannot unpack its
 # release on a stock image. It runs `tar xf ARCHIVE --no-same-owner
 # --strip-components 1`, and BusyBox tar knows neither option: it prints its
@@ -3977,6 +4051,97 @@ test_a_failed_download_explains_itself_in_the_log() {
 	_fd_rm="$(grep -n 'rm -f "\$_cr_script"' "$_fd_src" | head -n 1 | cut -d: -f1)"
 	assert_ok "the diagnosis runs before the installer script is deleted" \
 		test "$_fd_call" -lt "$_fd_rm"
+}
+
+# The other failure whose cause upstream's line does not carry: a command the
+# image does not have. This is the one the router reported. The transcript held
+# the answer — "/tmp/fcc-install.iKaKoG: line 215: fold: not found", twice — and
+# the log held the question, "error: Codex installation failed with exit code
+# 1.", so the file a person opens was the one file that did not say. The
+# transcript below is that screen, escapes and CRLF and trailing blanks and all.
+test_a_missing_tool_is_named_in_the_log() {
+	setup_sandbox
+	_fd_script="$(write_installer_fixture)"
+	_fd_logs="$SANDBOX/diaglogs"
+	_fd_out="$SANDBOX/installer.out"
+	mkdir -p "$_fd_logs"
+
+	{
+		printf '\033[?25l[3/14] Ensuring Codex is installed\r\n'
+		printf '+ curl -fsSL https://chatgpt.com/codex/install.sh -o /tmp/fcc-install.iKaKoG\r\n'
+		printf '\033[31m/tmp/fcc-install.iKaKoG: line 215: fold: not found\033[0m\r\n'
+		printf 'Failed to resolve the latest Codex release version.\r\n'
+		printf 'error: Codex installation failed with exit code 1.\r\n'
+		printf '   \r\n\r\n'
+	} > "$_fd_out"
+
+	# The log is emptied before each case. The sandbox is per-run rather than
+	# per-test, so the file accumulates across the whole suite — and a "does not
+	# contain" would then be answered by whatever an earlier test happened to
+	# write, which is how the download test's hosts turned up in this one.
+	: > "$_fd_logs/fcc-runtime.log"
+	sh_install "fcc_dir_logs() { printf '%s' '$_fd_logs'; }
+		installer_explain_failure '$_fd_script' \
+			'error: Codex installation failed with exit code 1.' '$_fd_out'" \
+		>/dev/null 2>&1
+	_fd_log="$(cat "$_fd_logs/fcc-runtime.log" 2>/dev/null || true)"
+
+	assert_contains "$_fd_log" "the installer needed 'fold'" \
+		"the log names the command the installer could not find"
+	assert_contains "$_fd_log" 'opkg install coreutils-fold' \
+		"and the package that provides it"
+	# The reason is not a download, so the download diagnosis has to stay out of
+	# it: naming a host here would send the reader after a network fault that
+	# was never involved.
+	assert_not_contains "$_fd_log" 'network path' \
+		"and no host is named, because no download failed"
+
+	# The interactive form, and a tool this package has no provider for. The
+	# name is still reported — it is the fact the reader needs — and no package
+	# is invented for it: "coreutils-<tool>" is the usual shape on OpenWrt and
+	# not a rule, and a package that does not exist is a second dead end.
+	: > "$_fd_logs/fcc-runtime.log"
+	printf 'ash: realpath: not found\n' > "$_fd_out"
+	sh_install "fcc_dir_logs() { printf '%s' '$_fd_logs'; }
+		installer_explain_failure '$_fd_script' \
+			'error: Pi installation failed with exit code 1.' '$_fd_out'" \
+		>/dev/null 2>&1
+	_fd_log="$(cat "$_fd_logs/fcc-runtime.log" 2>/dev/null || true)"
+	assert_contains "$_fd_log" "the installer needed 'realpath'" \
+		"a command the shell could not find at a prompt is reported too"
+	assert_not_contains "$_fd_log" 'coreutils-realpath' \
+		"and no package is guessed from the name"
+
+	# The installer's own prose is one word away from reading as a missing
+	# command: "Failed to resolve the latest Codex release version." The line
+	# has to survive the reader without "resolve" being taken for a tool, so
+	# this transcript earns an empty log.
+	: > "$_fd_logs/fcc-runtime.log"
+	printf 'Failed to resolve the latest Codex release version.\n' > "$_fd_out"
+	sh_install "fcc_dir_logs() { printf '%s' '$_fd_logs'; }
+		installer_explain_failure '$_fd_script' \
+			'error: Codex installation failed with exit code 1.' '$_fd_out'" \
+		>/dev/null 2>&1
+	assert_eq "" "$(cat "$_fd_logs/fcc-runtime.log" 2>/dev/null || true)" \
+		"a failure with no missing command adds nothing to the log"
+
+	# No transcript at all — the run was killed before tmux wrote one, or the
+	# pane never attached. Nothing to read is not a reason to say something.
+	assert_no "a transcript that is not there yields no tool" \
+		sh_install "installer_missing_tool '$_fd_out.absent'"
+	# And what comes back is a command name, or nothing: the reader is handed
+	# text out of a log line, and only a name shaped like a command may escape.
+	assert_eq "fold" "$(sh_install "printf '%s\n' '/x: line 9: fold: not found' > '$_fd_out'
+		installer_missing_tool '$_fd_out'")" \
+		"the tool is read out of the line the shell printed"
+
+	# The reader is reached, and reached with the transcript. Without the third
+	# argument the function is handed nothing to read and every install that
+	# stops this way is reported as an exit code again.
+	_fd_src="$LIBEXEC/install.sh"
+	assert_ok "the failed-install branch hands the diagnosis the transcript" \
+		grep -q 'installer_explain_failure "\$_cr_script" "\$_cr_reason" "\$ROOT/logs/installer.out"' \
+			"$_fd_src"
 }
 
 tests_main

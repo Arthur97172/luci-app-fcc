@@ -670,6 +670,38 @@ fcc_agents_need_bash() {
 }
 
 # ---------------------------------------------------------------------------
+# fold: the one tool the Codex installer needs, and BusyBox may not have
+# ---------------------------------------------------------------------------
+# The Codex installer resolves the release it is about to install before it
+# downloads anything, by piping the release JSON through
+#
+#     LC_ALL=C fold -b -w 4096 | LC_ALL=C awk '…'
+#
+# fold bounds the awk record size — the comment above it in upstream's script
+# says compact single-line JSON stays fast because of those record boundaries —
+# so the pipeline is not decoration. fold is POSIX and BusyBox provides it, but
+# only when the applet was compiled in, and on OpenWrt 24.10.8 x86_64 it was
+# not: `busybox fold` answers "fold: applet not found". The shell then prints
+#
+#     /tmp/fcc-install.XXXXXX: line 215: fold: not found
+#
+# the resolver gives up on releases.openai.com, gives up again on its GitHub
+# fallback, and the installer stops with
+#
+#     error: Codex installation failed with exit code 1.
+#
+# which names an exit code and nothing else. Measured on the router with its
+# own Codex installer: with fold absent the resolver exits 1; after
+# `opkg install coreutils-fold` the same function prints "tag_name
+# rust-v0.162.1" and exits 0.
+#
+# Codex is the only agent listed because it is the only one whose installer has
+# been observed to need fold. That is not a claim that no other installer ever
+# will: install.sh names whatever tool a future one turns out to want, so a gap
+# this table does not know about still reaches the log with the command in it.
+FCC_FOLD_AGENTS="codex"
+
+# ---------------------------------------------------------------------------
 # tar: the one tool uv's own installer needs, and the one BusyBox cannot be
 # ---------------------------------------------------------------------------
 # uv's standalone installer unpacks its release archive with

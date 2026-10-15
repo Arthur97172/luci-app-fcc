@@ -217,19 +217,35 @@ fi
 # the effective set is that set *plus what is already installed* — upstream's
 # chooser keeps an already-present agent without asking, so an agent that is
 # installed is in the set whatever was requested.
+#
+# Computed once, here, because the fold check below asks the same question and
+# a second copy of this logic is how the two would come to disagree. The
+# installed set is kept separately as well: whether an agent is already present
+# is what decides whether its installer runs at all, which is the difference
+# between the fold check failing and warning.
 _selection="${FCC_AGENT_SELECTION:-}"
+_installed_set="$(fcc_installed_agents "$ROOT")"
 if [ "${FCC_AGENT_NONE:-0}" = 1 ]; then
-	_bash_set="$(fcc_installed_agents "$ROOT")"
+	_effective_set="$_installed_set"
 elif [ -n "$_selection" ]; then
-	_bash_set="$(fcc_effective_agents "$_selection" "$ROOT")"
+	_effective_set="$(fcc_effective_agents "$_selection" "$ROOT")"
 else
-	_bash_set="$(fcc_default_agents) $(fcc_installed_agents "$ROOT")"
+	_effective_set="$(fcc_default_agents) $_installed_set"
 fi
+
 _bash_req="needed by: $(printf '%s' "$FCC_BASH_AGENTS" | tr ' ' ',')"
 _bash_names=""
 for _ba_id in $FCC_BASH_AGENTS; do
-	case " $_bash_set " in
-		*" $_ba_id "*) _bash_names="$_bash_names, $(fcc_agent_name "$_ba_id")" ;;
+	case " $_effective_set " in
+		*" $_ba_id "*)
+			# The id stands in when the registry cannot name it. The list is
+			# what decides between FAIL and WARN below, so an empty name would
+			# collapse it to a bare separator and turn a doomed install into a
+			# warning — the one outcome this check exists to prevent.
+			_ba_name="$(fcc_agent_name "$_ba_id")"
+			[ -n "$_ba_name" ] || _ba_name="$_ba_id"
+			_bash_names="$_bash_names, $_ba_name"
+			;;
 	esac
 done
 _bash_names="${_bash_names#, }"
@@ -242,6 +258,60 @@ elif [ -n "$_bash_names" ]; then
 else
 	add_result WARN "bash" "not found" "$_bash_req" \
 		"Not needed by the selected agents; add it before selecting one that needs it."
+fi
+
+# fold — required by the Codex installer, and not in every BusyBox.
+#
+# The Codex installer resolves the release to install before it downloads
+# anything, piping the release JSON through `LC_ALL=C fold -b -w 4096 | awk …`
+# to bound the awk record size. Where BusyBox was built without the applet the
+# shell prints "fold: not found", the resolver gives up on releases.openai.com
+# and on its GitHub fallback, and the installer stops with "error: Codex
+# installation failed with exit code 1." — an exit code, and the name of
+# nothing. Measured on OpenWrt 24.10.8 x86_64, with the router's own Codex
+# installer: absent, the resolver exits 1; with coreutils-fold installed, the
+# same function prints "tag_name rust-v0.162.1" and exits 0.
+#
+# A FAIL only when the Codex installer will actually run. ensure_codex() reuses
+# a Codex that is already on PATH and never fetches the installer, so on a box
+# that has one this is a warning: nothing needs fold today, and the check has no
+# business blocking an install that would work. That is the same reasoning as
+# the tar check above, and the opposite of the bash check, which cannot know
+# whether the agent's own installer will want it.
+_fold_v="$(fcc_detect_version fold --version 2>/dev/null || true)"
+if [ -n "$_fold_v" ]; then
+	add_result OK "fold" "$_fold_v" "needed to install Codex" ""
+else
+	_fold_will_run=""
+	_fold_present=""
+	for _fo_id in $FCC_FOLD_AGENTS; do
+		case " $_effective_set " in
+			*" $_fo_id "*)
+				# The id stands in when the registry cannot name it, for the
+				# same reason as the bash check above: these two lists decide
+				# the verdict, and one that an empty name can collapse would
+				# report a doomed install as a warning.
+				_fo_name="$(fcc_agent_name "$_fo_id")"
+				[ -n "$_fo_name" ] || _fo_name="$_fo_id"
+				case " $_installed_set " in
+					*" $_fo_id "*) _fold_present="$_fold_present, $_fo_name" ;;
+					*) _fold_will_run="$_fold_will_run, $_fo_name" ;;
+				esac
+				;;
+		esac
+	done
+	_fold_will_run="${_fold_will_run#, }"
+	_fold_present="${_fold_present#, }"
+	if [ -n "$_fold_will_run" ]; then
+		add_result FAIL "fold" "not found" "needed to install Codex" \
+			"$(fcc_pkg_install_hint coreutils-fold) — the Codex installer reads the latest release through fold, and without it stops with \"Failed to resolve the latest Codex release version.\" Required by $_fold_will_run."
+	elif [ -n "$_fold_present" ]; then
+		add_result WARN "fold" "not found" "needed to install Codex" \
+			"$_fold_present is already installed, so its installer is not run — but reinstalling Codex needs fold: $(fcc_pkg_install_hint coreutils-fold)."
+	else
+		add_result WARN "fold" "not found" "needed to install Codex" \
+			"Not needed by the selected agents; add it before selecting one that needs it."
+	fi
 fi
 
 # FCC runtime present?
