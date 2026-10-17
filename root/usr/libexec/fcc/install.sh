@@ -494,19 +494,56 @@ installer_line_is_pi_menu() {
 	return 1
 }
 
+# Can a single key be read on this box at all?
+#
+# Pi's action menu is the one question in the install that is read a byte at a
+# time, and it can only be read that way because read_tty_key() first puts the
+# terminal into raw mode:
+#
+#     stty -icanon -echo min 1 time 0 < /dev/tty 2>/dev/null || true
+#     key=$(dd bs=1 count=1 2>/dev/null < /dev/tty)
+#
+# Both the stty call and its failure are discarded, so a box without stty does
+# not fail here — it changes shape. The terminal stays canonical, dd waits for
+# a line delimiter instead of for a byte, and a key sent on its own is never
+# read.
+#
+# That is not hypothetical. The test router's BusyBox is built without the stty
+# applet — `busybox --list` has no stty and `busybox stty` answers "applet not
+# found" — so on 2026-10-17 the menu was answered with a bare "y", the "y" sat
+# echoed in the canonical line buffer, and the install waited on it until
+# FCC_INSTALLER_TIMEOUT rolled the whole run back: thirty minutes of nothing,
+# the page's progress bar parked, and nothing in the log that named the menu.
+# Every other question is line-based already — upstream's prompt_yes_no() is
+# `IFS= read -r answer <&3` and the upstream installer never calls stty at all
+# — which is why the menu was the only one that hung (§104.31).
+#
+# So the answer form follows the terminal the installer will actually be given
+# rather than the one Pi would prefer: a bare key where raw mode is possible,
+# and a whole line where it is not.
+fcc_installer_can_read_a_key() {
+	command -v stty >/dev/null 2>&1
+}
+
 installer_answer_is_keypress() {
 	# installer_answer_is_keypress <line> -> 0 when the answer is a bare key
 	#
 	# Every other question here is read a line at a time, so its answer is sent
-	# with Enter. Pi's action menu is not: choose_pi_action() puts the terminal
-	# in -icanon and reads exactly one byte (dd bs=1 count=1), so an Enter sent
+	# with Enter. Pi's action menu is not — where it can put the terminal into
+	# -icanon it reads exactly one byte (dd bs=1 count=1), so an Enter sent
 	# after the key is not consumed by the menu at all. It stays in the
 	# terminal's input queue and is read by the *next* prompt — which is
 	# "Start pi now? [Y/n]", whose default is yes. Pi's own interface would then
 	# start in the pane, never exit, and the install would sit there until the
 	# deadline and roll back. Sending the key alone is what keeps that Enter
 	# from existing.
-	installer_line_is_pi_menu "$1"
+	#
+	# That reasoning holds exactly as far as raw mode does. Where it does not —
+	# no stty; see fcc_installer_can_read_a_key() — the menu is reading a line,
+	# the newline is the delimiter it is waiting for and is consumed as one, and
+	# withholding the Enter is what hangs the install instead of what saves it.
+	installer_line_is_pi_menu "$1" || return 1
+	fcc_installer_can_read_a_key
 }
 
 # Answer one prompt. Prints the keys to send, or nothing when the line is not a
@@ -834,6 +871,22 @@ run_installer() {
 
 	fcc_log "$LOG" "running upstream installer (agents='$_ri_label', terminal=tmux)"
 	apply_runtime_env
+
+	# Section 103: the one question in the install that cannot be asked the same
+	# way on every box is Pi's action menu, and when it is asked the other way
+	# the run looks like nothing but a stall. Say which way it went, so that a
+	# log read afterwards names the terminal instead of leaving the reader to
+	# guess at a menu that is not in the transcript.
+	#
+	# The probe sits after apply_runtime_env() rather than before it on purpose:
+	# installer_answer_is_keypress() is called from the answer loop further down,
+	# which runs with the PATH that call has just set, so this asks the question
+	# of the same PATH the decision will be made with.
+	if fcc_installer_can_read_a_key; then
+		fcc_log "$LOG" "installer: stty is present, so Pi's action menu is answered with a key"
+	else
+		fcc_log "$LOG" "installer: no stty on this box, so Pi's action menu is answered as a line rather than a key"
+	fi
 
 	# The terminal must start with this environment, and a tmux session inherits
 	# the *server's* environment rather than the environment of whatever asked

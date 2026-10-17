@@ -4552,6 +4552,44 @@ test_the_pi_installers_own_questions_are_answered() {
 	assert_no "and every other prompt is sent with it" \
 		sh_install "installer_answer_is_keypress 'Install Pi for fcc-pi? [Y/n]'"
 
+	# ...but only where a bare key can be read at all, which is what
+	# fcc_installer_can_read_a_key() asks. Pi reaches raw mode with
+	#
+	#     stty -icanon -echo min 1 time 0 < /dev/tty 2>/dev/null || true
+	#
+	# and throws away both the call and its failure, so a box without stty does
+	# not fail there — it changes shape. The terminal stays canonical, dd waits
+	# for a line delimiter instead of for a byte, and the bare key is never
+	# read. That is what a real install did on 2026-10-17: the router's BusyBox
+	# has no stty applet, the "y" sat echoed in the canonical line buffer, and
+	# the run waited on it until FCC_INSTALLER_TIMEOUT rolled everything back
+	# thirty minutes later with nothing in the log naming the menu (§104.31).
+	assert_ok "a key can be read here, where stty is" \
+		sh_install 'fcc_installer_can_read_a_key'
+	mkdir -p "$SANDBOX/nostty"
+	assert_no "and not on a box without it" \
+		sh_install "PATH='$SANDBOX/nostty'; fcc_installer_can_read_a_key"
+
+	# So the form of the answer follows the terminal rather than Pi's
+	# preference, and the same menu row that is a bare key above is a whole
+	# line here. The newline is the delimiter dd was waiting for and the menu
+	# consumes it as one, so it does not survive into "Start pi now?" — which
+	# is the whole reason the bare key was chosen, and the reason sending the
+	# Enter here is not the regression it would be on a box with stty.
+	assert_no "the menu is answered as a line where there is no stty" \
+		sh_install "PATH='$SANDBOX/nostty'; installer_answer_is_keypress '$_dpq_menu'"
+
+	# What is said does not change with how it is sent, so both boxes still
+	# install the Pi that was selected — and a box with no stty still leaves an
+	# unselected one alone, which is the half that would be quiet if the
+	# fallback had been "answer everything with a line".
+	assert_eq "y" \
+		"$(sh_install "PATH='$SANDBOX/nostty'; installer_answer_for '$_dpq_menu' 'claude pi' set")" \
+		"and the same answer is still given on a box with no stty"
+	assert_eq "n" \
+		"$(sh_install "PATH='$SANDBOX/nostty'; installer_answer_for '$_dpq_menu' 'claude' set")" \
+		"including the answer that leaves Pi alone"
+
 	# Pi offers to launch its own interface in the terminal the install ran in.
 	# It is a full-screen program that stays until it is quit by hand, and that
 	# terminal belongs to the installer job — so yes ends the job by hanging it.
