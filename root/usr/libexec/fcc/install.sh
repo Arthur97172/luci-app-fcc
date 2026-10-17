@@ -653,9 +653,9 @@ installer_answer_for() {
 # below it, and the Pi installer's remedy — nodejs.org/dist — has no musl build,
 # so what it leaves behind cannot execute at all.
 #
-# The destination is the directory upstream's own PATH entry already names,
-# ${XDG_DATA_HOME:-$HOME/.local/share}/pi-node, and `current` is what that entry
-# points through — the same shape the Pi installer leaves when it works. Nothing
+# The destination is the directory upstream's own PATH entry already names —
+# <root>/data/.local/share/pi-node — and `current` is what that entry points
+# through, the same shape the Pi installer leaves when it works. Nothing
 # downstream has to be told where the Node went.
 #
 # Every failure here returns instead of dying: the install is not this step's to
@@ -672,7 +672,22 @@ provision_node() {
 		return 1
 	fi
 
-	_pn_base="${XDG_DATA_HOME:-$HOME/.local/share}/pi-node"
+	# Derived from the install root, never from the environment.
+	#
+	# This function is called by cmd_runtime *before* run_installer, and
+	# run_installer is what applies the runtime environment — so at this point
+	# on a router neither XDG_DATA_HOME nor HOME has been set yet. The obvious
+	# spelling of this line, ${XDG_DATA_HOME:-$HOME/.local/share}/pi-node, is
+	# therefore fatal under `set -u`: the default word is expanded to decide
+	# whether to use it, so an unset $HOME inside it aborts the whole script
+	# even though the fallback is the branch that would have been taken. It
+	# ended a real install at this line on 2026-10-16 with "HOME: parameter not
+	# set", after the installer had been downloaded (§104.30).
+	#
+	# fcc_runtime_env_value is the same mapping apply_runtime_env exports, so
+	# the Node lands where the PATH entry in fcc_runtime_bin_dirs() already
+	# looks for it, whether or not the environment is set at the time.
+	_pn_base="$(fcc_runtime_env_value "$ROOT" XDG_DATA_HOME)/pi-node"
 
 	# A Node this function installed on an earlier run is already the answer.
 	# The check is made against the directory rather than against PATH, because

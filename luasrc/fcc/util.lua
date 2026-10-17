@@ -308,15 +308,50 @@ function lock_path(name)
 	return lock_dir() .. "/fcc-" .. name .. ".lock"
 end
 
+--- The pid the job wrote into its own lock, or nil when it has not written one.
+--
+-- fcc_lock_acquire() in common.sh writes the acquiring shell's pid into
+-- <lock>/pid immediately after the mkdir, so what this returns is the job
+-- itself. A lock caught in the moment between those two calls has no pid file
+-- yet, and nil sends job_running() on to the age rule — the right answer for a
+-- lock that fresh.
+function lock_pid(path)
+	local said = read_file(path .. "/pid")
+	if not said then return nil end
+	local pid = said:match("^%s*(%d+)%s*$")
+	if not pid then return nil end
+	return tonumber(pid)
+end
+
+--- Is that process still running?
+--
+-- /proc is the whole of the test, as it is for the shell's fcc_lock_stale():
+-- the LuCI runtime has no kill(2) binding, and the package reads liveness out of
+-- /proc everywhere else it needs to (the server's pid, in status.sh).
+function pid_alive(pid)
+	return file_exists("/proc/" .. pid)
+end
+
 --- Is a job holding this lock right now?
 --
 -- "The lock directory exists" is not that question. fcc_lock_acquire() creates it
 -- with mkdir and fcc_lock_release() removes it, so a job that was killed — by a
 -- reboot, by the OOM killer, by the user — leaves its lock behind, and the naive
 -- test goes on calling that job "still running" until someone removes the
--- directory by hand. The shell treats a lock older than FCC_LOCK_STALE_SECS as
--- abandoned and reclaims it; asking the same question here is what makes the
--- page's idea of "running" and the backend's idea of "may I start" one idea.
+-- directory by hand.
+--
+-- The job's own pid settles it when the lock carries one: a job that is not
+-- running is not running, however recently its lock was made. That check is what
+-- the page was missing. On 2026-10-16 an install died in its third second and
+-- left a lock seconds old; the age rule below called that job live, and the
+-- progress bar went on climbing for 25 minutes over work that had stopped
+-- (§104.30). Asking about the pid costs one stat and answers immediately.
+--
+-- The age rule is what remains for a lock with no pid in it, and it is the outer
+-- bound for a pid that has since been handed to an unrelated process. The shell
+-- reaches the same conclusions in fcc_lock_stale(), and tests/test_lua.sh asserts
+-- they agree on every case — no lock, one held by a running job, one left by a
+-- job that died a second ago, and one old enough for the age rule on its own.
 --
 -- A lock whose age cannot be read counts as live. The backend would refuse to
 -- start a job against it in any case, and calling a dead job live is the failure
@@ -324,6 +359,8 @@ end
 function job_running(name)
 	local path = lock_path(name)
 	if not file_exists(path) then return false end
+	local pid = lock_pid(path)
+	if pid and not pid_alive(pid) then return false end
 	local age = path_age(path)
 	if age == nil then return true end
 	return age <= FCC_LOCK_STALE_SECS

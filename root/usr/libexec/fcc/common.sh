@@ -412,7 +412,14 @@ fcc_runtime_env_apply() {
 	done
 	# PATH extends rather than replaces, and the runtime's directories go first;
 	# see fcc_runtime_env_exports above for why that is the whole list.
-	PATH="$(fcc_runtime_bin_path "$_rea_root"):$PATH"
+	#
+	# The default is here because this runs in an environment this package does
+	# not own. A job is started from a CGI, and while uhttpd does set PATH
+	# today — /sbin:/usr/sbin:/bin:/usr/bin, measured on the test router — it
+	# does not set HOME, and a `set -u` script that reads a variable the CGI
+	# happens not to pass dies on the spot (§104.30). This is the one variable
+	# in this function that comes from outside; the ten above are derived.
+	PATH="$(fcc_runtime_bin_path "$_rea_root"):${PATH:-/sbin:/usr/sbin:/bin:/usr/bin}"
 	export PATH
 }
 
@@ -991,10 +998,16 @@ fcc_valid_session() {
 }
 
 # ---------------------------------------------------------------------------
-# Locks (update / install). Stale locks older than 1h are reclaimed.
+# Locks (update / install). A lock whose job is gone is reclaimed.
 # ---------------------------------------------------------------------------
 # How long a lock directory may sit there before it is treated as left over by
 # a job that died rather than held by one that is running.
+#
+# This is the fallback, not the rule. The rule is the pid the lock carries: a
+# job that is not running is not running, however recently its lock was made,
+# and fcc_lock_stale() asks that first. The window below is what is left for a
+# lock with no pid in it and for a pid that has since been handed to an
+# unrelated process.
 #
 # The controller asks the same question, both before it starts a job and again on
 # every poll while one runs (luci.fcc.util.FCC_LOCK_STALE_SECS, job_running), so
@@ -1020,8 +1033,43 @@ fcc_lock_age() {
 	printf '%s' "$(( $(date +%s) - _lag_stamp ))"
 }
 
+fcc_lock_pid() {
+	# fcc_lock_pid <lockpath> -> the pid the lock names, or nothing at all
+	#
+	# fcc_lock_acquire() writes the acquiring shell's own pid into the lock, so
+	# what this reads is the job itself and not a wrapper around it. Nothing at
+	# all is an answer: it is what a lock caught in the moment between the mkdir
+	# and the write looks like, and what a lock left by an older version of this
+	# package looks like.
+	_lp_pid="$(cat "$1/pid" 2>/dev/null)" || return 0
+	case "$_lp_pid" in ''|*[!0-9]*) return 0 ;; esac
+	printf '%s' "$_lp_pid"
+}
+
 fcc_lock_stale() {
-	# fcc_lock_stale <lockpath> -> 0 when it is older than the window
+	# fcc_lock_stale <lockpath> -> 0 when the job that made it is gone
+	#
+	# The pid decides it when the lock names one. Age alone is not good enough
+	# to answer this question: a job that dies in its third second leaves a lock
+	# that is three seconds old, and a rule that only counted seconds called
+	# that job running until the window ran out. On 2026-10-16 an install died
+	# at once and the page showed its progress bar climbing for the next 25
+	# minutes, because the lock it left behind was not yet an hour old
+	# (§104.30). Reclaiming on the pid also means the retry works immediately
+	# rather than an hour later.
+	#
+	# The window still applies, to the two cases the pid cannot settle: a lock
+	# with no pid in it, and a pid that has since been handed to some unrelated
+	# process. It is an outer bound on how long a lock may be wrong in that
+	# direction, not the rule.
+	#
+	# /proc is the whole of the liveness test — BusyBox has no `kill -0`, and
+	# the rest of this package reads liveness out of /proc the same way
+	# (fcc_server_pid).
+	_las_pid="$(fcc_lock_pid "$1")"
+	if [ -n "$_las_pid" ] && [ ! -d "/proc/$_las_pid" ]; then
+		return 0
+	fi
 	_las_age="$(fcc_lock_age "$1")" || return 1
 	[ "$_las_age" -gt "$FCC_LOCK_STALE_SECS" ]
 }
@@ -1031,8 +1079,17 @@ fcc_lock_acquire() {
 	_la_lock="$(fcc_lock_dir)/fcc-$1.lock"
 	if [ -d "$_la_lock" ]; then
 		# Reclaim a stale lock: the job that made it is gone, and without this
-		# every later install would be refused until the next reboot.
-		fcc_lock_stale "$_la_lock" && rmdir "$_la_lock" 2>/dev/null
+		# every later install would be refused until someone removed the
+		# directory by hand.
+		#
+		# `rm -rf`, not `rmdir`. A lock is not an empty directory — this
+		# function puts a pid file in it two lines below — and rmdir refuses a
+		# directory with anything in it. So the reclaim removed nothing, the
+		# mkdir under it failed, and the refusal that followed was permanent
+		# rather than the hour it was meant to be. On 2026-10-16 an install
+		# died three seconds in and left exactly such a lock; a retry would
+		# have been refused for good (§104.30).
+		fcc_lock_stale "$_la_lock" && rm -rf "$_la_lock" 2>/dev/null
 	fi
 	if mkdir "$_la_lock" 2>/dev/null; then
 		printf '%s' "$$" > "$_la_lock/pid" 2>/dev/null

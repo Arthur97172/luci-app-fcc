@@ -1004,14 +1004,136 @@ test_starttime_parsing_survives_a_hostile_comm() {
 # Locks
 # ---------------------------------------------------------------------------
 
+# Take a lock from a process that stays alive, the way a job does, and leave it
+# running until the caller kills it. The holder's pid is left in $_hl_pid.
+#
+# Not `sh_common 'fcc_lock_acquire ...'`. That runs the acquire in a shell which
+# exits the moment it has printed the path, and the lock it leaves names a pid
+# that is already gone. A lock like that is a *dead* job's lock, not a held one —
+# the two are the whole subject of the test below, and only one of them can be
+# made by a shell that does not stay.
+#
+# `exec sleep` rather than a trailing `sleep`: the pid in the lock has to be the
+# process that is still running, so that killing the holder really does end it
+# and leave no stray child behind.
+#
+# The pid is returned in a variable rather than on stdout, and the holder's own
+# output goes to /dev/null, because the caller is a command substitution waiting
+# for stdout to close. A holder that inherited that pipe would keep it open for
+# as long as it ran, so `_hl_pid="$(hold_lock test)"` would not return until the
+# holder had finished — and the lock it was holding would already be a dead
+# job's lock by the time the test looked at it.
+hold_lock() { # hold_lock <lockname>
+	FCC_LIBDIR="$LIBEXEC" \
+	FCC_AGENTS_CONF="$AGENTS_CONF" \
+	FCC_VERSION_FILE="$ROOT/VERSION" \
+	FCC_DEFAULT_BASE="$SANDBOX/opt" \
+	sh -c '. "$1/common.sh"; fcc_lock_acquire "$2" >/dev/null 2>&1 || exit 1
+		exec sleep 120' _ "$LIBEXEC" "$1" >/dev/null 2>&1 &
+	_hl_pid="$!"
+	# The lock is made by the shell above, a moment from now. Waiting for it is
+	# the difference between a test and a race.
+	_hl_dir="$(sh_common 'fcc_lock_dir')"
+	_hl_n=0
+	while [ ! -d "$_hl_dir/fcc-$1.lock" ] && [ "$_hl_n" -lt 100 ]; do
+		sleep 0.05
+		_hl_n=$((_hl_n + 1))
+	done
+}
+
 test_lock_is_exclusive() {
 	setup_sandbox
 	_tr_lock="$(sh_common 'fcc_lock_acquire test')"
 	assert_ne "" "$_tr_lock" "a lock can be taken"
-	assert_no "a second acquire fails while held" sh_common 'fcc_lock_acquire test >/dev/null'
 	sh_common "fcc_lock_release '$_tr_lock'" >/dev/null
-	assert_ok "the lock can be retaken once released" sh_common 'fcc_lock_acquire test >/dev/null'
+
+	# Held by a process that is still running, which is what a job is.
+	hold_lock test
+	_tr_holder="$_hl_pid"
+	assert_dir "$(sh_common 'fcc_lock_dir')/fcc-test.lock"
+	assert_ok "a lock held by a running job reads as held" sh_common 'fcc_lock_held test'
+	assert_no "a second acquire fails while held" sh_common 'fcc_lock_acquire test >/dev/null'
+	kill "$_tr_holder" 2>/dev/null
+	wait "$_tr_holder" 2>/dev/null
+
+	# The holder is gone and left its lock behind — no job releases a lock it
+	# was killed out of. The next acquire has to reclaim it, which is the same
+	# path a retry after a crashed install takes.
+	assert_ok "the lock of a killed job can be retaken" sh_common 'fcc_lock_acquire test >/dev/null'
 	sh_common "fcc_lock_release \"\$(fcc_lock_dir)/fcc-test.lock\"" >/dev/null
+}
+
+# What "stale" means, and how a dead job's lock gets out of the way.
+#
+# The rule used to be age alone, and that is the wrong shape for the question.
+# A job that dies in its third second leaves a lock three seconds old; a rule
+# that only counted seconds calls that job running until the window runs out.
+# On 2026-10-16 an install died at once and the page showed its progress bar
+# climbing for the next 25 minutes over work that had stopped, because the lock
+# it left behind was not yet an hour old (§104.30).
+#
+# The lock already carries the answer: fcc_lock_acquire() writes the acquiring
+# shell's own pid into it. A job that is not running is not running, however
+# recently its lock was made.
+#
+# Every lock here is made the way the backend makes one — a directory *with a
+# pid file in it*. The exclusivity test above makes an empty directory, which
+# fcc_lock_acquire() never produces, and that is exactly how the reclaim stayed
+# broken without a test noticing: it removed the empty shape and refused the
+# real one.
+test_lock_staleness_follows_the_job_not_the_clock() {
+	setup_sandbox
+	_tr_locks="$(sh_common 'fcc_lock_dir')"
+
+	# A lock naming a process that is running: this shell, right now.
+	_tr_live="$_tr_locks/fcc-livetest.lock"
+	mkdir -p "$_tr_live"
+	printf '%s' "$$" > "$_tr_live/pid"
+	assert_no "a lock naming a live process is not stale" \
+		sh_common "fcc_lock_stale '$_tr_live'"
+	assert_ok "and it reads as held" sh_common 'fcc_lock_held livetest'
+	assert_no "so the next job may not take it" \
+		sh_common 'fcc_lock_acquire livetest >/dev/null'
+
+	# The same lock, seconds old, naming a process that is not there. A pid
+	# this high cannot be running: the kernel's default pid_max is 32768 on
+	# this image and 4194304 at the very most.
+	_tr_dead="$_tr_locks/fcc-deadtest.lock"
+	mkdir -p "$_tr_dead"
+	printf '%s' 4194303 > "$_tr_dead/pid"
+	assert_no "that pid is not running, so the lock is not live" \
+		test -d /proc/4194303
+	assert_ok "a lock naming a dead process is stale, however fresh it is" \
+		sh_common "fcc_lock_stale '$_tr_dead'"
+	assert_no "and it does not read as held" sh_common 'fcc_lock_held deadtest'
+
+	# The reclaim has to be able to remove it. `rmdir` cannot: the lock has a
+	# pid file in it, so the reclaim removed nothing, the mkdir under it failed,
+	# and the refusal that followed was permanent rather than the hour it was
+	# meant to be. A retry after a failed install would have been refused for
+	# good.
+	#
+	# The proof is that the acquire succeeded — it could not have, had the old
+	# lock still been in the way — and that the lock no longer names the job
+	# that died.
+	assert_ok "and the next job may take it" \
+		sh_common 'fcc_lock_acquire deadtest >/dev/null'
+	assert_not_contains "$(cat "$_tr_dead/pid" 2>/dev/null)" 4194303 \
+		"and the lock no longer names the dead job"
+
+	# A lock with no pid in it — the moment between mkdir and the write — is
+	# decided by age, which is the safe direction for a lock that fresh.
+	_tr_bare="$_tr_locks/fcc-baretest.lock"
+	mkdir -p "$_tr_bare"
+	assert_no "a lock with no pid yet is not stale while it is fresh" \
+		sh_common "fcc_lock_stale '$_tr_bare'"
+	touch -t 202001010000 "$_tr_bare"
+	assert_ok "and it is stale once it is older than the window" \
+		sh_common "fcc_lock_stale '$_tr_bare'"
+
+	sh_common "fcc_lock_release '$_tr_live'" >/dev/null
+	sh_common "fcc_lock_release '$_tr_dead'" >/dev/null
+	sh_common "fcc_lock_release '$_tr_bare'" >/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -1639,11 +1761,18 @@ install_lib() {
 }
 
 # Run a snippet with install.sh's functions defined and the sandbox in place.
-sh_install() {
+sh_install() { # sh_install <code> [install-base]
+	# The optional second argument moves the install root. ROOT is decided when
+	# install.sh is sourced — `ROOT="$(fcc_root)"`, before anything the caller
+	# evals runs — so a test that needs a root of its own has to choose it here
+	# rather than inside the code it passes. Two tests that both write a Node
+	# need two roots: provision_node() is idempotent, and a second test sharing
+	# the first one's root would measure that early return instead of its own
+	# subject.
 	FCC_LIBDIR="$LIBEXEC" \
 	FCC_AGENTS_CONF="$AGENTS_CONF" \
 	FCC_VERSION_FILE="$ROOT/VERSION" \
-	FCC_DEFAULT_BASE="$SANDBOX/opt" \
+	FCC_DEFAULT_BASE="${2:-$SANDBOX/opt}" \
 	UCI_SHIM_DIR="$SANDBOX/uci" \
 	FCC_HEALTH_TIMEOUT=3 \
 	PATH="$SANDBOX/bin:$PATH" \
@@ -4516,20 +4645,21 @@ make_node_release_fixture() {
 #
 # The build comes from unofficial-builds.nodejs.org, which is where the Node
 # project itself keeps the musl builds it does not publish, and it lands in
-# ${XDG_DATA_HOME:-$HOME/.local/share}/pi-node — the directory upstream's own
-# PATH entry already reserves, so nothing downstream has to be told where it
-# went.
+# <root>/data/.local/share/pi-node — the directory upstream's own PATH entry
+# already reserves, so nothing downstream has to be told where it went. That
+# path is derived from the install root and not from the environment, which the
+# test below this one is about.
 test_provision_node_fetches_a_musl_build() {
 	setup_sandbox
 	_dpn_name="$(make_node_release_fixture)" || skip "no musl Node architecture on this host"
-	_dpn_base="$SANDBOX/xdg/pi-node"
+	_dpn_base="$SANDBOX/opt/fcc/data/.local/share/pi-node"
 	_dpn_logs="$SANDBOX/diaglogs"
 	mkdir -p "$_dpn_logs"
 	: > "$_dpn_logs/fcc-runtime.log"
 
 	sh_install "fcc_dir_logs() { printf '%s' '$_dpn_logs'; }
 		PATH='$SANDBOX/nodebin':\$PATH
-		XDG_DATA_HOME='$SANDBOX/xdg' provision_node pi" >/dev/null 2>&1
+		provision_node pi" >/dev/null 2>&1
 
 	assert_exec "$_dpn_base/current/bin/node" \
 		"the node lands in the directory upstream's PATH entry already reserves"
@@ -4540,6 +4670,14 @@ test_provision_node_fetches_a_musl_build() {
 		"and current points at the release directory rather than holding a copy"
 	assert_contains "$(cat "$_dpn_logs/fcc-runtime.log")" 'installed v22.23.3' \
 		"and the log says which release was installed"
+
+	# The directory it chose is the one the panes will look in. This is the
+	# invariant the whole arrangement rests on: provision_node() decides where
+	# the Node goes, fcc_runtime_bin_dirs() decides where a pane looks for it,
+	# and a Node fetched to any other directory is a Node no agent can run.
+	_dpn_bins="$(sh_install 'fcc_runtime_bin_dirs "$ROOT"')"
+	assert_contains "$_dpn_bins" "$_dpn_base/current/bin" \
+		"and that is a directory the panes put on PATH"
 
 	# A second call does not fetch again: the Node is there and already
 	# satisfies the floor. This is not an optimisation — the check is made
@@ -4556,7 +4694,7 @@ test_provision_node_fetches_a_musl_build() {
 	: > "$_dpn_logs/fcc-runtime.log"
 	sh_install "fcc_dir_logs() { printf '%s' '$_dpn_logs'; }
 		PATH='$SANDBOX/nodebin':\$PATH
-		XDG_DATA_HOME='$SANDBOX/xdg' provision_node pi" >/dev/null 2>&1
+		provision_node pi" >/dev/null 2>&1
 	assert_eq "" "$(cat "$_dpn_logs/fcc-runtime.log")" \
 		"a node that is already installed is not fetched again"
 	assert_exec "$_dpn_base/current/bin/node" "and it is left where it was"
@@ -4567,15 +4705,17 @@ test_provision_node_fetches_a_musl_build() {
 # the archive is checked before anything is unpacked — so an archive that does
 # not match its own release's SHASUMS256.txt installs nothing at all.
 #
-# This one installs into an XDG directory of its own. The test above leaves a
-# working Node in $SANDBOX/xdg, and provision_node() is idempotent by design —
-# so sharing that directory would mean this test measured the early return
-# instead of the check, and passed or failed according to which of the two ran
-# first rather than according to what it is about.
+# This one installs under a root of its own. The test above leaves a working
+# Node in its root, and provision_node() is idempotent by design — so sharing a
+# root would mean this test measured the early return instead of the check, and
+# passed or failed according to which of the two ran first rather than according
+# to what it is about. The root is the knob, not XDG_DATA_HOME: the destination
+# is derived from the root, so an XDG override would change nothing and the test
+# would look like it was separating the two when it was not.
 test_provision_node_refuses_an_archive_that_does_not_match() {
 	setup_sandbox
 	_dpn_name="$(make_node_release_fixture)" || skip "no musl Node architecture on this host"
-	_dpn_base="$SANDBOX/xdgcheck/pi-node"
+	_dpn_base="$SANDBOX/optcheck/fcc/data/.local/share/pi-node"
 	_dpn_logs="$SANDBOX/diaglogs"
 	mkdir -p "$_dpn_logs"
 
@@ -4589,12 +4729,108 @@ test_provision_node_refuses_an_archive_that_does_not_match() {
 	: > "$_dpn_logs/fcc-runtime.log"
 	sh_install "fcc_dir_logs() { printf '%s' '$_dpn_logs'; }
 		PATH='$SANDBOX/nodebin':\$PATH
-		XDG_DATA_HOME='$SANDBOX/xdgcheck' provision_node pi" >/dev/null 2>&1
+		provision_node pi" "$SANDBOX/optcheck" >/dev/null 2>&1
 
 	assert_no "an archive that fails its checksum is not installed" \
 		test -e "$_dpn_base/current"
 	assert_contains "$(cat "$_dpn_logs/fcc-runtime.log")" 'failed its checksum' \
 		"and the log says why rather than leaving a missing node unexplained"
+}
+
+# The Node has to be fetched from an environment this package does not own.
+#
+# A job is started from a CGI — luci.fcc.util.spawn_detached() forks it out of
+# the uhttpd process — and that environment is not a login shell's. Measured on
+# the test router, it is this and nothing else:
+#
+#   PATH=/sbin:/usr/sbin:/bin:/usr/bin  PWD=/www  SHLVL=1
+#   plus the CGI and HTTP_* variables. No HOME. No XDG_DATA_HOME.
+#
+# So the obvious way to spell the destination,
+#
+#   _pn_base="${XDG_DATA_HOME:-$HOME/.local/share}/pi-node"
+#
+# is fatal here. Under `set -u` the default word is expanded to decide whether
+# to use it, so an unset $HOME inside it aborts the whole script even though the
+# fallback is the branch that would have been taken. On 2026-10-16 that ended a
+# real install three seconds in, with
+#
+#   /usr/libexec/fcc/install.sh: line 675: HOME: parameter not set
+#
+# and the log stops there (§104.30). The install job had already downloaded the
+# upstream installer and backed the runtime up, so the page showed a progress bar
+# most of the way along over work that had stopped.
+#
+# The suite did not catch it because the suite has a HOME. This test does not:
+# both variables are unset for the call, which is the router's environment
+# rather than a likeness of it.
+test_provision_node_needs_no_environment() {
+	setup_sandbox
+	make_node_release_fixture >/dev/null || skip "no musl Node architecture on this host"
+	_dpe_base="$SANDBOX/optnoenv/fcc/data/.local/share/pi-node"
+	_dpe_logs="$SANDBOX/diaglogs"
+	mkdir -p "$_dpe_logs"
+	: > "$_dpe_logs/fcc-runtime.log"
+
+	# `unset` in a subshell rather than `env -u`: sh_install is a shell
+	# function, and env can only run a command. The subshell is what keeps the
+	# unsetting from reaching the tests that run after this one.
+	(
+		unset HOME XDG_DATA_HOME
+		sh_install "fcc_dir_logs() { printf '%s' '$_dpe_logs'; }
+			PATH='$SANDBOX/nodebin':\$PATH
+			provision_node pi" "$SANDBOX/optnoenv"
+	) > "$SANDBOX/noenv.out" 2>&1
+
+	assert_not_contains "$(cat "$SANDBOX/noenv.out")" 'parameter not set' \
+		"provision_node runs with neither HOME nor XDG_DATA_HOME set"
+	assert_exec "$_dpe_base/current/bin/node" \
+		"and the node still lands where the panes look for it"
+	assert_eq "v22.23.3" "$("$_dpe_base/current/bin/node" 2>/dev/null)" \
+		"and it is the release the index named"
+	assert_contains "$(cat "$_dpe_logs/fcc-runtime.log")" 'installed v22.23.3' \
+		"and it was fetched rather than skipped"
+
+	# The same call with the environment the suite normally has, to show the
+	# test above is measuring the absence and not something else. A Node already
+	# in place is not fetched again, so the log stays empty — which is the
+	# answer the first half would have got too if the destination had been read
+	# from the environment rather than from the root.
+	: > "$_dpe_logs/fcc-runtime.log"
+	sh_install "fcc_dir_logs() { printf '%s' '$_dpe_logs'; }
+		PATH='$SANDBOX/nodebin':\$PATH
+		provision_node pi" "$SANDBOX/optnoenv" >/dev/null 2>&1
+	assert_eq "" "$(cat "$_dpe_logs/fcc-runtime.log")" \
+		"and a second call finds it without asking the environment"
+}
+
+# The rest of the environment a CGI does not pass.
+#
+# install.sh is `set -u`, so any variable it reads that the job's environment
+# does not carry kills the script at that line. HOME was one; this is the sweep
+# for the others. apply_runtime_env() extends PATH rather than replacing it and
+# the CGI does set PATH today, so this is not a live failure — but it is the one
+# variable in that function that comes from outside, and the cost of the default
+# is one token.
+test_apply_runtime_env_survives_an_empty_environment() {
+	setup_sandbox
+	# PATH is unset *inside* the shell rather than before it. The harness needs a
+	# PATH of its own to find `sh` in the first place, and what is under test is
+	# the state apply_runtime_env() finds when it runs — which is reachable from
+	# here. HOME goes with it: this function is what *sets* HOME for everything
+	# downstream, so it must not be reading one.
+	sh_install 'unset PATH HOME XDG_DATA_HOME
+		apply_runtime_env "$ROOT"
+		printf "%s|%s" "$PATH" "$HOME"' > "$SANDBOX/envpath.out" 2>&1
+
+	assert_not_contains "$(cat "$SANDBOX/envpath.out")" 'parameter not set' \
+		"apply_runtime_env runs with PATH, HOME and XDG_DATA_HOME all unset"
+	assert_contains "$(cat "$SANDBOX/envpath.out")" '/sbin' \
+		"and PATH is given a working default rather than emptied"
+	assert_contains "$(cat "$SANDBOX/envpath.out")" '/fcc/bin' \
+		"and the runtime's own directories still go in front of it"
+	assert_contains "$(cat "$SANDBOX/envpath.out")" "$SANDBOX/opt/fcc/data" \
+		"and HOME is derived from the root rather than inherited"
 }
 
 tests_main

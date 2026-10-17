@@ -236,11 +236,21 @@ table.insert(package.loaders, 1, function(name)
 	return assert(loadstring(src, "@" .. short))
 end)
 
+local function quote(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+
+-- `test -e`, not os.rename.
+--
+-- The paths asked about here now include /proc/<pid> — that is how both sides
+-- ask whether a job is still running — and procfs refuses a rename of its own
+-- directories. io.open does not help either: it fails on a directory, and a
+-- lock *is* a directory. access(2), which is what nixio's fs.access() really
+-- is, answers for both, and `test -e` is the closest thing this stub can do to
+-- it. A stub that answered "no" for every /proc path would make every lock
+-- with a pid in it look dead, and the agreement it is here to demonstrate
+-- would be an agreement about nothing.
 local function exists(p)
 	if type(p) ~= "string" or p == "" then return false end
-	local f = io.open(p, "r")
-	if f then f:close() return true end
-	return os.rename(p, p) ~= nil
+	return os.execute("test -e " .. quote(p) .. " >/dev/null 2>&1") == 0
 end
 
 local function writable(p)
@@ -250,8 +260,6 @@ local function writable(p)
 	f:close(); os.remove(probe)
 	return true
 end
-
-local function quote(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 
 local function mtime(p)
 	local fh = io.popen("date -r " .. quote(p) .. " +%s 2>/dev/null")
@@ -302,21 +310,58 @@ test_lock_rules_match_the_shell() {
 	assert_contains "$_ts_out" "running=false" \
 		"an absent lock is not running"
 
-	# A lock taken now, made the way the backend makes one.
+	# A lock taken now, made the way the backend makes one: the directory, and
+	# the acquiring shell's pid inside it.
+	#
+	# The pid file is not decoration. It is the whole of how both sides tell a
+	# job that is running from one that is not, and a test that made an empty
+	# directory would be testing a shape fcc_lock_acquire() never produces —
+	# which is how the reclaim below stayed broken while this test passed.
 	mkdir -p "$_ts_lock"
+	printf '%s' "$$" > "$_ts_lock/pid"
 	_ts_out="$(lock_probe luaprobe)"
 	assert_contains "$_ts_out" "running=true" "a fresh lock reads as held"
 	assert_ok "and the shell agrees it is held" sh_lock 'fcc_lock_held luaprobe'
+	assert_no "and neither side will start a second job" \
+		sh_lock 'fcc_lock_acquire luaprobe >/dev/null'
 
-	# The same lock, old enough that the acquirer would reclaim it. This is what
-	# a router that rebooted mid-install leaves behind, and the two sides have to
-	# agree about it in both directions: the page must stop showing the job as
-	# running, and the backend must let the next job start.
+	# The same lock, seconds old, naming a process that is not there. This is
+	# what a job that dies in its first second leaves behind — and it is the
+	# case an age-only rule got wrong. On 2026-10-16 an install died at once
+	# and the page went on showing its progress bar climb for 25 minutes over
+	# work that had stopped, because the lock was not yet an hour old (§104.30).
+	#
+	# A pid this high cannot be running: the kernel's default pid_max is 32768
+	# on this image and 4194304 at the very most.
+	printf '%s' 4194303 > "$_ts_lock/pid"
+	assert_no "that pid is not running" test -d /proc/4194303
+	_ts_out="$(lock_probe luaprobe)"
+	assert_contains "$_ts_out" "running=false" \
+		"a fresh lock naming a dead process is not running"
+	assert_no "and the shell does not report it held" sh_lock 'fcc_lock_held luaprobe'
+
+	# And the backend has to be able to clear it away, which is the half that
+	# makes the page's "not running" actionable rather than merely accurate.
+	# The reclaim is an `rm -rf`: the lock has a pid file in it, so an `rmdir`
+	# removed nothing and the refusal that followed was permanent rather than
+	# the hour it was meant to be.
+	assert_ok "and the next job may take it at once, not in an hour" \
+		sh_lock 'fcc_lock_acquire luaprobe >/dev/null'
+	sh_lock 'fcc_lock_release "$(fcc_lock_dir)/fcc-luaprobe.lock"' >/dev/null
+
+	# The same lock, old enough that the acquirer would reclaim it whatever the
+	# pid said. This is what a router that rebooted mid-install leaves behind,
+	# and the two sides have to agree about it in both directions: the page must
+	# stop showing the job as running, and the backend must let the next job
+	# start. There is no pid here, so this is the age rule on its own — the
+	# fallback, exercised as the fallback.
+	mkdir -p "$_ts_lock"
 	touch -t 202001010000 "$_ts_lock"
 	_ts_out="$(lock_probe luaprobe)"
 	assert_contains "$_ts_out" "running=false" "a stale lock is not running"
 	assert_no "and the shell does not report it held" sh_lock 'fcc_lock_held luaprobe'
 	assert_ok "and the next job may take it" sh_lock 'fcc_lock_acquire luaprobe'
+	sh_lock 'fcc_lock_release "$(fcc_lock_dir)/fcc-luaprobe.lock"' >/dev/null
 
 	rm -rf "$_ts_lock"
 }
