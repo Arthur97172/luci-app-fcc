@@ -130,17 +130,19 @@
 				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall and remove all data%></button>
 			</div>
 
-			<p class="fcc-muted">
-				<%:Install downloads the FCC runtime and every coding agent in the registry, so one install makes them all usable. This can take several minutes on a router; progress is shown below.%>
-			</p>
+			<div class="fcc-help">
+				<p class="fcc-muted">
+					<%:Install downloads the FCC runtime and every coding agent in the registry, so one install makes them all usable. This can take several minutes on a router; progress is shown below.%>
+				</p>
 
-			<p class="fcc-muted">
-				<%:Reinstall removes the runtime and installs it again with every agent, keeping your configuration and data. Use it when an install is incomplete or an agent is broken: the upstream installer does not reinstall an agent that is already present, so nothing short of this will.%>
-			</p>
+				<p class="fcc-muted">
+					<%:Reinstall removes the runtime and installs it again with every agent, keeping your configuration and data. Use it when an install is incomplete or an agent is broken: the upstream installer does not reinstall an agent that is already present, so nothing short of this will.%>
+				</p>
 
-			<p class="fcc-muted">
-				<%:Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo.%>
-			</p>
+				<p class="fcc-muted">
+					<%:Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo.%>
+				</p>
+			</div>
 
 			<div id="fcc-job" style="display:none">
 				<div class="fcc-progress"><span id="fcc-job-bar" style="width:0"></span></div>

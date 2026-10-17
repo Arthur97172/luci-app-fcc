@@ -517,33 +517,47 @@ installer_line_is_pi_menu() {
 # Every other question is line-based already — upstream's prompt_yes_no() is
 # `IFS= read -r answer <&3` and the upstream installer never calls stty at all
 # — which is why the menu was the only one that hung (§104.31).
-#
-# So the answer form follows the terminal the installer will actually be given
-# rather than the one Pi would prefer: a bare key where raw mode is possible,
-# and a whole line where it is not.
 fcc_installer_can_read_a_key() {
 	command -v stty >/dev/null 2>&1
 }
 
-installer_answer_is_keypress() {
-	# installer_answer_is_keypress <line> -> 0 when the answer is a bare key
-	#
-	# Every other question here is read a line at a time, so its answer is sent
-	# with Enter. Pi's action menu is not — where it can put the terminal into
-	# -icanon it reads exactly one byte (dd bs=1 count=1), so an Enter sent
-	# after the key is not consumed by the menu at all. It stays in the
-	# terminal's input queue and is read by the *next* prompt — which is
-	# "Start pi now? [Y/n]", whose default is yes. Pi's own interface would then
-	# start in the pane, never exit, and the install would sit there until the
-	# deadline and roll back. Sending the key alone is what keeps that Enter
-	# from existing.
-	#
-	# That reasoning holds exactly as far as raw mode does. Where it does not —
-	# no stty; see fcc_installer_can_read_a_key() — the menu is reading a line,
-	# the newline is the delimiter it is waiting for and is consumed as one, and
-	# withholding the Enter is what hangs the install instead of what saves it.
-	installer_line_is_pi_menu "$1" || return 1
-	fcc_installer_can_read_a_key
+# What ends an answer, when the answer is a bare key.
+#
+# Every other question here is read a line at a time, and Enter is what ends it.
+# Pi's action menu is not: where it can reach raw mode it reads exactly one byte
+# (dd bs=1 count=1), and an Enter sent after the key is not consumed by the menu
+# at all. It stays in the terminal's input queue and is read by the *next*
+# prompt — "Start pi now? [Y/n]", whose default is yes. Pi's own interface then
+# starts in the pane, never exits, and the install sits there until the deadline
+# and rolls back. Sending the key alone is what keeps that Enter from existing.
+#
+# Where raw mode is not reached, though, the key alone is never read, and the
+# answer has to be terminated. Which delimiter terminates it is the whole
+# question, and the obvious one is the wrong one:
+#
+#   * A newline is kept in the line it delivers. Canonical mode hands the reader
+#     the line *including* its delimiter, so `dd bs=1 count=1` takes the key and
+#     leaves the newline sitting in the queue — and the next prompt to read is
+#     "Start pi now?", which gets the empty answer that leftover makes. Empty is
+#     not "no", so Pi's interface starts and the install hangs exactly as it did
+#     before, only one prompt later (§104.32).
+#
+#   * Ctrl-D is discarded. It is the terminal's EOF character, and the line
+#     discipline delivers the pending line *without* it and consumes it, so the
+#     menu gets its key and the input queue is left empty. The loop's own rule
+#     for "Start pi now?" then gets its turn and answers "n".
+#
+# Measured against a pty in canonical mode, which is what the router's pane is
+# (no stty there, so Pi never leaves canonical mode):
+#
+#     bare y        dd exits 124, reads nothing    -> the menu waits forever
+#     y + Enter     dd reads "y", next read is ""  -> Pi's interface starts
+#     y + Ctrl-D    dd reads "y", next read blocks -> the loop answers it
+installer_answer_terminator() {
+	# installer_answer_terminator <line> -> the key to press after the answer,
+	# or nothing when the answer is complete on its own.
+	installer_line_is_pi_menu "$1" || { printf 'Enter'; return 0; }
+	fcc_installer_can_read_a_key || printf 'C-d'
 }
 
 # Answer one prompt. Prints the keys to send, or nothing when the line is not a
@@ -563,8 +577,9 @@ installer_answer_for() {
 	# recognising it is a question about several lines — see
 	# installer_line_is_pi_menu() — and a case pattern cannot ask one.
 	if installer_line_is_pi_menu "$_iaf_line"; then
-		# y installs, u uninstalls, n does nothing. The key is sent on its own;
-		# see installer_answer_is_keypress().
+		# y installs, u uninstalls, n does nothing. What is sent after the key
+		# is the terminal's business, not the answer's; see
+		# installer_answer_terminator().
 		#
 		# "u" is never sent, whichever row was read. Uninstalling an agent is
 		# not a thing an install was asked to do, and the row only exists on the
@@ -879,13 +894,13 @@ run_installer() {
 	# guess at a menu that is not in the transcript.
 	#
 	# The probe sits after apply_runtime_env() rather than before it on purpose:
-	# installer_answer_is_keypress() is called from the answer loop further down,
+	# installer_answer_terminator() is called from the answer loop further down,
 	# which runs with the PATH that call has just set, so this asks the question
 	# of the same PATH the decision will be made with.
 	if fcc_installer_can_read_a_key; then
-		fcc_log "$LOG" "installer: stty is present, so Pi's action menu is answered with a key"
+		fcc_log "$LOG" "installer: stty is present, so Pi's action menu is answered by the key alone"
 	else
-		fcc_log "$LOG" "installer: no stty on this box, so Pi's action menu is answered as a line rather than a key"
+		fcc_log "$LOG" "installer: no stty on this box, so Pi's action menu is answered by a key and Ctrl-D"
 	fi
 
 	# The terminal must start with this environment, and a tmux session inherits
@@ -965,12 +980,13 @@ run_installer() {
 			esac
 			_ri_answered="$_ri_answered|$_ri_line|"
 			fcc_log "$LOG" "installer prompt answered: $_ri_line -> $_ri_ans"
-			# Enter or not is part of the answer, not a detail of sending it:
-			# see installer_answer_is_keypress().
-			if installer_answer_is_keypress "$_ri_line"; then
-				tmux send-keys -t "$(installer_session)" "$_ri_ans" 2>/dev/null
+			# What ends the answer is part of the answer, not a detail of
+			# sending it: see installer_answer_terminator().
+			_ri_term="$(installer_answer_terminator "$_ri_line")"
+			if [ -n "$_ri_term" ]; then
+				tmux send-keys -t "$(installer_session)" "$_ri_ans" "$_ri_term" 2>/dev/null
 			else
-				tmux send-keys -t "$(installer_session)" "$_ri_ans" Enter 2>/dev/null
+				tmux send-keys -t "$(installer_session)" "$_ri_ans" 2>/dev/null
 			fi
 		else
 			# Nothing in the table matches this line. Most of what the installer

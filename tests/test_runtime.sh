@@ -3171,6 +3171,113 @@ test_the_answer_loop_drives_a_real_terminal() {
 	assert_contains "$_ts_out" "rc=0" "and the installer's own status comes back"
 }
 
+# And once more, on the terminal the router actually has: no stty.
+#
+# Pi's action menu is the only question in the install that is read a byte at a
+# time, and it can only be read that way because read_tty_key() puts the
+# terminal into raw mode first:
+#
+#     stty -icanon -echo min 1 time 0 < /dev/tty 2>/dev/null || true
+#     key=$(dd bs=1 count=1 2>/dev/null < /dev/tty)
+#
+# Both the call and its failure are discarded, so a box with no stty does not
+# fail there — it changes shape. The test router is such a box, its BusyBox
+# having no stty applet at all, and on 2026-10-17 that cost two installs in a
+# row for two different reasons that look identical from the page:
+#
+#   * answering the menu with the key alone (§104.31) — the terminal is
+#     canonical, dd waits for a line delimiter rather than for a byte, and the
+#     key is never read. The run waits on the menu until the deadline.
+#
+#   * answering it with the key and Enter (§104.32) — dd reads the key, but
+#     canonical mode keeps the delimiter in the line it delivers, so the newline
+#     stays in the queue, and the next prompt to read is "Start pi now?", whose
+#     default is yes. Pi's full-screen interface starts in the installer's pane
+#     and the run waits on *that* until the deadline.
+#
+# Neither is visible in the transcript as a question, which is why both were
+# read as stalls. So this drives the real answer loop, on a real pty, against an
+# installer doing Pi's two reads one after the other — with stty off PATH, which
+# is the router's condition and the only one in which either failure can happen.
+test_the_pi_menu_is_answered_on_a_terminal_without_stty() {
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "no tmux on this host"
+		return
+	fi
+	setup_sandbox
+	mkdir -p "$SANDBOX/opt"
+
+	# A PATH holding the tools run_installer and the answer loop reach for, and
+	# no stty. `command -v stty` is the whole of what
+	# fcc_installer_can_read_a_key() asks, so leaving it out of PATH is the only
+	# way to say "this box has no stty" to a shell.
+	mkdir -p "$SANDBOX/nostty"
+	for _ms_t in sh tmux dd cat rm mkdir rmdir sed awk grep date sleep tr wc \
+			head tail sort uniq cut touch chmod ln dirname basename env id ps \
+			kill ls pwd find mktemp tee od uname hostname expr printf; do
+		_ms_p="$(command -v "$_ms_t" 2>/dev/null)" || continue
+		ln -sf "$_ms_p" "$SANDBOX/nostty/${_ms_t##*/}"
+	done
+	assert_no "stty really is off that PATH" \
+		env PATH="$SANDBOX/nostty" sh -c 'command -v stty'
+	assert_ok "and the terminal the loop needs is on it" \
+		env PATH="$SANDBOX/nostty" sh -c 'command -v tmux'
+
+	# Pi's menu and prompt_start_pi(), reduced to the two reads that matter.
+	cat > "$SANDBOX/opt/menu-installer.sh" <<-'EOF'
+	#!/bin/sh
+	S="$(dirname "$0")"
+	[ -t 1 ] && ( : </dev/tty ) 2>/dev/null || { printf 'not interactive\n' >&2; exit 3; }
+	exec 3<>/dev/tty
+
+	# read_tty_key(), with the stty that would have made this raw left out —
+	# because on this box there is none, so this read is canonical.
+	printf 'Choose an action:\n\n  y    Install Pi (default)\n  n    Do nothing\n' >&3
+	_mi_key=
+	if ! _mi_key=$(dd bs=1 count=1 2>/dev/null < /dev/tty); then
+		_mi_key=
+	fi
+	printf '%s\n' "$_mi_key" > "$S/menu-key"
+
+	# What Pi prints the moment the menu is answered, which is what takes the
+	# row off the pane before the loop's next poll can answer it a second time.
+	printf 'Will install Pi.\n' >&3
+
+	# prompt_start_pi(), which is a line read on the same terminal. Its default
+	# is yes, and yes starts Pi's full-screen interface in this pane.
+	printf '\nStart pi now? [Y/n] ' >&3
+	_mi_start=yes
+	if IFS= read -r _mi_answer <&3; then
+		case "$_mi_answer" in
+			n|N|no|NO) _mi_start=no ;;
+		esac
+	fi
+	printf '%s\n' "$_mi_start" > "$S/started"
+	EOF
+	chmod +x "$SANDBOX/opt/menu-installer.sh"
+
+	tmux kill-session -t fcc-installer 2>/dev/null
+
+	# The deadline is cut down so that either failure shows up in twenty seconds
+	# rather than sitting on the pane for the half hour the real one allows.
+	_ms_out="$(export FCC_INSTALLER_TIMEOUT=20
+		sh_install "PATH='$SANDBOX/nostty'
+			run_installer \"\$FCC_DEFAULT_BASE/menu-installer.sh\" \"claude pi\" 0
+			echo \"rc=\$?\"")"
+
+	tmux kill-session -t fcc-installer 2>/dev/null
+
+	# Both halves are asserted, because the two failures are opposite: a key the
+	# menu never read and a key that was read but left its delimiter behind.
+	assert_eq "y" "$(cat "$SANDBOX/opt/menu-key" 2>/dev/null)" \
+		"the menu reads the key it is sent"
+	assert_eq "no" "$(cat "$SANDBOX/opt/started" 2>/dev/null)" \
+		"and nothing is left over to start Pi in the installer's pane"
+	assert_contains "$_ms_out" "rc=0" "and the run finishes rather than timing out"
+	assert_not_contains "$_ms_out" "installer timed out" \
+		"with no deadline spent waiting on either one"
+}
+
 # Without a terminal the agent question is never asked, and running anyway would
 # install upstream's nine-agent default set and report success. Section 103: say
 # why, and stop.
@@ -4543,14 +4650,15 @@ test_the_pi_installers_own_questions_are_answered() {
 		sh_install "installer_line_is_pi_menu 'Install Pi for fcc-pi? [Y/n]'"
 
 	# The menu is the one prompt answered with a bare key. Everything else is
-	# read a line at a time, and an Enter sent to this one is not consumed by
-	# it — it is read by "Start pi now?" as that prompt's default, which is
-	# yes. Pi's own interface then starts in the installer's terminal and the
-	# install sits there until the deadline.
-	assert_ok "the menu answer is sent without Enter" \
-		sh_install "installer_answer_is_keypress '$_dpq_menu'"
-	assert_no "and every other prompt is sent with it" \
-		sh_install "installer_answer_is_keypress 'Install Pi for fcc-pi? [Y/n]'"
+	# read a line at a time and ends with Enter, and an Enter sent to this one
+	# is not consumed by it — it is read by "Start pi now?" as that prompt's
+	# default, which is yes. Pi's own interface then starts in the installer's
+	# terminal and the install sits there until the deadline.
+	assert_eq "" "$(sh_install "installer_answer_terminator '$_dpq_menu'")" \
+		"the menu answer is sent with nothing after it, where a key can be read"
+	assert_eq "Enter" \
+		"$(sh_install "installer_answer_terminator 'Install Pi for fcc-pi? [Y/n]'")" \
+		"and every other prompt is ended with Enter"
 
 	# ...but only where a bare key can be read at all, which is what
 	# fcc_installer_can_read_a_key() asks. Pi reaches raw mode with
@@ -4570,14 +4678,21 @@ test_the_pi_installers_own_questions_are_answered() {
 	assert_no "and not on a box without it" \
 		sh_install "PATH='$SANDBOX/nostty'; fcc_installer_can_read_a_key"
 
-	# So the form of the answer follows the terminal rather than Pi's
-	# preference, and the same menu row that is a bare key above is a whole
-	# line here. The newline is the delimiter dd was waiting for and the menu
-	# consumes it as one, so it does not survive into "Start pi now?" — which
-	# is the whole reason the bare key was chosen, and the reason sending the
-	# Enter here is not the regression it would be on a box with stty.
-	assert_no "the menu is answered as a line where there is no stty" \
-		sh_install "PATH='$SANDBOX/nostty'; installer_answer_is_keypress '$_dpq_menu'"
+	# There the answer does need a delimiter, but not the obvious one. A newline
+	# is kept in the line it delivers: canonical mode hands the reader the line
+	# *including* its delimiter, so dd takes the key and leaves the newline in
+	# the queue, and "Start pi now?" reads that leftover as an empty answer —
+	# which is not "no", so Pi's interface starts and the install hangs one
+	# prompt later than it did before (§104.32). Ctrl-D is the delimiter that
+	# does not survive: it is the terminal's EOF character, the line discipline
+	# delivers the pending line without it and consumes it, and the queue is
+	# left empty for the loop's own "Start pi now?" rule to answer with "n".
+	assert_eq "C-d" \
+		"$(sh_install "PATH='$SANDBOX/nostty'; installer_answer_terminator '$_dpq_menu'")" \
+		"the menu is ended with Ctrl-D where there is no stty"
+	assert_eq "Enter" \
+		"$(sh_install "PATH='$SANDBOX/nostty'; installer_answer_terminator 'Install Pi for fcc-pi? [Y/n]'")" \
+		"and the questions read by line are unaffected by the terminal"
 
 	# What is said does not change with how it is sent, so both boxes still
 	# install the Pi that was selected — and a box with no stty still leaves an
@@ -4605,11 +4720,11 @@ test_the_pi_installers_own_questions_are_answered() {
 		"$(sh_install 'installer_answer_for "Pi needs Node.js 22.19.0 or newer and npm. Install them now with standalone Node.js? [Y/n]" "pi" set')" \
 		"Pi's own Node install is declined, because its build cannot run here"
 
-	# And the loop asks. A predicate nobody calls is the same as no predicate,
-	# and this is the one whose absence reintroduces the hang above.
+	# And the loop asks. A decision nobody calls is the same as no decision, and
+	# this is the one whose absence reintroduces the hang above.
 	_dpq_src="$LIBEXEC/install.sh"
-	assert_ok "the answer loop asks whether the answer is a keystroke" \
-		grep -q 'installer_answer_is_keypress "\$_ri_line"' "$_dpq_src"
+	assert_ok "the answer loop asks what ends the answer" \
+		grep -q 'installer_answer_terminator "\$_ri_line"' "$_dpq_src"
 }
 
 # provision_node's three fetches, answered from files instead of the network.

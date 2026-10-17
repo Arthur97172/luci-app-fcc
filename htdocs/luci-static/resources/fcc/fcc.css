@@ -46,6 +46,17 @@
 }
 
 .fcc-muted { color: var(--fcc-text-dim); }
+
+/* The three notes under the runtime toolbar. Each is a <p>, and the theme
+ * gives every <p> a full line of margin above and below — right for prose that
+ * stands on its own, wrong for three notes stacked under one toolbar, where
+ * they read as three separate notices instead of one block of help and push
+ * the progress bar off the screen. The margins are tightened here rather than
+ * on .fcc-muted, which is used in other pages where the theme's spacing is
+ * what is wanted. */
+.fcc-help > p { margin: .45em 0; }
+.fcc-help > p:first-child { margin-top: 0; }
+.fcc-help > p:last-child { margin-bottom: .6em; }
 .fcc-mono  { font-family: monospace; }
 .fcc-right { text-align: right; }
 .fcc-nowrap { white-space: nowrap; }
