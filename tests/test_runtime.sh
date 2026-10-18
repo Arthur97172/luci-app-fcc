@@ -2161,6 +2161,126 @@ test_rollback_treats_a_data_only_backup_as_no_previous_runtime() {
 }
 
 # ---------------------------------------------------------------------------
+# A failed install has to give back the space it took.
+#
+# The agents install into HOME, and HOME here is <root>/data — XDG_DATA_HOME is
+# <root>/data/.local/share — so a failed attempt leaves every byte it downloaded
+# sitting in data/, where the status page reads it as an installed runtime and
+# the storage precheck counts it against the next attempt.
+#
+# Measured on the test router on 2026-10-18: a run that failed at OpenCode left
+# 1228 MB in data/ (.codex 411M, .local 468M, .npm 25M, .opencode 202M, .pi
+# 121M) and free space fell from 1731 MB to 440 MB — below FCC_MIN_FREE_MB, so
+# every retry was refused by the precheck before it started. The page showed
+# "not enough space" for a box whose space had been spent by the attempt that
+# failed, and the only way out was to delete the leftovers by hand (§104.34).
+#
+# What must not change is the guarantee the test above pins: data/ is the user's
+# — their settings, and any provider credentials they entered through FCC's own
+# admin page — and a failed install neither destroys it nor overwrites it with
+# the backup's copy. So the rollback does not restore data/ here. It removes
+# only what was not in data/ before the attempt began, which is exactly what the
+# attempt added and nothing else.
+# ---------------------------------------------------------------------------
+
+# backup_runtime() runs before the installer does, so it is the one place that
+# can see data/ as it was. The record costs no space — names, not contents.
+test_backup_runtime_records_what_data_held_before_the_attempt() {
+	setup_sandbox
+	_bkr_root="$SANDBOX/optreclaim/fcc"
+	mkdir -p "$_bkr_root/data/providers" "$_bkr_root/data/.local/share"
+	printf 'settings\n' > "$_bkr_root/data/providers/settings.json"
+	make_uci_shim
+
+	_bkr_dir="$(sh_install 'backup_runtime' "$SANDBOX/optreclaim")"
+	assert_ok "the attempt makes a backup directory" test -d "$_bkr_dir"
+	assert_eq ".local
+providers" "$(cat "$_bkr_dir/data-before" 2>/dev/null)" \
+		"and records the names data/ held, so a rollback can tell what arrived"
+}
+
+test_rollback_gives_back_what_the_failed_attempt_added() {
+	setup_sandbox
+	_rg_root="$SANDBOX/optreclaim/fcc"
+	_rg_bk="$_rg_root/backup/20261018T090000Z"
+	mkdir -p "$_rg_root/data/providers" "$_rg_bk"
+	rm -f "$_rg_root/runtime.json"
+	printf 'provider settings\n' > "$_rg_root/data/providers/settings.json"
+	# What data/ held when the attempt started — written by backup_runtime().
+	printf 'providers\n' > "$_rg_bk/data-before"
+
+	# What the attempt added: each agent installs into HOME, which is data/.
+	mkdir -p "$_rg_root/data/.local/share/pi-node" "$_rg_root/data/.opencode/bin" \
+		"$_rg_root/data/.npm" "$_rg_root/data/.codex"
+	printf 'node\n'      > "$_rg_root/data/.local/share/pi-node/node"
+	printf 'opencode\n'  > "$_rg_root/data/.opencode/bin/opencode"
+
+	make_uci_shim
+	mkdir -p "$_rg_root/logs"
+	: > "$_rg_root/logs/fcc-runtime.log"
+	_out="$(sh_install "rollback_runtime '$_rg_bk' false; echo \"rc=\$?\"" "$SANDBOX/optreclaim")"
+	_log="$(cat "$_rg_root/logs/fcc-runtime.log" 2>/dev/null)"
+
+	assert_no "the Node the attempt fetched is removed" test -e "$_rg_root/data/.local"
+	assert_no "and the OpenCode it installed"          test -e "$_rg_root/data/.opencode"
+	assert_no "and the npm cache it filled"            test -e "$_rg_root/data/.npm"
+	assert_no "and the other agent's directory"        test -e "$_rg_root/data/.codex"
+
+	# The half that must not move: data/ is the user's.
+	assert_ok "the user's own settings are still there" \
+		test -f "$_rg_root/data/providers/settings.json"
+	assert_eq "provider settings" "$(cat "$_rg_root/data/providers/settings.json")" \
+		"and were not touched"
+	assert_ok "and the directory holding them is still there" test -d "$_rg_root/data/providers"
+
+	assert_contains "$_out" "INSTALL_FAILED" \
+		"and the run is still reported as a first install that failed"
+	# What was removed is named, so a user who put something in data/ while the
+	# install ran can see that it went rather than guess.
+	assert_contains "$_log" "reclaimed" "and the log says the space was given back"
+
+	# A box whose record is missing keeps its data rather than losing it: the
+	# reclaim cannot tell what arrived without it, and guessing is how a
+	# rollback destroys something it was not asked to touch.
+	_rg_root2="$SANDBOX/optnorecord/fcc"
+	mkdir -p "$_rg_root2/data/providers" "$_rg_root2/data/.opencode/bin" \
+		"$_rg_root2/backup/20261018T090001Z" "$_rg_root2/logs"
+	rm -f "$_rg_root2/runtime.json"
+	printf 'kept\n' > "$_rg_root2/data/providers/settings.json"
+	: > "$_rg_root2/logs/fcc-runtime.log"
+	sh_install "rollback_runtime '$_rg_root2/backup/20261018T090001Z' false" \
+		"$SANDBOX/optnorecord" >/dev/null 2>&1
+	assert_ok "without a record, data/ is left alone" test -e "$_rg_root2/data/.opencode"
+	assert_ok "and the user's settings with it" \
+		test -f "$_rg_root2/data/providers/settings.json"
+}
+
+# The contract the guard above protects: no backup directory means no record,
+# which means nothing may be removed. This does not reproduce the specific path
+# the guard rejects — that needs a file at /data-before on the device, outside
+# anything a sandbox can write — so it pins the outcome, not the mechanism.
+test_rollback_without_a_backup_directory_keeps_the_data() {
+	setup_sandbox
+	_rn_root="$SANDBOX/optnobackup/fcc"
+	mkdir -p "$_rn_root/data/.opencode/bin" "$_rn_root/data/providers" "$_rn_root/logs"
+	rm -f "$_rn_root/runtime.json"
+	printf 'kept\n' > "$_rn_root/data/providers/settings.json"
+	: > "$_rn_root/logs/fcc-runtime.log"
+	make_uci_shim
+
+	# backup_runtime() returns empty when it cannot even make a directory, which
+	# is what a full device does — the case this whole reclaim is for. The
+	# rollback then has no list to read, and must not invent one.
+	_rn_out="$(sh_install "rollback_runtime '' false; echo \"rc=\$?\"" "$SANDBOX/optnobackup")"
+	assert_ok "an empty backup directory leaves data/ alone" \
+		test -e "$_rn_root/data/.opencode"
+	assert_ok "and the user's settings with it" \
+		test -f "$_rn_root/data/providers/settings.json"
+	assert_contains "$_rn_out" "INSTALL_FAILED" \
+		"and the run is still reported as a failed first install"
+}
+
+# ---------------------------------------------------------------------------
 # The installer's own words, and where they end up.
 #
 # A failed install used to be reported as a status number and nothing else: the
@@ -2219,6 +2339,141 @@ test_installer_failure_reason_reads_the_installers_own_error() {
 		sh_install "installer_failure_reason '$_ir_dir/installer.out' >/dev/null"
 	assert_no "a missing transcript yields no reason" \
 		sh_install "installer_failure_reason '$_ir_dir/nosuch.out' >/dev/null"
+}
+
+# ---------------------------------------------------------------------------
+# The libc question OpenCode's installer asks, and the stand-in that answers it.
+#
+# Upstream picks which build to download from the libc, and asks like this —
+# under `set -euo pipefail`, for the whole script:
+#
+#     is_musl=false
+#     if command -v ldd >/dev/null 2>&1; then
+#       if ldd --version 2>&1 | grep -qi musl; then
+#         is_musl=true
+#       fi
+#     fi
+#
+# On musl that pipeline reports failure even though grep matched. ldd there is
+# not a script but the dynamic loader, and asked for --version it prints its
+# banner to stderr and exits 1 — it reads the request as a usage error. grep
+# matches and exits 0, and in a shell without pipefail the pipeline is 0; under
+# pipefail it is ldd's 1 that becomes the pipeline's status, so is_musl stays
+# false, the target comes out linux-x64 instead of linux-x64-musl, and the
+# glibc binary that gets installed cannot exec here at all — it wants
+# /lib64/ld-linux-x86-64.so.2 and this box has only /lib/ld-musl-x86_64.so.1.
+# Upstream then fails its own verification and stops, so the runtime is never
+# installed and the page reports a failure whose only visible line is about
+# OpenCode (§104.33).
+#
+# The stand-in ldd-shim is what install.sh puts in front of ldd for the pane,
+# and these two tests drive it for real: the first against the detection itself,
+# the second against the PATH the pane is actually given.
+# ---------------------------------------------------------------------------
+
+# A stand-in for the router's ldd: musl's banner on stderr, then the loader's
+# own status for a usage request, which is not zero. Both details are the
+# router's, measured — the banner goes to stderr and `ldd --version` exits 1.
+# Written as a file because the failure is the *pipeline's* status, and a
+# pipeline cannot be faked from outside it.
+write_musl_ldd_stand_in() { # write_musl_ldd_stand_in <dir>
+	mkdir -p "$1"
+	cat > "$1/ldd" <<'LDD_STAND_IN'
+#!/bin/sh
+printf 'musl libc (x86_64)\n' >&2
+printf 'Version 1.2.5\n' >&2
+printf 'Dynamic Program Loader\n' >&2
+printf 'Usage: ldd [options] [--] pathname [args]\n' >&2
+exit 1
+LDD_STAND_IN
+	chmod 755 "$1/ldd"
+}
+
+# Upstream's own detection, verbatim, printing only the answer it reached.
+UPSTREAM_MUSL_DETECTION='set -euo pipefail
+is_musl=false
+if command -v ldd >/dev/null 2>&1; then
+  if ldd --version 2>&1 | grep -qi musl; then is_musl=true; fi
+fi
+printf "%s" "$is_musl"'
+
+test_ldd_shim_answers_the_musl_question_under_pipefail() {
+	setup_sandbox
+	command -v bash >/dev/null 2>&1 || { skip "no bash — upstream's installer is bash and so is this test"; return 0; }
+	write_musl_ldd_stand_in "$SANDBOX/fakeldd"
+
+	# The box as it is today, with nothing in front of the real ldd.
+	assert_eq "false" \
+		"$(FCC_REAL_LDD="$SANDBOX/fakeldd/ldd" PATH="$SANDBOX/fakeldd:$PATH" \
+			bash -c "$UPSTREAM_MUSL_DETECTION" 2>&1)" \
+		"the real ldd's banner and status make the musl question answer false"
+
+	# install.sh puts the stand-in in the root, and it is executable there.
+	sh_install 'installer_prepare_shim' >/dev/null 2>&1
+	assert_exec "$SANDBOX/opt/fcc/shim/ldd" \
+		"install.sh installs the ldd stand-in into the root"
+
+	# The same question, with that directory in front of everything else.
+	assert_eq "true" \
+		"$(FCC_REAL_LDD="$SANDBOX/fakeldd/ldd" PATH="$SANDBOX/opt/fcc/shim:$PATH" \
+			bash -c "$UPSTREAM_MUSL_DETECTION" 2>&1)" \
+		"with the stand-in in front, the same question answers true"
+
+	# Nothing is invented: the words are the real ldd's, so a caller reading a
+	# version number still gets one rather than a placeholder.
+	assert_contains \
+		"$(FCC_REAL_LDD="$SANDBOX/fakeldd/ldd" "$SANDBOX/opt/fcc/shim/ldd" --version 2>&1)" \
+		"Version 1.2.5" "the stand-in's --version is the real ldd's own output"
+
+	# And every other invocation is the real ldd's, status included — the
+	# stand-in is a fix for one question, not a replacement for the tool.
+	assert_eq \
+		"$(FCC_REAL_LDD="$SANDBOX/fakeldd/ldd" "$SANDBOX/fakeldd/ldd" /bin/sh 2>&1; printf 'rc=%s' "$?")" \
+		"$(FCC_REAL_LDD="$SANDBOX/fakeldd/ldd" "$SANDBOX/opt/fcc/shim/ldd" /bin/sh 2>&1; printf 'rc=%s' "$?")" \
+		"a call that is not --version is handed to the real ldd, output and status alike"
+
+	# A glibc box still reports glibc, so the stand-in cannot turn a right
+	# answer wrong on the machines that were already fine.
+	mkdir -p "$SANDBOX/glibcldd"
+	cat > "$SANDBOX/glibcldd/ldd" <<'LDD_STAND_IN'
+#!/bin/sh
+printf 'ldd (GNU libc) 2.39\n'
+printf 'Copyright (C) 2024 Free Software Foundation, Inc.\n'
+exit 0
+LDD_STAND_IN
+	chmod 755 "$SANDBOX/glibcldd/ldd"
+	assert_eq "false" \
+		"$(FCC_REAL_LDD="$SANDBOX/glibcldd/ldd" PATH="$SANDBOX/opt/fcc/shim:$PATH" \
+			bash -c "$UPSTREAM_MUSL_DETECTION" 2>&1)" \
+		"a glibc box still answers the musl question false"
+}
+
+test_the_installer_pane_finds_the_ldd_stand_in_first() {
+	setup_sandbox
+	write_musl_ldd_stand_in "$SANDBOX/fakeldd"
+
+	sh_install "installer_write_env '$SANDBOX/paneenv.sh'" >/dev/null 2>&1
+	assert_ok "the pane's environment file is written" test -s "$SANDBOX/paneenv.sh"
+
+	# Read the PATH the way the pane gets it: source the file, then ask.
+	assert_eq "$SANDBOX/opt/fcc/shim/ldd" \
+		"$(FCC_REAL_LDD="$SANDBOX/fakeldd/ldd" sh -c ". '$SANDBOX/paneenv.sh'; command -v ldd")" \
+		"the pane's PATH resolves ldd to the stand-in"
+	assert_eq "$SANDBOX/opt/fcc/shim" \
+		"$(sh -c ". '$SANDBOX/paneenv.sh'; printf '%s' \"\${PATH%%:*}\"")" \
+		"and the stand-in's directory is in front of everything else"
+
+	# The runtime's own directories are still there behind it — the stand-in
+	# goes in front of that PATH, it does not replace it.
+	assert_contains "$(sh -c ". '$SANDBOX/paneenv.sh'; printf '%s' \"\$PATH\"")" \
+		"$SANDBOX/opt/fcc/bin" "and the runtime's directories are still on it"
+
+	# A box where the stand-in file is missing still gets a usable environment:
+	# the install must not depend on a workaround for one agent.
+	_out="$(sh_install "FCC_LIBDIR='$SANDBOX/nolib' installer_write_env '$SANDBOX/paneenv2.sh'; printf 'rc=%s' \"\$?\"")"
+	assert_eq "rc=0" "$_out" "a missing stand-in does not fail the environment"
+	assert_not_contains "$(sh -c ". '$SANDBOX/paneenv2.sh'; printf '%s' \"\$PATH\"")" \
+		"$SANDBOX/opt/fcc/shim" "and no shim directory is put on PATH without it"
 }
 
 # The tar check decides by unpacking a real archive rather than by reading a
@@ -4872,11 +5127,17 @@ test_provision_node_refuses_an_archive_that_does_not_match() {
 	_dpn_logs="$SANDBOX/diaglogs"
 	mkdir -p "$_dpn_logs"
 
-	# The release's own checksum file, with one character changed. Everything
-	# else about the download is right, so the only thing that can stop it is
-	# the check.
-	_dpn_wrong="$(printf '%s' "$(cat "$SANDBOX/fixture/http/SHASUMS256.txt")" |
-		sed 's/^./0/')"
+	# The release's own checksum file, with the checksum made certainly wrong.
+	# Everything else about the download is right, so the only thing that can
+	# stop it is the check.
+	#
+	# "Change the first character to 0" is not certainly wrong. A sha256 begins
+	# with a hex digit, and one time in sixteen that digit is already 0 — which
+	# left the file untouched, let the checksum match, and made this test pass or
+	# fail by luck rather than by what it is about. It failed exactly that way on
+	# 2026-10-18: provision_node installed the archive it was supposed to refuse
+	# and the log said so. The digit is therefore changed to one it is not.
+	_dpn_wrong="$(sed -e 's/^0/1/' -e 't' -e 's/^./0/' "$SANDBOX/fixture/http/SHASUMS256.txt")"
 	printf '%s\n' "$_dpn_wrong" > "$SANDBOX/fixture/http/SHASUMS256.txt"
 
 	: > "$_dpn_logs/fcc-runtime.log"

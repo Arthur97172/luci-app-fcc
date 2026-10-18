@@ -844,6 +844,57 @@ provision_node() {
 	return 0
 }
 
+# Where the installer's ldd stand-in lives.
+installer_shim_dir() { printf '%s' "$ROOT/shim"; }
+
+# Put the ldd stand-in where the pane will find it, and say whether it is there.
+#
+# OpenCode's installer decides which build to download by asking `ldd --version`
+# whether the libc is musl, and it asks under `set -o pipefail`:
+#
+#     if ldd --version 2>&1 | grep -qi musl; then is_musl=true; fi
+#
+# On musl that pipeline reports failure even though grep matched, and not for
+# the reason it looks like: /usr/bin/ldd is a symlink to ../../lib/libc.so — it
+# *is* the dynamic loader — and asked for --version it prints its banner to
+# stderr and exits 1, reading the request as a usage error. grep does match and
+# does exit 0; pipefail is what turns ldd's 1 into the pipeline's status. So
+# is_musl stays false, the target comes out linux-x64 instead of linux-x64-musl,
+# and the glibc binary that gets installed cannot even exec here: it wants
+# /lib64/ld-linux-x86-64.so.2 and this box has only /lib/ld-musl-x86_64.so.1.
+#
+# Upstream stops at the first agent it cannot verify, so that one wrong answer
+# ends the whole run — the runtime is never installed and the page reports a
+# failure whose only visible line is about OpenCode. Section 104.33 has the
+# measurement; ldd-shim has the fix, and this puts it on the pane's PATH.
+installer_prepare_shim() {
+	_ip_src="${FCC_LIBDIR:-/usr/libexec/fcc}/ldd-shim"
+	_ip_dst="$(installer_shim_dir)/ldd"
+	[ -f "$_ip_src" ] || return 1
+	mkdir -p "$(installer_shim_dir)" 2>/dev/null || return 1
+	# Copied rather than symlinked: the pane's PATH is what decides which ldd is
+	# found, and a symlink would leave the answer depending on the package still
+	# being installed at that path.
+	cp "$_ip_src" "$_ip_dst" 2>/dev/null || return 1
+	chmod 755 "$_ip_dst" 2>/dev/null || return 1
+	[ -x "$_ip_dst" ]
+}
+
+# The environment the installer pane sources, in one place so that the PATH the
+# pane gets can be read and tested without starting a terminal.
+installer_write_env() {
+	# installer_write_env <path>
+	fcc_runtime_env_exports "$ROOT" > "$1" 2>/dev/null || return 1
+	# Appended, so that the shim directory is prepended to the PATH those
+	# exports already built — and so that a box without the shim file is left
+	# with exactly the environment it had before.
+	if installer_prepare_shim; then
+		printf 'export PATH=%s:"$PATH"\n' \
+			"$(fcc_shquote "$(installer_shim_dir)")" >> "$1" 2>/dev/null || return 1
+	fi
+	return 0
+}
+
 run_installer() {
 	_ri_script="$1"
 	_ri_agents="$2"      # space separated, empty => upstream defaults
@@ -909,10 +960,20 @@ run_installer() {
 	# running for the Web Console would start with the console's HOME, not this
 	# one, and install a second runtime into it. Sourcing a file is what makes
 	# the environment certain rather than likely.
-	fcc_runtime_env_exports "$ROOT" > "$_ri_env" 2>/dev/null || {
+	installer_write_env "$_ri_env" || {
 		fcc_log "$LOG" "failed to write the installer environment"
 		return 1
 	}
+
+	# Section 103: the shim decides whether OpenCode installs at all on musl, so
+	# which way it went is worth a line. A run that fails on OpenCode is then
+	# readable afterwards as either "the shim was not there" or "it was, and
+	# something else went wrong".
+	if [ -x "$(installer_shim_dir)/ldd" ]; then
+		fcc_log "$LOG" "installer: ldd --version is answered from $(installer_shim_dir)/ldd, so a musl box is detected as musl"
+	else
+		fcc_log "$LOG" "installer: no ldd shim on this box, so an installer that asks ldd whether the libc is musl will read the answer wrong"
+	fi
 
 	: > "$_ri_out" 2>/dev/null
 	rm -f "$_ri_rc" "$_ri_gate" 2>/dev/null
@@ -1132,6 +1193,17 @@ write_runtime_metadata() {
 
 # ---------------------------------------------------------------------------
 # Update safety net (DESIGN_SPEC.md section 23 steps 6, 12 and 13)
+# The names directly inside a directory, one per line, or nothing if it is not
+# there at all. Used to record what an install started with, so that a rollback
+# can give back exactly what the attempt added and nothing more.
+fcc_dir_children() {
+	[ -d "$1" ] || return 0
+	for _fdc_e in "$1"/.[!.]* "$1"/*; do
+		[ -e "$_fdc_e" ] || [ -L "$_fdc_e" ] || continue
+		printf '%s\n' "${_fdc_e##*/}"
+	done
+}
+
 # ---------------------------------------------------------------------------
 backup_runtime() {
 	# backup_runtime -> the backup directory, or empty when there was nothing
@@ -1152,6 +1224,14 @@ backup_runtime() {
 	_bk_stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
 	_bk_dir="$_bk_root/$_bk_stamp"
 	mkdir -p "$_bk_dir" 2>/dev/null || return 1
+
+	# What data/ held before the installer runs, by name. A rollback needs this
+	# to tell what the attempt added from what the user already had — and names
+	# cost no space, which matters because this is written on the device whose
+	# free space is the reason an install can fail in the first place (§104.34).
+	# Written before the copy below, and independently of whether it succeeds:
+	# on a full device the copy of data/ is the part that fails.
+	fcc_dir_children "$ROOT/data" > "$_bk_dir/data-before" 2>/dev/null
 
 	_bk_any=0
 	if [ -d "$ROOT/data" ]; then
@@ -1239,6 +1319,41 @@ wait_for_health() {
 	return 1
 }
 
+# Remove the entries a failed attempt added to a directory, and nothing else.
+#
+# <before-file> holds the names the directory had when the attempt started,
+# written by backup_runtime(). Anything in the directory now that is not in that
+# list arrived during the attempt, so it is the attempt's to give back.
+#
+# A missing list means the two cannot be told apart, and then nothing is
+# removed. That is the deliberate direction to fail in: the reclaim exists to
+# give back space, and a reclaim that guessed would be trading a user's data for
+# space — the wrong way round on a device where the data is the part that cannot
+# be downloaded again.
+rollback_reclaim_added() {
+	# rollback_reclaim_added <before-file> <dir>
+	_rra_before="$1"
+	_rra_dir="$2"
+	[ -f "$_rra_before" ] || return 0
+	[ -d "$_rra_dir" ] || return 0
+
+	_rra_gone=""
+	for _rra_e in "$_rra_dir"/.[!.]* "$_rra_dir"/*; do
+		[ -e "$_rra_e" ] || [ -L "$_rra_e" ] || continue
+		_rra_name="${_rra_e##*/}"
+		# The name goes after -e because it is data: one beginning with a dash
+		# would otherwise be read by grep as an option.
+		grep -Fxq -e "$_rra_name" "$_rra_before" 2>/dev/null && continue
+		rm -rf "$_rra_e" 2>/dev/null && _rra_gone="$_rra_gone $_rra_name"
+	done
+
+	# Named, not silent: the install runs while the user is looking at the page,
+	# and anything they put in data/ in the meantime went with this.
+	[ -n "$_rra_gone" ] && fcc_log "$LOG" \
+		"reclaimed what the failed attempt added to ${_rra_dir##*/}:$_rra_gone"
+	return 0
+}
+
 rollback_runtime() {
 	# rollback_runtime <backup-dir> <was-running>
 	#
@@ -1312,16 +1427,34 @@ rollback_runtime() {
 		# runtime/ and bin/ are what the installer writes, and a partial one is
 		# worse than none: the status page would report an install that cannot
 		# run. They are the same two directories the update path removes, so the
-		# destructive surface is unchanged. data/ is left alone — it is not this
-		# installer's to discard, and on a reinstall attempt it may hold provider
-		# credentials the user entered through FCC's own admin page.
+		# destructive surface is unchanged.
 		rm -rf "$ROOT/runtime" "$ROOT/bin" 2>/dev/null
+		# data/ itself is not this installer's to discard, and the backup's copy
+		# is not put over it: it may hold provider credentials the user entered
+		# through FCC's own admin page, and the copy in the backup is older than
+		# those. But the agents install into HOME, which *is* data/ — so leaving
+		# all of data/ alone leaves the whole download behind. Measured on the
+		# test router on 2026-10-18: a run that failed at OpenCode left 1228 MB
+		# in data/, and free space fell from 1731 MB to 440 MB — under
+		# FCC_MIN_FREE_MB, so the storage precheck refused every retry on a box
+		# whose space the failed attempt was holding. Only what was not there
+		# when the attempt began goes (§104.34).
+		# Only with a backup directory. backup_runtime() returns empty when it
+		# could not even make one — which is what a full device does, the very
+		# case this reclaim exists for — and an empty $_rb_dir would make the
+		# argument below "/data-before": a path outside this package's root, read
+		# as though it were this attempt's record. Nothing was recorded in that
+		# case anyway, so there is nothing to reclaim from.
+		if [ -n "$_rb_dir" ]; then
+			rollback_reclaim_added "$_rb_dir/data-before" "$ROOT/data"
+		fi
 		fcc_cache_set fcc_version ""
-		# The backup directory this attempt created is not consumed by anything
-		# below, so without this it would never be reached by section 25's
-		# retention: a device that keeps failing and keeps being retried would
-		# keep a fresh copy of data/ per attempt, on the very device whose free
-		# space is the reason the install stopped.
+		# The backup directory this attempt created is not restored from by
+		# anything below — the reclaim above has already read the one thing in it
+		# that was wanted — so without this it would never be reached by section
+		# 25's retention: a device that keeps failing and keeps being retried
+		# would keep a fresh copy of data/ per attempt, on the very device whose
+		# free space is the reason the install stopped.
 		prune_backups
 		fcc_log "$LOG" "Install failed. Nothing was installed before, so there was no version to restore."
 		printf 'INSTALL_FAILED\n'

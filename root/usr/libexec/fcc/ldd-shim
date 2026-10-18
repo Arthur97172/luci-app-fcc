@@ -1,0 +1,106 @@
+#!/bin/sh
+# ldd-shim — answer `ldd --version` with a success status, so that a caller
+# running under `set -o pipefail` can hear the answer it already matched.
+#
+# install.sh copies this to <root>/shim/ldd and puts <root>/shim first on PATH
+# for the installer pane alone. Nothing outside that pane sees it, and every
+# invocation other than --version is handed to the real ldd untouched.
+#
+# Why it exists. OpenCode's installer picks which build to download from the
+# libc, and asks like this:
+#
+#     is_musl=false
+#     if command -v ldd >/dev/null 2>&1; then
+#       if ldd --version 2>&1 | grep -qi musl; then
+#         is_musl=true
+#       fi
+#     fi
+#
+# while the whole script runs under `set -euo pipefail`. On musl that test is
+# false, and not because grep missed. Measured on the test router
+# (OpenWrt 24.10.8, x86_64, musl 1.2.5) on 2026-10-17:
+#
+#     $ ls -l /usr/bin/ldd
+#     lrwxrwxrwx  /usr/bin/ldd -> ../../lib/libc.so
+#     $ ldd --version >/dev/null 2>&1; echo $?
+#     1
+#     $ ldd --version 2>/dev/null              # stdout
+#     (nothing)
+#     $ ldd --version 2>&1 >/dev/null          # stderr
+#     musl libc (x86_64)
+#     $ ldd --version 2>&1 | grep -ci musl
+#     1
+#     $ ldd --version 2>&1 | grep -qi musl; echo $?    # no pipefail
+#     0
+#
+# ldd here is not a script: it is the dynamic loader itself, and asked for
+# --version it prints its banner *to stderr* and exits 1, because it reads the
+# request as a usage error. So grep does match and does exit 0 — the pipeline is
+# 0 in a shell without pipefail, which is the line above. Under pipefail it is
+# ldd's 1 that becomes the pipeline's status, `if` sees failure, is_musl stays
+# false, and the target comes out `linux-x64` instead of `linux-x64-musl`.
+#
+# The consequence is not cosmetic. The glibc build needs
+# /lib64/ld-linux-x86-64.so.2, which no musl box has, so execve fails with
+# ENOENT and the binary cannot run at all. Upstream then fails its own
+# verification —
+#
+#     error: Could not verify installed OpenCode at $HOME/.opencode/bin/opencode
+#
+# — and stops at the first failed agent, which means the FCC runtime is never
+# installed and the whole run rolls back. `bash -x` on the real installer
+# printed `is_musl=false`, `target=linux-x64`,
+# `package_name=@opencode/cli-linux-x64`; the binary that landed was 211842528
+# bytes, the glibc package's exact unpacked size, against 212194864 for the musl
+# one. Section 104.33 has the transcript.
+#
+# What this does about it: runs the real ldd, prints what it printed, and exits
+# 0. Nothing is fabricated — the bytes are the real ldd's own, so a caller
+# reading a version number still gets one, and a glibc box still reports glibc
+# and still gets is_musl=false. Only the status is ours, because the status is
+# the part that was wrong.
+#
+# Only --version is answered here. It is the one form upstream reads through a
+# pipeline, and rewriting the rest would mean re-implementing ldd's exit status
+# and its separation of stdout from stderr for no gain.
+#
+# The real ldd, if this box keeps it somewhere else.
+_ldd_real="${FCC_REAL_LDD:-/usr/bin/ldd}"
+if [ ! -x "$_ldd_real" ]; then
+	# Fall back to the first ldd on PATH that is not this script.
+	_ldd_self_dir="${0%/*}"
+	[ "$_ldd_self_dir" = "$0" ] && _ldd_self_dir="."
+	_ldd_old_ifs="$IFS"
+	IFS=:
+	for _ldd_dir in $PATH; do
+		[ -n "$_ldd_dir" ] || continue
+		[ "$_ldd_dir" = "$_ldd_self_dir" ] && continue
+		if [ -x "$_ldd_dir/ldd" ]; then
+			_ldd_real="$_ldd_dir/ldd"
+			break
+		fi
+	done
+	IFS="$_ldd_old_ifs"
+fi
+
+if [ ! -x "$_ldd_real" ]; then
+	printf 'ldd-shim: no ldd on PATH\n' >&2
+	exit 127
+fi
+
+case "${1:-}" in
+--version)
+	;;
+*)
+	exec "$_ldd_real" "$@"
+	;;
+esac
+
+# The banner is on stderr and the reader merges the two, so both go to stdout
+# here. SIGPIPE is ignored so that a reader which stops early — `| head -1` —
+# cannot kill this on its next write and turn the status back into a failure,
+# which is the whole thing being fixed.
+trap '' PIPE
+_ldd_version="$("$_ldd_real" --version 2>&1)"
+printf '%s\n' "$_ldd_version" || :
+exit 0
