@@ -23,7 +23,9 @@
 # is correctly blocked while an install of Claude Code is not. Without this the
 # page would report the whole-registry verdict over a narrowed selection and
 # tell the reader their install was blocked when the install job — which asks
-# the same question of the set it was given — would have run it.
+# the same question of the set it was given — would have run it. The flag names
+# one agent; the variable it sets also arrives from install.sh carrying several,
+# which is why what is checked below is every id in it rather than the string.
 
 set -u
 . "${FCC_LIBDIR:-/usr/libexec/fcc}/common.sh"
@@ -49,11 +51,25 @@ done
 # permissive than the truth. Refusing is the only safe direction — the same
 # grammar-and-registry test the controller applies before it gets here
 # (luci.fcc.util.valid_agent, luci.fcc.agents.exists).
-if [ -n "${FCC_AGENT_SELECTION:-}" ] && ! fcc_valid_agent "$FCC_AGENT_SELECTION"; then
-	printf 'doctor.sh: unknown agent: %s\n' "$FCC_AGENT_SELECTION" >&2
-	printf 'usage: doctor.sh [--json] [--blocking] [--agents <id>]\n' >&2
-	exit 2
-fi
+#
+# A list, not one id, and that is not a detail. --agents carries one agent, but
+# this variable is also how install.sh hands the doctor the set it is about to
+# install: it exports the whole registry for --all-agents and a comma-separated
+# set for --agents, both of them space-separated by the time they arrive. Asking
+# fcc_valid_agent() about the string as a whole therefore refused every real
+# install with "unknown agent:  claude codex pi opencode cline hermes dsh grok
+# muse aider" — an install blocked for a reason that was not true, which is
+# worse than the permissive report this guard exists to prevent. Each id is
+# checked on its own instead, so the list is honoured and the property holds:
+# one id the registry does not know still stops the report rather than thinning
+# it.
+for _arg_id in $(printf '%s' "${FCC_AGENT_SELECTION:-}" | tr ',' ' '); do
+	if ! fcc_valid_agent "$_arg_id"; then
+		printf 'doctor.sh: unknown agent: %s\n' "$_arg_id" >&2
+		printf 'usage: doctor.sh [--json] [--blocking] [--agents <id>]\n' >&2
+		exit 2
+	fi
+done
 
 ROOT="$(fcc_root)"
 # The floor comes from common.sh, shared with install.sh: the report this script

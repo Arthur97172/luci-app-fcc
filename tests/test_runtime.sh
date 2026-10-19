@@ -4153,6 +4153,34 @@ test_doctor_reports_on_the_set_it_is_asked_about() {
 		sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents nosuchagent
 	assert_contains "$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents nosuchagent 2>&1 || true)" \
 		'unknown agent' "and the refusal says which argument was wrong"
+
+	# The variable is a list, and this is the shape install.sh actually exports:
+	# --all-agents expands the registry and --agents splits its commas, so what
+	# arrives is several ids separated by spaces. Checking the string as one id
+	# refused every install with "unknown agent:  claude codex pi ..." — an
+	# install blocked for a reason that was not true, and one no single-agent
+	# test could see, because a one-id selection is the one list that looks like
+	# an id.
+	_dro_list="$(awk -F'|' '/^[a-z]/ { printf "%s ", $1 }' "$AGENTS_CONF")"
+	_dro_many="$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents "${_dro_list% }" 2>&1)"
+	assert_not_contains "$_dro_many" 'unknown agent' \
+		"the whole registry as one space-separated list is not an unknown agent"
+	assert_contains "$_dro_many" '"install_allowed": false' \
+		"and it is answered about that set rather than refused"
+
+	# The same list with a comma in it, which is how install.sh's --agents
+	# arrives before it is split. fcc_effective_agents() splits them too, so a
+	# reader that refused the commas would be the only part of the package that
+	# could not read the installer's own argument.
+	_dro_comma="$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents "$(printf '%s' "${_dro_list% }" | tr ' ' ',')" 2>&1)"
+	assert_not_contains "$_dro_comma" 'unknown agent' \
+		"a comma-separated selection is read as the list it is"
+
+	# And the property survives the list: one id the registry does not know
+	# still stops the report rather than thinning it to the ids that do match.
+	assert_contains "$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json \
+		--agents "$_dro_list nosuchagent" 2>&1 || true)" \
+		'unknown agent' "one unknown id in an otherwise good list is still refused"
 }
 
 # The tar check, which exists because uv's own installer cannot unpack its
@@ -4630,6 +4658,31 @@ test_install_runtime_takes_the_whole_registry() {
 	assert_contains "$(cat "$LIBEXEC/install.sh")" \
 		'run_installer "$_cr_script" "$_cr_agents" "$_cr_none"' \
 		"and the installer is handed that same set"
+
+	# And the checks accept what they are handed. This is the seam that broke:
+	# install.sh exports several ids at once — the whole registry, here — and the
+	# doctor asked fcc_valid_agent() about the string as a whole, so every install
+	# was refused with "unknown agent:  claude codex pi ..." before a byte was
+	# downloaded. Stubbing precheck_ok, as the assertions above do, is exactly why
+	# that survived a green suite: it answers the question about the set without
+	# ever asking the doctor the same one.
+	#
+	# "Not refused" is the whole assertion. Whether the install is *allowed* is
+	# the device's business — neither this host nor the test router has the C++
+	# runtime the fetched Node needs — but a report about ids that are all in the
+	# registry may not come back as a usage error.
+	#
+	# Passed as one argument rather than through the environment, because that is
+	# what the string is: install.sh exports it into a variable, the controller
+	# passes it as an argument, and both land in the same place. A test that set
+	# the variable would have to word-split it to get it through env(1), which is
+	# the very thing under test.
+	_tr_report="$(sh_doctor_tools "$DOCTOR_TOOLS tmux bash" '' --json \
+		--agents "$_tr_all" 2>&1)"
+	assert_not_contains "$_tr_report" 'unknown agent' \
+		"the checks accept the whole registry as the one list install.sh exports"
+	assert_contains "$_tr_report" '"install_allowed"' \
+		"and answer with a report rather than a usage error"
 }
 
 test_reinstall_is_remove_then_install_everything() {
