@@ -307,9 +307,14 @@ test_the_translation_package_does_not_depend_on_the_app() {
 #
 # Section 3.6.5 asked for a picker, and for a while the page had one: a table
 # whose first column was a tick box, plus a recommended set and a per-row
-# Install/Remove. It is gone (section 104.25). The install now takes the whole
-# registry, so there is no selection to make, and the page carries two buttons
-# instead — Install and Reinstall — that both act on every agent.
+# Install/Remove. It is gone (section 104.25), and what replaced it is not a
+# picker: an install takes the whole registry, and the page carries two buttons
+# — Install and Reinstall — that act on every agent.
+#
+# The one agent dropdown that now sits before Install (section 79's rollback is
+# why it exists) is not that table coming back, and the difference is the point
+# of this test: one value, no tick boxes, nothing rendered from a second source.
+# What it does is pinned by test_the_config_page_can_install_one_agent.
 #
 # There is no DOM harness here, so the invariant is pinned against the markup
 # and the script: the table and everything that fed it must be absent, and the
@@ -333,11 +338,13 @@ test_the_config_page_has_no_agent_table() {
 		assert_not_contains "$(cat "$_ts_js")" "$_ts_dead" "the table's $_ts_dead is gone"
 	done
 
-	# The two buttons, and the point of them: neither sends an agent list.
+	# The two buttons. What is asserted here is only that they are there and
+	# that Reinstall is its own operation: the agent dropdown that now sits
+	# before Install is a single value rather than a set, and what it does is
+	# pinned by test_the_config_page_can_install_one_agent below. The tick-box
+	# machinery stays dead either way — that is what this test is about.
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' "the view has an Install button"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' "the view has a Reinstall button"
-	assert_contains "$(cat "$_ts_js")" "runJobAction('install_runtime', {}," \
-		"Install sends no agent list, so the backend installs the whole registry"
 	assert_contains "$(cat "$_ts_js")" "runJobAction('reinstall_runtime', {}," \
 		"and Reinstall is its own operation, not a flag on Install"
 }
@@ -351,6 +358,13 @@ test_the_config_page_has_no_agent_table() {
 # down, so an eleventh agent is installed by the same click that installs ten,
 # with no list to update. The runtime tests check what the flag resolves to; this
 # checks that the click still reaches it.
+#
+# "With nothing chosen" is now part of the claim rather than the whole of it.
+# The agent dropdown added beside the button narrows an install to one agent
+# (test_the_config_page_can_install_one_agent below), and the default — the
+# dropdown's empty value — is still the whole registry, by flag, exactly as
+# before. What this pins is that the default did not change and that the set is
+# still never listed.
 # ---------------------------------------------------------------------------
 
 test_the_config_page_installs_every_agent() {
@@ -359,27 +373,32 @@ test_the_config_page_installs_every_agent() {
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 
 	# The view offers the two buttons, and they are the only way the page starts
-	# an install — the toolbar they sit in is asserted to carry no per-agent
-	# control by test_the_config_page_has_no_agent_table.
+	# an install — the dropdown beside Install chooses between one agent and all
+	# of them, and the tick boxes that used to choose a subset are asserted gone
+	# by test_the_config_page_has_no_agent_table.
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' \
 		"the Configuration page has an Install button"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' \
 		"and a Reinstall button beside it"
 
-	# Each button reaches its own action, and neither carries a payload: an
-	# empty object is what says "no selection", which is the whole point.
-	assert_contains "$(cat "$_ts_js")" "runJobAction('install_runtime', {}," \
-		"Install calls the install action with no agent list"
+	# Each button reaches its own action. Install's payload is conditional now:
+	# an empty object is what says "no selection", and the only value that can
+	# replace it is the one id the dropdown holds.
+	assert_contains "$(cat "$_ts_js")" "agent ? { agent: agent } : {}" \
+		"Install calls the install action with no agent list unless one is chosen"
 	assert_contains "$(cat "$_ts_js")" "runJobAction('reinstall_runtime', {}," \
 		"Reinstall calls the reinstall action with no agent list"
 
 	# The action is the flag, spelled once, and it is a flag rather than a list
 	# of ids for the reason above: a list here would be a second place the agent
 	# set lives, and the two would drift the first time the registry changed.
+	# The default argv is that flag, and it is built before the dropdown is read,
+	# so the whole-registry install is the path a click takes when the dropdown
+	# says nothing — not a branch that has to keep working.
 	assert_contains "$(cat "$_ts_ctrl")" '"install", "runtime", "--all-agents"' \
 		"the install action asks for the whole registry by flag"
-	assert_not_contains "$(cat "$_ts_ctrl")" '"install", "runtime", "--agents"' \
-		"and not by listing the ids"
+	assert_contains "$(cat "$_ts_ctrl")" 'local argv = { "install", "runtime", "--all-agents" }' \
+		"and that is the argv an install starts from"
 
 	# Reinstall is the remove-then-install verb, which install.sh implements.
 	# Sending the install verb with a flag instead would reconcile rather than
@@ -387,6 +406,95 @@ test_the_config_page_installs_every_agent() {
 	# that is already present is the one that is broken.
 	assert_contains "$(cat "$_ts_ctrl")" '"install", "reinstall"' \
 		"the reinstall action asks for the verb that removes first"
+}
+
+# ---------------------------------------------------------------------------
+# The agent dropdown, and the one thing it is for
+#
+# Upstream stops at the first agent it cannot install and rolls the whole run
+# back (section 79). The whole-registry install is therefore all-or-nothing in a
+# way the page did not admit: on a device where one agent cannot be installed —
+# a box with no C++ runtime for the Node the npm three need, say — every install
+# ends in the same rollback and no agent is reachable at all. The dropdown is
+# how they are asked for one at a time.
+#
+# It is deliberately not the removed table (section 104.25) coming back, and the
+# assertions are written to keep the difference: one control, one value, read
+# when the button is pressed, no set to reconcile and nothing the page has to
+# draw from a second source.
+# ---------------------------------------------------------------------------
+
+test_the_config_page_can_install_one_agent() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+
+	# The control exists, and it is a <select> with a value — not a set of tick
+	# boxes, which is what makes this a different thing from what was removed.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-agent"' \
+		"the runtime toolbar has an agent dropdown"
+	assert_contains "$(cat "$_ts_view")" '<select id="fcc-runtime-agent"' \
+		"and it is a single-value control rather than a list of tick boxes"
+	assert_not_contains "$(cat "$_ts_view")" 'type="checkbox" id="fcc-agent' \
+		"with no per-agent tick boxes beside it"
+
+	# The user asked for the choice to be made before the action, and a control
+	# drawn after the button it governs reads as belonging to the next one.
+	_ts_order="$(awk '
+		/id="fcc-runtime-agent"/   { pick = NR }
+		/id="fcc-runtime-install"/ { btn = NR }
+		END { print (pick && btn && pick < btn) ? "before" : "after" }
+	' "$_ts_view")"
+	assert_eq "before" "$_ts_order" "the dropdown is drawn before the Install button it narrows"
+
+	# Its options come from the registry, which is the single source of truth
+	# (section 12) — an agent added to agents.conf appears here with no change to
+	# this page, and there is no second list to keep in step.
+	assert_contains "$(cat "$_ts_view")" 'require("luci.fcc.agents").load()' \
+		"the options are read from the registry rather than written on the page"
+
+	# The default option is every agent, so a click that ignores the dropdown
+	# installs what the page installed before the dropdown existed.
+	assert_contains "$(cat "$_ts_view")" '<option value=""><%:All agents%></option>' \
+		"the first option is every agent, so the default install is unchanged"
+
+	# The script sends the value, and only the value.
+	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-runtime-agent')" \
+		"Install reads the dropdown when it is pressed"
+	assert_contains "$(cat "$_ts_js")" "agent ? { agent: agent } : {}" \
+		"and sends the chosen id, or nothing at all"
+
+	# The controller turns that one id into the backend's flag. A list would be
+	# a second place the agent set lives; one id cannot drift from the registry
+	# because it is checked against it.
+	assert_contains "$(cat "$_ts_ctrl")" '"install", "runtime", "--agents", id' \
+		"the controller passes the chosen agent to the backend by flag"
+	assert_contains "$(cat "$_ts_ctrl")" 'util.valid_agent(want)' \
+		"after checking that what arrived is an id at all"
+	assert_contains "$(cat "$_ts_ctrl")" 'agents.exists(id)' \
+		"and that the registry knows it"
+
+	# The report follows the dropdown, because the checks are about a set of
+	# agents rather than about the device: an install of every agent can be
+	# blocked by something an install of Claude Code does not care about. Left
+	# alone, the panel would report the whole-registry verdict over a narrowed
+	# selection, and the reader would be told their install was blocked while the
+	# job — which asks the shell the same question about the id it was given —
+	# would have run it. What the two answers are is pinned by the runtime suite;
+	# what is pinned here is that the selection reaches the report at all.
+	#
+	# Read from act_doctor's own body rather than from the file: the install
+	# action reads the same form value, so a file-wide assertion would hold even
+	# if the report stopped asking.
+	_ts_doctor="$(awk '/^function act_doctor/,/^end/' "$_ts_ctrl")"
+	assert_contains "$_ts_doctor" 'http.formvalue("agent")' \
+		"the report reads the selection the page sends"
+	assert_contains "$_ts_doctor" '"--json", "--agents", id' \
+		"and hands it to the doctor as the set to answer about"
+	assert_contains "$(cat "$_ts_js")" "FCC.api('doctor', doctorParams(), { method: 'GET' })" \
+		"the checks are asked about the set the dropdown names"
+	assert_contains "$(cat "$_ts_js")" "agentPicker.addEventListener('change', runDoctor)" \
+		"and changing the dropdown asks again, so the panel cannot contradict it"
 }
 
 # ---------------------------------------------------------------------------

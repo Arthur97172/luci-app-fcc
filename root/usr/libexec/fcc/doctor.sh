@@ -5,6 +5,7 @@
 #   doctor.sh            Human-readable report ([OK]/[WARN]/[FAIL] lines)
 #   doctor.sh --json     Machine-readable report (used by the LuCI UI)
 #   doctor.sh --blocking Only what failed, and what to do about it
+#   doctor.sh --agents <id>   Report on one agent rather than on the whole set
 #
 # The JSON form always contains "install_allowed": true|false. A FAIL on a
 # critical check blocks installation (DESIGN_SPEC.md section 3.6.4).
@@ -15,16 +16,44 @@
 # else, which satisfies none of the four — the person reading it could see that
 # they were stuck but not what they were stuck on. It reads the same accumulator
 # the other two forms do, so there is no second opinion about what failed.
+#
+# --agents exists because the Configuration page can ask for a single agent, and
+# the checks are about a set of agents rather than about the device: on a box
+# with no C++ runtime for the Node the npm three need, an install of every agent
+# is correctly blocked while an install of Claude Code is not. Without this the
+# page would report the whole-registry verdict over a narrowed selection and
+# tell the reader their install was blocked when the install job — which asks
+# the same question of the set it was given — would have run it.
 
 set -u
 . "${FCC_LIBDIR:-/usr/libexec/fcc}/common.sh"
 
 JSON=0
 BLOCKING=0
-case "${1:-}" in
-	--json)     JSON=1 ;;
-	--blocking) BLOCKING=1 ;;
-esac
+while [ $# -gt 0 ]; do
+	# ${1:-} rather than $1: the guard above already makes $1 safe here, but
+	# every other script in this directory reads its argument the same way, and
+	# tests/test_shell.sh holds them all to it.
+	case "${1:-}" in
+		--json)     JSON=1 ;;
+		--blocking) BLOCKING=1 ;;
+		--agents)   FCC_AGENT_SELECTION="${2:-}"; shift ;;
+		--agents=*) FCC_AGENT_SELECTION="${1#--agents=}" ;;
+	esac
+	shift
+done
+
+# Checked here rather than trusted, because the answer decides how much of the
+# report exists at all: an id the registry does not know matches no row, so the
+# checks would find nothing to require and the report would come out *more*
+# permissive than the truth. Refusing is the only safe direction — the same
+# grammar-and-registry test the controller applies before it gets here
+# (luci.fcc.util.valid_agent, luci.fcc.agents.exists).
+if [ -n "${FCC_AGENT_SELECTION:-}" ] && ! fcc_valid_agent "$FCC_AGENT_SELECTION"; then
+	printf 'doctor.sh: unknown agent: %s\n' "$FCC_AGENT_SELECTION" >&2
+	printf 'usage: doctor.sh [--json] [--blocking] [--agents <id>]\n' >&2
+	exit 2
+fi
 
 ROOT="$(fcc_root)"
 # The floor comes from common.sh, shared with install.sh: the report this script
@@ -363,8 +392,26 @@ if [ -n "$_node_ids" ]; then
 		add_result FAIL "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
 			"No Node.js build exists for this CPU ($(uname -m 2>/dev/null)), so $_node_unsatisfied cannot be installed here."
 	else
-		add_result WARN "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
-			"The installer fetches a musl Node.js for them before it runs; nothing to do by hand."
+		# The build exists for this CPU, so the fetch the warning below promises
+		# can happen — but a build that cannot load is not a Node, and the
+		# warning was a promise this package could not keep. The musl build is
+		# linked against libstdc++.so.6 and libgcc_s.so.1, and a stock image has
+		# neither (common.sh carries the measurement): on 2026-10-19 the Node
+		# this package fetched onto the test router was reported as installed
+		# and then died in the loader, taking the whole install with it.
+		#
+		# A FAIL, because it is not something this package can fix and the user
+		# can: one package, named here, before anything is downloaded. It closes
+		# install_allowed, which is the point — the alternative is a rollback and
+		# a transcript to read.
+		_node_libs="$(fcc_node_missing_libs)"
+		if [ -n "$_node_libs" ]; then
+			add_result FAIL "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
+				"The musl Node.js this package fetches needs $_node_libs, which this image has nowhere the loader looks: $(fcc_pkg_install_hint "$(fcc_node_lib_packages $_node_libs)")."
+		else
+			add_result WARN "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
+				"The installer fetches a musl Node.js for them before it runs; nothing to do by hand."
+		fi
 	fi
 fi
 

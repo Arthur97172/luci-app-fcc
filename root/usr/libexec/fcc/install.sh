@@ -833,6 +833,38 @@ provision_node() {
 		rm -rf "$_pn_tmp" "$_pn_dir"
 		return 1
 	fi
+
+	# On disk is not the same as runnable, and this is where the difference was
+	# being lost. The musl build is linked against libstdc++.so.6 and
+	# libgcc_s.so.1, a stock image has neither, and a Node that cannot load
+	# still extracts, still has the right name, and still passes every check
+	# that only looks at the filesystem — so the run reported "installed
+	# v22.23.3" over a binary that died in the loader, and the install then
+	# failed at the first npm agent with the reason 1064 lines into the
+	# transcript. Measured on the test router on 2026-10-19; common.sh carries
+	# the rest.
+	#
+	# Asked *before* `current` is moved, so a build that does not run leaves the
+	# pointer where it was rather than aiming it at a broken tree. The answer is
+	# the binary's own, not a guess from the file list: the loader writes its
+	# reason to stderr and this is that sentence.
+	_pn_run=""
+	if ! _pn_run="$("$_pn_dir/bin/node" --version 2>&1)"; then
+		_pn_why="$(printf '%s\n' "$_pn_run" | awk 'NR == 1 { print; exit }')"
+		fcc_log "$LOG" "node: the build fetched for $_pn_names does not run here: ${_pn_why:-no output}"
+		# The library is named only when it is actually the one missing. On a
+		# box that has it, the reason is something else — a CPU whose musl build
+		# was mislabelled, a truncated download that still matched nothing — and
+		# a log that blamed libstdc++ there would send the reader to install a
+		# package they already have.
+		_pn_missing="$(fcc_node_missing_libs)"
+		if [ -n "$_pn_missing" ]; then
+			fcc_log "$LOG" "node: this image has no $_pn_missing where the loader looks; $(fcc_pkg_install_hint "$(fcc_node_lib_packages $_pn_missing)") provides it"
+		fi
+		rm -rf "$_pn_tmp" "$_pn_dir" 2>/dev/null
+		return 1
+	fi
+
 	rm -f "$_pn_base/current" 2>/dev/null
 	if ! ln -s "$_pn_dir" "$_pn_base/current" 2>/dev/null; then
 		fcc_log "$LOG" "node: could not point $_pn_base/current at $_pn_dir"
@@ -840,7 +872,7 @@ provision_node() {
 		return 1
 	fi
 	rm -rf "$_pn_tmp" 2>/dev/null
-	fcc_log "$LOG" "node: installed $_pn_v (musl, $_pn_arch) at $_pn_dir"
+	fcc_log "$LOG" "node: installed $_pn_v (musl, $_pn_arch) at $_pn_dir, and it runs"
 	return 0
 }
 

@@ -150,8 +150,25 @@ function act_status_refresh()
 	relay("status", { "--refresh-versions" })
 end
 
+--- The pre-install report, for the whole registry unless one agent is named.
+---
+--- The checks are about a set of agents, not about the device: a box with no
+--- C++ runtime for the Node the npm three need is blocked for an install of
+--- every agent and not blocked for an install of Claude Code. The page's agent
+--- dropdown narrows the install, so the report has to be asked about the same
+--- set — otherwise the panel says the install is blocked while the job, which
+--- asks the shell the identical question about the id it was given, runs it.
+--- Nothing is named by default, which is the whole registry, exactly as before
+--- the dropdown existed.
 function act_doctor()
-	relay("doctor", { "--json" })
+	local argv = { "--json" }
+	local want = http.formvalue("agent")
+	if want and want ~= "" then
+		local id = util.valid_agent(want)
+		if not id or not agents.exists(id) then return fail("unknown agent") end
+		argv = { "--json", "--agents", id }
+	end
+	relay("doctor", argv)
 end
 
 function act_update_check()
@@ -358,21 +375,40 @@ end
 -- ---------------------------------------------------------------------------
 -- FCC runtime lifecycle
 -- ---------------------------------------------------------------------------
---- Install the runtime and every agent in the registry.
+--- Install the runtime and the agents the page asked for.
 --
 -- The page used to send a ticked subset (section 3.6.5) and this relayed it.
 -- It no longer sends one: the agent table is gone from the page (section
--- 104.25), and an install now takes the whole registry, so one install makes
--- every agent usable. The set is named by flag rather than listed here, so the
--- registry stays the only place it is written down.
+-- 104.25), and with nothing chosen an install takes the whole registry, so one
+-- install makes every agent usable. The set is named by flag rather than listed
+-- here, so the registry stays the only place it is written down.
+--
+-- What the page can send is one agent id, and that is not the table coming
+-- back — there is one value and no set to reconcile. It exists because the
+-- whole-registry install is all-or-nothing in a way that is easy to miss:
+-- upstream stops at the first agent it cannot install and rolls the entire run
+-- back (§79), so a device where one agent cannot be installed is a device where
+-- no agent can, and the only way out is to ask for them one at a time.
 --
 -- The cost of the whole set is real and is not hidden: a device that cannot
 -- hold it fails the install's own precheck, which names the check that failed
 -- and stops before downloading anything. That is a better answer than silently
 -- installing a subset nobody chose.
+--
+-- The id is checked against the registry here as well as in the shell. The
+-- shell refuses an unknown id on its own — the job stops with
+-- AGENT_SELECTION_REJECTED — but that reaches the page as a run that failed a
+-- moment after it started; this one arrives as the answer to the click.
 function act_install_runtime()
 	if not require_post() then return end
-	start_job({ "install", "runtime", "--all-agents" }, "fcc-runtime.log", "install")
+	local argv = { "install", "runtime", "--all-agents" }
+	local want = http.formvalue("agent")
+	if want and want ~= "" then
+		local id = util.valid_agent(want)
+		if not id or not agents.exists(id) then return fail("unknown agent") end
+		argv = { "install", "runtime", "--agents", id }
+	end
+	start_job(argv, "fcc-runtime.log", "install")
 end
 
 --- Remove the runtime and install it again with every agent.

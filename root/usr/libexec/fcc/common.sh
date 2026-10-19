@@ -912,6 +912,128 @@ fcc_node_agents_in() {
 }
 
 # ---------------------------------------------------------------------------
+# The C++ runtime the fetched Node is linked against
+# ---------------------------------------------------------------------------
+# The musl Node build this package downloads is not linked against everything it
+# needs. `readelf -d` on node-v22.23.3-linux-x64-musl/bin/node lists, among its
+# NEEDED entries,
+#
+#     libstdc++.so.6
+#     libgcc_s.so.1
+#
+# and a stock OpenWrt image has neither: the C++ runtime is a package of its own
+# (libstdcpp6 where apk is the package manager, libstdcpp where opkg is) and
+# libgcc_s arrives with libgcc1. Measured on the test router — 25.12.5, x86_64,
+# musl, 2026-10-19 — libgcc1 was installed and libstdcpp6 was not, and the Node
+# the installer had just fetched and reported as installed then failed to load
+# with
+#
+#     Error loading shared library libstdc++.so.6: No such file or directory
+#     (needed by /opt/fcc/data/.local/share/pi-node/current/bin/node)
+#
+# followed by 1064 "Error relocating ... symbol not found" lines, because every
+# C++ symbol in the binary resolves through that library. Installing libstdcpp6
+# by hand and running the same binary printed v22.23.3 — so that one package is
+# the whole of it, and no amount of care in the download can work around it.
+#
+# What it costs is the npm three, and the cost is not one agent's: upstream stops
+# at the first agent it cannot install and rolls the entire run back (§79), so a
+# missing library is the difference between an install that finishes and one that
+# does not, with the reason a thousand lines deep in a transcript. Both places
+# that can know the answer ask it: the doctor before anything is downloaded
+# (doctor.sh), and provision_node() of the binary it actually fetched
+# (install.sh).
+FCC_NODE_LIBS="libstdc++.so.6 libgcc_s.so.1"
+
+fcc_node_lib_package() {
+	# fcc_node_lib_package <soname> -> the package that provides it here.
+	#
+	# The package name is the one thing about this that differs between the two
+	# images this package supports, so it is asked of the image rather than
+	# written down once and wrong half the time — the same reasoning as
+	# fcc_pkg_install_hint() below.
+	case "$1" in
+		libstdc++.so.6)
+			if command -v apk >/dev/null 2>&1; then
+				printf 'libstdcpp6'
+			else
+				printf 'libstdcpp'
+			fi
+			;;
+		libgcc_s.so.1) printf 'libgcc1' ;;
+	esac
+}
+
+fcc_node_lib_packages() {
+	# fcc_node_lib_packages <soname...> -> the packages that provide them,
+	# deduplicated, in the order given, or nothing when none is known
+	_nlp_pkgs=""
+	for _nlp_lib in "$@"; do
+		_nlp_pkg="$(fcc_node_lib_package "$_nlp_lib")"
+		[ -n "$_nlp_pkg" ] || continue
+		case " $_nlp_pkgs " in
+			*" $_nlp_pkg "*) ;;
+			*) _nlp_pkgs="$_nlp_pkgs $_nlp_pkg" ;;
+		esac
+	done
+	printf '%s' "${_nlp_pkgs# }"
+}
+
+fcc_node_lib_dirs() {
+	# fcc_node_lib_dirs -> the directories the dynamic loader searches, one per
+	# line.
+	#
+	# The loader's built-in path on this image is /lib:/usr/lib; /lib64 and
+	# /usr/lib64 are in the list because the same question is asked on a build
+	# host, where that is where a C++ runtime lives. LD_LIBRARY_PATH is honoured
+	# because the loader honours it, and because it is how a test points this at
+	# a fixture instead of at whatever the machine running the tests has.
+	#
+	# FCC_NODE_LIB_DIRS replaces the built-in list, which is what makes the two
+	# answers below testable rather than a description of the test host.
+	_nld_dirs="${FCC_NODE_LIB_DIRS:-/lib:/usr/lib:/lib64:/usr/lib64}"
+	_nld_dirs="$_nld_dirs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	# musl reads /etc/ld-musl-<arch>.path in place of its built-in path when
+	# that file is there. It is added to the list rather than replacing it: this
+	# answers "is the library anywhere the loader would look", and a directory
+	# left out is a library called missing on a box that has it — which would
+	# FAIL the doctor and block an install that works.
+	for _nld_path in /etc/ld-musl-*.path; do
+		[ -f "$_nld_path" ] || continue
+		_nld_dirs="$_nld_dirs:$(tr '\n' ':' < "$_nld_path" 2>/dev/null)"
+	done
+	printf '%s\n' "$_nld_dirs" | tr ':' '\n'
+}
+
+fcc_node_missing_libs() {
+	# fcc_node_missing_libs -> which of FCC_NODE_LIBS this image has nowhere the
+	# loader would look, space separated, or nothing when it has them all.
+	#
+	# A presence check rather than a loader invocation, and the difference is
+	# worth being plain about: the loader can only be asked to resolve a NEEDED
+	# entry by being handed a binary that carries one, and the binary is the
+	# thing that has not been downloaded yet — asking this question first is the
+	# entire point. What the loader does with a NEEDED entry and no RUNPATH is
+	# search these directories for that name, which is what this does. The
+	# authoritative answer is the one provision_node() gets by running the Node
+	# it fetched; this one exists to reach the user before 30 MB and a rollback.
+	_nml_dirs="$(fcc_node_lib_dirs)"
+	_nml_missing=""
+	for _nml_lib in $FCC_NODE_LIBS; do
+		_nml_found=""
+		for _nml_dir in $_nml_dirs; do
+			[ -n "$_nml_dir" ] || continue
+			if [ -e "$_nml_dir/$_nml_lib" ]; then
+				_nml_found=1
+				break
+			fi
+		done
+		[ -n "$_nml_found" ] || _nml_missing="$_nml_missing $_nml_lib"
+	done
+	printf '%s' "${_nml_missing# }"
+}
+
+# ---------------------------------------------------------------------------
 # tar: the one tool uv's own installer needs, and the one BusyBox cannot be
 # ---------------------------------------------------------------------------
 # uv's standalone installer unpacks its release archive with

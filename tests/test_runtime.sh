@@ -3740,10 +3740,30 @@ EOF
 # answer being tested against. The agent set matters the same way, so it comes
 # in through the environment rather than from whatever is installed here.
 #   sh_doctor_tools '<tools>' '<VAR=value ...>' [doctor args...]
+#
+# The library search path is a third such question and is answered here for the
+# same reason. The node row asks whether the loader could find the two
+# libraries a musl Node.js is linked against — libstdc++.so.6 and libgcc_s.so.1
+# — because a stock image has neither and the binary then dies in the loader
+# with its reason a thousand lines into the log. Measured on the test router on
+# 2026-10-19; common.sh carries the rest. Left to the machine running the
+# tests, that question is about *this* machine: a glibc build host keeps its
+# libstdc++ in /usr/lib/<triplet>, which no OpenWrt image has and the scan does
+# not look in, so the row would FAIL here and close the gate under assertions
+# about fold and sleep that have nothing to do with it. The fixture below is
+# what a router that has both looks like, and it is the default for every case;
+# a case that needs the other answer overrides it, since env applies these left
+# to right and the assignments handed in come after.
 sh_doctor_tools() {
 	_dt_tools="$1"; _dt_env="$2"; shift 2
 	rm -rf "$SANDBOX/doctorbin"
-	mkdir -p "$SANDBOX/doctorbin"
+	mkdir -p "$SANDBOX/doctorbin" "$SANDBOX/nodelibs"
+	# Empty files: the scan is a presence check, and the answer that matters is
+	# whether the fetched Node runs, which provision_node() asks of the binary
+	# itself — see test_provision_node_refuses_a_build_that_does_not_run.
+	for _dt_lib in libstdc++.so.6 libgcc_s.so.1; do
+		: > "$SANDBOX/nodelibs/$_dt_lib"
+	done
 	# sh, because PATH has to hold the shell that is about to be run. A name may
 	# be an absolute path, so a stand-in tool can be put on this PATH under its
 	# own basename; see sh_common_tools above.
@@ -3757,6 +3777,8 @@ sh_doctor_tools() {
 		FCC_AGENTS_CONF="$AGENTS_CONF" \
 		FCC_VERSION_FILE="$ROOT/VERSION" \
 		FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		FCC_NODE_LIB_DIRS="$SANDBOX/nodelibs" \
+		LD_LIBRARY_PATH= \
 		$_dt_env \
 		sh "$LIBEXEC/doctor.sh" "$@" 2>&1
 }
@@ -4004,8 +4026,14 @@ test_doctor_sleep_check_follows_the_agent_set() {
 # installer runs, which is why the row is a warning rather than a failure:
 # there is nothing for the reader to do.
 #
-# It is a failure on exactly one box — a CPU no Node build exists for — because
-# there the promise cannot be kept, and a warning would read as "handled".
+# It is a failure on two boxes, and both are here because on those the promise
+# cannot be kept and a warning would read as "handled". One is a CPU no Node
+# build exists for. The other is the one the test router turned out to be: the
+# musl build is linked against libstdc++.so.6 and libgcc_s.so.1, a stock image
+# has neither, and a Node that dies in the loader is still a Node the installer
+# cannot use — measured on 2026-10-19, where the install stopped at Pi with
+# 1064 relocation errors and no reason anywhere a reader would look. That one
+# has a remedy, so the row names the package rather than only the library.
 test_doctor_node_check_follows_the_agent_set() {
 	setup_sandbox
 	make_standin_tool curl 'exit 0' >/dev/null
@@ -4044,6 +4072,87 @@ test_doctor_node_check_follows_the_agent_set() {
 	assert_contains "$_dnc_fail" 'mips' "and names the CPU it asked about"
 	assert_contains "$(sh_doctor_tools "$_dnc_tools $SANDBOX/standin/uname" 'FCC_AGENT_SELECTION=pi' --json)" \
 		'"install_allowed": false' "and it closes the gate, because it cannot be fixed here"
+
+	# The libraries the fetched Node is linked against, absent: a failure too,
+	# and the one this check was extended for. The scan is pointed at a
+	# directory with nothing in it, which overrides the fixture every other case
+	# in this file runs against — and LD_LIBRARY_PATH is cleared again because
+	# the assignment handed in comes after the default and would otherwise leave
+	# the host's own path in the list the scan reads.
+	#
+	# The assertion is on the row rather than on the gate alone: a FAIL with no
+	# remedy is what the reader was getting from the log, and the point of
+	# asking before anything is downloaded is that the row can name the package.
+	mkdir -p "$SANDBOX/nolibs"
+	_dnc_libs_env="FCC_NODE_LIB_DIRS=$SANDBOX/nolibs LD_LIBRARY_PATH="
+	_dnc_libs="$(sh_doctor_tools "$_dnc_tools" "$_dnc_libs_env FCC_AGENT_SELECTION=pi" --json |
+		grep '"name": "node"')"
+	assert_contains "$_dnc_libs" '"status": "FAIL"' \
+		"a musl Node's libraries nowhere the loader looks is a failure"
+	assert_contains "$_dnc_libs" 'libstdc++.so.6' \
+		"and the report names the library rather than only the Node"
+	assert_contains "$_dnc_libs" 'libgcc_s.so.1' "and the other one with it"
+	assert_contains "$_dnc_libs" 'opkg install libstdcpp libgcc1' \
+		"and says which packages provide them, which is the part a reader can act on"
+	assert_not_contains "$_dnc_libs" 'nothing to do by hand' \
+		"and does not promise the installer handles it, because it does not"
+	assert_contains "$(sh_doctor_tools "$_dnc_tools" "$_dnc_libs_env FCC_AGENT_SELECTION=pi" --json)" \
+		'"install_allowed": false' \
+		"and it closes the gate before anything is downloaded"
+}
+
+# The report is about a set of agents, not about the device.
+#
+# The checks ask what the agents being installed need, so one box can be blocked
+# for one install and open for another: the test router has no C++ runtime for
+# the Node the npm three need, which makes an install of every agent impossible
+# and an install of Claude Code unremarkable. The Configuration page can ask for
+# a single agent (section 79 is why), so the report has to be able to answer
+# about one — otherwise the panel says the install is blocked while the job,
+# which asks the shell the same question about the id it was given, runs it.
+#
+# Every answer here comes from the same doctor with one argument changed, so the
+# difference between them cannot be anything but the argument.
+test_doctor_reports_on_the_set_it_is_asked_about() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	make_standin_tool fold 'exit 0' >/dev/null
+	make_standin_tool sleep 'exit 0' >/dev/null
+	_dro_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl $SANDBOX/standin/fold $SANDBOX/standin/sleep mktemp mkdir rm tar"
+	mkdir -p "$SANDBOX/nolibs"
+	_dro_env="FCC_NODE_LIB_DIRS=$SANDBOX/nolibs LD_LIBRARY_PATH="
+
+	# No argument: the whole registry, which is what the page sends when its
+	# dropdown says nothing — the node row fails and that install is blocked.
+	_dro_all="$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json)"
+	assert_contains "$_dro_all" '"name": "node"' "the whole registry has a node row"
+	assert_contains "$_dro_all" '"install_allowed": false' \
+		"and an install of every agent is blocked without those libraries"
+
+	# One agent that needs no Node: no node row at all, and nothing blocking —
+	# which is the install the page is offering a reader who has just narrowed
+	# it, and the answer the panel has to give them.
+	_dro_one="$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents claude)"
+	assert_not_contains "$_dro_one" '"name": "node"' \
+		"an agent that needs no Node gets no node row when it is the set"
+	assert_contains "$_dro_one" '"install_allowed": true' \
+		"and that install is not blocked, which is what the job would find too"
+
+	# And narrowing to an agent that does need it: blocked, for the same reason.
+	# Without this the case above would hold just as well against a flag that
+	# switched the checks off rather than one that answered about a set.
+	_dro_pi="$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents pi)"
+	assert_contains "$_dro_pi" '"install_allowed": false' \
+		"and an agent that does need it is blocked, so the answer follows the set"
+
+	# An id the registry does not know is refused rather than answered. It
+	# matches no row, so the checks would find nothing to require and the report
+	# would come out *more* permissive than the truth — the one direction a gate
+	# may not be wrong in.
+	assert_no "an agent the registry does not know is refused" \
+		sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents nosuchagent
+	assert_contains "$(sh_doctor_tools "$_dro_tools" "$_dro_env" --json --agents nosuchagent 2>&1 || true)" \
+		'unknown agent' "and the refusal says which argument was wrong"
 }
 
 # The tar check, which exists because uv's own installer cannot unpack its
@@ -4994,6 +5103,11 @@ test_the_pi_installers_own_questions_are_answered() {
 # down, so this works on a build host that is not x86_64; it prints the release
 # directory's name.
 #
+# The optional argument is the fixture node's body. It exists for the test about
+# a build that extracts and does not run — a stand-in has to be able to fail the
+# way the real binary failed, and there is no other way to put that in the
+# archive. Left out, the node answers the version it is named for.
+#
 # The stand-in curl goes in a directory of its own rather than in $SANDBOX/bin.
 # That PATH entry is shared by every test in the run, and the tests run in
 # alphabetical order rather than in the order they are written — so a curl left
@@ -5001,13 +5115,18 @@ test_the_pi_installers_own_questions_are_answered() {
 # talk to a real listener. The tests below put this directory on PATH themselves
 # instead.
 make_node_release_fixture() {
+	_nrf_node="${1:-}"
 	_nrf_arch="$(sh_common 'fcc_node_arch')"
 	[ -n "$_nrf_arch" ] || return 1
 	_nrf_name="node-v22.23.3-linux-$_nrf_arch-musl"
 
 	rm -rf "$SANDBOX/nodebin" "$SANDBOX/fixture"
 	mkdir -p "$SANDBOX/nodebin" "$SANDBOX/fixture/http" "$SANDBOX/fixture/$_nrf_name/bin"
-	printf '#!/bin/sh\nprintf "v22.23.3\\n"\n' > "$SANDBOX/fixture/$_nrf_name/bin/node"
+	if [ -n "$_nrf_node" ]; then
+		printf '%s\n' "$_nrf_node" > "$SANDBOX/fixture/$_nrf_name/bin/node"
+	else
+		printf '#!/bin/sh\nprintf "v22.23.3\\n"\n' > "$SANDBOX/fixture/$_nrf_name/bin/node"
+	fi
 	printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/fixture/$_nrf_name/bin/npm"
 	chmod +x "$SANDBOX/fixture/$_nrf_name/bin/node" "$SANDBOX/fixture/$_nrf_name/bin/npm"
 	( cd "$SANDBOX/fixture" && tar -czf "http/$_nrf_name.tar.xz" "$_nrf_name" ) || return 1
@@ -5149,6 +5268,87 @@ test_provision_node_refuses_an_archive_that_does_not_match() {
 		test -e "$_dpn_base/current"
 	assert_contains "$(cat "$_dpn_logs/fcc-runtime.log")" 'failed its checksum' \
 		"and the log says why rather than leaving a missing node unexplained"
+}
+
+# The difference between on disk and runnable, which is where the install that
+# started all of this was lost.
+#
+# The musl build is linked against libstdc++.so.6 and libgcc_s.so.1, and a
+# stock image has neither. A Node whose libraries are missing still extracts,
+# still has the right name, and still passes every check that only looks at the
+# filesystem — so the run reported "installed v22.23.3" over a binary that died
+# in the loader, and then failed at the first npm agent with the reason 1064
+# lines into the transcript. Measured on the test router on 2026-10-19;
+# common.sh carries the measurement.
+#
+# So the fetched binary is asked for its version before `current` is moved. Two
+# things have to hold, and this test is about both. The build is thrown away —
+# a tree left behind under the name the next run expects is a tree the next run
+# will reuse. And the pointer is left where it was, which is why the failure
+# returns *before* the rm: everything downstream resolves through `current`, so
+# a pointer aimed at a build that does not run is worse than no pointer at all.
+# The Node already there is deliberately one the agents cannot use, because
+# otherwise provision_node() returns early and none of this is reached.
+#
+# The stand-in fails the way the real binary failed, with the loader's sentence
+# on stderr rather than an arbitrary error: a test whose node just said "no"
+# would pass against a check that read the exit status alone, and it is the
+# sentence that has to reach the log.
+test_provision_node_refuses_a_build_that_does_not_run() {
+	setup_sandbox
+	_dpr_name="$(make_node_release_fixture '#!/bin/sh
+echo "Error loading shared library libstdc++.so.6: No such file or directory" >&2
+echo "Error relocating /opt/fcc/data/.local/share/pi-node/current/bin/node: __cxa_throw: symbol not found" >&2
+exit 1')" || skip "no musl Node architecture on this host"
+	_dpr_base="$SANDBOX/optrun/fcc/data/.local/share/pi-node"
+	_dpr_logs="$SANDBOX/diaglogs"
+	mkdir -p "$_dpr_logs" "$SANDBOX/nolibs" "$_dpr_base/old/bin"
+	: > "$_dpr_logs/fcc-runtime.log"
+
+	# The Node that is already there: too old for any of the npm agents, so it
+	# does not satisfy the floor and the fetch goes ahead — and it is what
+	# `current` points at, which is how the assertions below can tell that a
+	# failure left the pointer alone instead of moving it to the build it threw
+	# away. npm comes with it because the floor is asked of a directory holding
+	# both, the same way the real one does.
+	printf '#!/bin/sh\nprintf "v18.0.0\\n"\n' > "$_dpr_base/old/bin/node"
+	printf '#!/bin/sh\nexit 0\n' > "$_dpr_base/old/bin/npm"
+	chmod +x "$_dpr_base/old/bin/node" "$_dpr_base/old/bin/npm"
+	ln -s "$_dpr_base/old" "$_dpr_base/current"
+
+	# The library scan is pointed at an empty directory, so that the second log
+	# line — the one naming the package to install — is the answer this case is
+	# about rather than a description of the machine running the tests.
+	sh_install "fcc_dir_logs() { printf '%s' '$_dpr_logs'; }
+		PATH='$SANDBOX/nodebin':\$PATH
+		FCC_NODE_LIB_DIRS='$SANDBOX/nolibs' LD_LIBRARY_PATH=
+		provision_node pi" "$SANDBOX/optrun" >/dev/null 2>&1
+
+	_dpr_log="$(cat "$_dpr_logs/fcc-runtime.log")"
+	assert_contains "$_dpr_log" 'does not run here' \
+		"a build that dies in the loader is reported as one that does not run"
+	assert_contains "$_dpr_log" 'Error loading shared library libstdc++.so.6' \
+		"and the log carries the loader's own sentence rather than a summary of it"
+	assert_not_contains "$_dpr_log" 'installed v22.23.3' \
+		"and it is not reported as installed, which is what it was before"
+	assert_eq "$_dpr_base/old" "$(readlink "$_dpr_base/current")" \
+		"and current is left where it was rather than aimed at a build that cannot run"
+	assert_no "the build that does not run is not left on disk" \
+		test -e "$_dpr_base/$_dpr_name"
+
+	# The library is named only when it is the one actually missing — on a box
+	# that has it the reason is something else, and blaming libstdc++ there
+	# sends the reader to install a package they already have. That branch is
+	# pinned from the other side by the doctor test; this asserts the half that
+	# can be produced here, and only where the scan can be made to say so, since
+	# a musl host whose /etc/ld-musl-*.path names a directory holding the real
+	# libraries would find them whatever this case asks for.
+	if [ -n "$(sh_common "FCC_NODE_LIB_DIRS='$SANDBOX/nolibs' LD_LIBRARY_PATH= fcc_node_missing_libs")" ]; then
+		assert_contains "$_dpr_log" 'libstdc++.so.6' \
+			"and the log names the library the loader could not find"
+		assert_contains "$_dpr_log" 'opkg install libstdcpp libgcc1' \
+			"and the package that provides it, which is the part a reader can act on"
+	fi
 }
 
 # The Node has to be fetched from an environment this package does not own.

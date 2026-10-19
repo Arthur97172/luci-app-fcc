@@ -33,6 +33,9 @@ msgstr ""
 msgid "Agents"
 msgstr ""
 
+msgid "All agents"
+msgstr ""
+
 msgid "All unsaved terminal state will be lost."
 msgstr ""
 
@@ -61,6 +64,9 @@ msgid "Check for updates"
 msgstr ""
 
 msgid "Checking…"
+msgstr ""
+
+msgid "Choose a single agent to install just that one. The upstream installer stops at the first agent it cannot install and rolls the whole run back, so this is how the agents that work on this device are installed when one of them does not."
 msgstr ""
 
 msgid "Clean up finished sessions"
@@ -117,7 +123,7 @@ msgstr ""
 msgid "Install an agent first (Configuration → Agents)."
 msgstr ""
 
-msgid "Install downloads the FCC runtime and every coding agent in the registry, so one install makes them all usable. This can take several minutes on a router; progress is shown below."
+msgid "Install downloads the FCC runtime and the agents you choose — every agent in the registry by default. This can take several minutes on a router; progress is shown below."
 msgstr ""
 
 msgid "Install path"

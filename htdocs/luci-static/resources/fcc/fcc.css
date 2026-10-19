@@ -27,6 +27,11 @@
 
 .fcc-toolbar .spacer { flex: 1 1 auto; }
 
+/* The runtime toolbar's agent dropdown. The label is a word sitting between two
+ * controls rather than a form field's title, so it takes the dim colour the
+ * notes under the toolbar use — otherwise it reads as a third button. */
+.fcc-toolbar-label { color: var(--fcc-text-dim); }
+
 .fcc-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(15em, 1fr));

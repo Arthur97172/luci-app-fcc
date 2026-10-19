@@ -278,12 +278,26 @@
 
 	/* -------------------------------------------------------------- doctor */
 
+	/* The report is about a set of agents, not about the device — the checks ask
+	 * what the agents being installed need, so an install of every agent can be
+	 * blocked by something an install of Claude Code does not care about. The
+	 * dropdown narrows the install, so it narrows the report with it: otherwise
+	 * the panel says the install is blocked while the job, which asks the shell
+	 * the same question about the id it was given, would run it. With nothing
+	 * chosen the report is the whole registry, which is what it was before the
+	 * dropdown existed. */
+	function doctorParams() {
+		var picker = FCC.$('#fcc-runtime-agent');
+		var agent = picker ? picker.value : '';
+		return agent ? { agent: agent } : {};
+	}
+
 	function runDoctor() {
 		var box = FCC.$('#fcc-doctor');
 		box.innerHTML = '';
 		box.appendChild(FCC.el('div', { class: 'fcc-muted', text: FCC._('Running checks…') }));
 
-		FCC.api('doctor', {}, { method: 'GET' }).then(function (d) {
+		FCC.api('doctor', doctorParams(), { method: 'GET' }).then(function (d) {
 			box.innerHTML = '';
 			var table = FCC.el('table', { class: 'fcc-table fcc-checks' });
 			(d.checks || []).forEach(function (c) {
@@ -324,6 +338,7 @@
 
 	function init() {
 		FCC.$('#fcc-save').addEventListener('click', saveConfig);
+		var agentPicker = FCC.$('#fcc-runtime-agent');
 
 		Array.prototype.forEach.call(
 			document.querySelectorAll('[data-op]'),
@@ -332,14 +347,32 @@
 			}
 		);
 
-		/* Install takes the whole registry, and the backend builds that set: the
-		 * button sends no agent list at all. It used to send the ticked boxes
-		 * (section 3.6.5), which is why the page carried a selection — and an
-		 * empty selection meant "install none", so a press before the table had
-		 * been drawn had to be special-cased. Nothing to special-case now. */
+		/* Install takes the whole registry unless the agent dropdown narrows it,
+		 * and the backend builds that set: with nothing chosen the button sends
+		 * no agent list at all. It used to send the ticked boxes (section
+		 * 3.6.5), which is why the page carried a selection — and an empty
+		 * selection meant "install none", so a press before the table had been
+		 * drawn had to be special-cased. Nothing to special-case now: the
+		 * dropdown's empty value is the whole registry, which is what the page
+		 * did before the dropdown existed.
+		 *
+		 * One agent id, not a set. The upstream installer stops at the first
+		 * agent it cannot install and rolls the whole run back (§79), so a
+		 * device that cannot install one agent cannot install any of them
+		 * unless they can be asked for one at a time. */
 		FCC.$('#fcc-runtime-install').addEventListener('click', function () {
-			runJobAction('install_runtime', {}, 'install', 'fcc-runtime.log');
+			var picker = FCC.$('#fcc-runtime-agent');
+			var agent = picker ? picker.value : '';
+			runJobAction('install_runtime', agent ? { agent: agent } : {},
+				'install', 'fcc-runtime.log');
 		});
+		/* The dropdown decides which set the report is about, so changing it
+		 * re-runs the report: a panel still describing the whole registry would
+		 * contradict the choice just made, and the contradiction is worst in the
+		 * one case the dropdown exists for — a reader who has narrowed the
+		 * install to an agent that does not need the failing thing, and is told
+		 * their install is blocked. */
+		if (agentPicker) { agentPicker.addEventListener('change', runDoctor); }
 		/* Reinstall is its own operation, not a flavour of Install: it removes
 		 * the runtime first, because the upstream installer reconciles the agent
 		 * set rather than reinstalling what is already there (section 104.25). */

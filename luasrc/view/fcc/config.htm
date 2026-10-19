@@ -10,6 +10,13 @@
  to choose a subset before installing. It is gone, and an install now takes the
  whole registry (section 104.25): the choice it offered was one the FCC runtime
  does not really support, and the table was most of what this page was.
+
+ What the runtime toolbar does carry is one agent dropdown, and it is not that
+ table coming back. It holds a single value, it is read only when Install is
+ pressed, and it exists for the one thing the whole-registry install cannot do:
+ upstream stops at the first agent it cannot install and rolls the whole run
+ back (section 79), so a device that cannot install one agent cannot install any
+ of them without a way to ask for them one at a time.
 -%>
 
 <%+header%>
@@ -122,6 +129,30 @@
 			<div id="fcc-runtime-state" class="fcc-card"><%:Loading…%></div>
 
 			<div class="fcc-toolbar">
+				<!-- Section 104.25 took the agent table off this page and made an
+				     install take the whole registry. That is still what the
+				     Install button does with nothing chosen here — the backend
+				     is sent the flag, not a list, so the registry stays the only
+				     place the set is written down — but it is no longer the only
+				     useful thing to do with the button.
+
+				     Upstream stops at the first agent it cannot install and
+				     rolls the whole run back (section 79), so on a device where
+				     one agent cannot be installed, the other nine are otherwise
+				     unreachable: every install ends in the same rollback. One
+				     agent id, read when Install is pressed, is what makes them
+				     reachable one at a time.
+
+				     Deliberately not the table that was removed: no tick boxes,
+				     no recommended set, no per-row buttons, nothing to
+				     reconcile — a single value with a single meaning. -->
+				<label class="fcc-toolbar-label" for="fcc-runtime-agent"><%:Agent%></label>
+				<select id="fcc-runtime-agent" class="cbi-input-select">
+					<option value=""><%:All agents%></option>
+					<% for _, fcc_agent in ipairs(require("luci.fcc.agents").load()) do %>
+					<option value="<%=fcc_agent.id%>"><%=fcc_agent.name%></option>
+					<% end %>
+				</select>
 				<button id="fcc-runtime-install" class="cbi-button cbi-button-apply"><%:Install%></button>
 				<button id="fcc-runtime-reinstall" class="cbi-button"><%:Reinstall%></button>
 				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
@@ -132,7 +163,11 @@
 
 			<div class="fcc-help">
 				<p class="fcc-muted">
-					<%:Install downloads the FCC runtime and every coding agent in the registry, so one install makes them all usable. This can take several minutes on a router; progress is shown below.%>
+					<%:Install downloads the FCC runtime and the agents you choose — every agent in the registry by default. This can take several minutes on a router; progress is shown below.%>
+				</p>
+
+				<p class="fcc-muted">
+					<%:Choose a single agent to install just that one. The upstream installer stops at the first agent it cannot install and rolls the whole run back, so this is how the agents that work on this device are installed when one of them does not.%>
 				</p>
 
 				<p class="fcc-muted">
