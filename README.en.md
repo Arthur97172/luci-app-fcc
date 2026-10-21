@@ -197,6 +197,16 @@ is refused with `AGENT_UNSUPPORTED` instead of being allowed to hit that
 guaranteed failure. The diagnostics report it as a WARN "not available", not as
 a missing dependency.
 
+`git` is needed for one agent only: the Hermes installer fetches its sources
+with `git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git`,
+and OpenWrt splits the HTTPS transport into the `git-http` package — a machine
+with plain `git` runs the binary but fails the clone at its first step. The
+check therefore covers both halves: git runs, and its `--exec-path` holds
+`git-remote-https`. Either half missing is a FAIL naming `git-http`, which
+depends on `git` and so clears both at once. A fresh 24.10.8 has neither, and
+the installer stops with `✗ git is required. Install it with your system
+package manager.`
+
 `luci-compat` is the other load-bearing one, and less obviously so. OpenWrt
 24.10 and 25.12 moved LuCI's core to ucode: `luci-base` no longer ships
 `/usr/lib/lua/luci` at all. The Lua dispatcher and template engine that this
@@ -231,16 +241,18 @@ What it may install:
 | bash | `bash` | Claude Code, OpenCode, Hermes, Grok Build, Muse Code |
 | fold | `coreutils-fold` | Codex's installer |
 | sleep | `coreutils-sleep` | Pi's installer, whose sleep must take fractions |
-| Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node Pi and DeepSeek Harness fetch |
+| git | `git-http` | The Hermes installer clones its repository (HTTPS lives in `git-http`) |
+| Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node Pi and DeepSeek Harness fetch, and the one the Hermes installer fetches |
 | curl | `curl` | Downloading the installer and the runtime |
 
 The names are the same on 24.10 (opkg) and 25.12 (apk). `libstdcpp6` follows
 the SONAME's major suffix (`libstdc++.so.6`), not the package manager; GNU tar
 and coreutils install under `/usr/libexec/` with alternatives taking over
 `/bin/tar`, `/bin/sleep` and `/usr/bin/fold`, so they take effect instead of
-losing to BusyBox's applet of the same name. The command follows the image:
-`apk add` on 25.12, `opkg install` on 24.10, with one repository-index update
-and a retry when the first attempt fails.
+losing to BusyBox's applet of the same name. `git-http` ships
+`/usr/lib/git-core/git-remote-https` and pulls `git` in as its dependency. The
+command follows the image: `apk add` on 25.12, `opkg install` on 24.10, with one
+repository-index update and a retry when the first attempt fails.
 
 **Clear log**, beside **Run checks**, empties the panel and nothing on disk.
 

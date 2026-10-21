@@ -805,7 +805,25 @@ fcc_agents_need_bash() {
 # the failure is a bare exit code again. `opkg install coreutils-sleep` gives
 # GNU sleep 9.7 and the animation runs.
 #
-# The two are why the check below asks a *capability* question per tool rather
+# **The tool is there but cannot do the job asked of it.** git is the same kind
+# of gap one step further along: the Hermes installer clones its repository
+#
+#     git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git
+#
+# and `git` alone cannot do that. The HTTPS transport lives in a separate
+# package on OpenWrt — git-http, which carries git-remote-https in
+# /usr/lib/git-core — while `git` itself is a working binary that refuses the
+# clone with "unable to find remote helper for 'https'". Measured on the router
+# on 2026-10-21: a fresh 24.10.8 image has no git at all, so Hermes stops at
+#
+#     ✗ git is required. Install it with your system package manager.
+#     error: Hermes Agent installation failed with exit code 1.
+#
+# and installing git alone would move the failure inside the clone. The check
+# below therefore asks for both halves, and the package it names is git-http:
+# that one depends on git, so installing it fills the gap either way.
+#
+# The three are why the check below asks a *capability* question per tool rather
 # than testing for the binary: for sleep, "is it installed" is the wrong
 # question and answers yes.
 #
@@ -813,13 +831,17 @@ fcc_agents_need_bash() {
 # not a claim about the ones not listed: install.sh reports the tool name out of
 # the installer's own transcript, so a gap this table has never heard of still
 # reaches the log with the command in it and the line it failed on.
-FCC_INSTALLER_TOOLS="fold sleep"
+FCC_INSTALLER_TOOLS="fold sleep git"
 
 fcc_tool_package() {
 	# fcc_tool_package <tool> -> the package that provides it here
+	#
+	# git-http, not git: the binary comes with git, but the HTTPS transport the
+	# Hermes clone needs does not, and git-http depends on git.
 	case "$1" in
 		fold)  printf 'coreutils-fold' ;;
 		sleep) printf 'coreutils-sleep' ;;
+		git)   printf 'git-http' ;;
 	esac
 }
 
@@ -828,6 +850,7 @@ fcc_tool_agents() {
 	case "$1" in
 		fold)  printf 'codex' ;;
 		sleep) printf 'pi' ;;
+		git)   printf 'hermes' ;;
 	esac
 }
 
@@ -837,10 +860,19 @@ fcc_tool_works() {
 	# A capability probe, not a presence test. fold is asked whether it exists,
 	# because BusyBox either has the applet or does not. sleep is asked to do the
 	# thing the Pi installer asks of it, because the applet is present on every
-	# image and only some of them can do it.
+	# image and only some of them can do it. git is asked for its exec-path and
+	# then for git-remote-https in it, because a git that cannot clone over HTTPS
+	# is present and useless for the Hermes install.
 	case "$1" in
 		fold)  command -v fold >/dev/null 2>&1 ;;
 		sleep) sleep 0.075 2>/dev/null ;;
+		git)
+			command -v git >/dev/null 2>&1 || return 1
+			# Compiler-style variables, not locals: POSIX sh has one scope for
+			# functions, so the name is prefixed like the rest of this file's.
+			_fgw_exec="$(git --exec-path 2>/dev/null)" || return 1
+			[ -n "$_fgw_exec" ] && [ -x "$_fgw_exec/git-remote-https" ]
+			;;
 		*)     command -v "$1" >/dev/null 2>&1 ;;
 	esac
 }
@@ -850,6 +882,7 @@ fcc_tool_purpose() {
 	case "$1" in
 		fold)  printf 'the Codex installer reads the latest release through it' ;;
 		sleep) printf 'the Pi installer animates its logo with fractional sleeps' ;;
+		git)   printf 'the Hermes installer clones its repository and cannot without the HTTPS transport' ;;
 	esac
 }
 

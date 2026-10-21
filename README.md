@@ -160,6 +160,14 @@ OpenCode、Hermes、Grok Build、Muse Code——交给各自的 bash 安装脚�
 安装直接以 `AGENT_UNSUPPORTED` 拒绝，而不是去撞那个必然的失败。诊断报告把它标为 WARN
 "not available"，而不是报成缺少依赖。
 
+`git` 只在安装 Hermes 时才是需要的：Hermes 的安装器用
+`git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git` 取回自己的
+源码，而 OpenWrt 把 HTTPS 传输拆在 `git-http` 包里——只装 `git` 的机器能运行 git，
+克隆却在第一步失败。诊断因此检查两半：git 能跑，且它 `--exec-path` 下有
+`git-remote-https`；缺哪一半都报 FAIL，并给出 `git-http`（它依赖 `git`，一条命令补齐）。
+fresh 24.10.8 上两样都没有，安装器报的是 `✗ git is required. Install it with your system
+package manager.`，整个安装就停在那儿。
+
 `luci-compat` 是另一个关键依赖，而且不那么显眼。OpenWrt 24.10 和 25.12 把 LuCI 核心
 迁到了 ucode：`luci-base` 已经完全不包含 `/usr/lib/lua/luci`。本包的控制器和视图所
 运行的 Lua 调度器与模板引擎现在位于 `luci-lua-runtime`，而 `luci-compat` 依赖它——
@@ -187,14 +195,17 @@ Node——都不会去动系统，而是直接拒绝安装并给出完整报告�
 | bash | `bash` | Claude Code、OpenCode、Hermes、Grok Build、Muse Code |
 | fold | `coreutils-fold` | Codex 的安装脚本 |
 | sleep | `coreutils-sleep` | Pi 的安装脚本（它的 sleep 要接受小数秒） |
-| Node 的 C++ 运行库 | `libstdcpp6`，必要时还有 `libgcc1` | Pi、DeepSeek Harness 取回的 musl Node |
+| git | `git-http` | Hermes 的安装器克隆它的代码仓库（HTTPS 传输在 `git-http` 里） |
+| Node 的 C++ 运行库 | `libstdcpp6`，必要时还有 `libgcc1` | Pi、DeepSeek Harness 取回的 musl Node，以及 Hermes 安装器自己取回的 Node |
 | curl | `curl` | 下载安装器与运行时 |
 
 包名在 24.10（opkg）和 25.12（apk）上相同。`libstdcpp6` 跟的是 SONAME 的主版本号
 （`libstdc++.so.6`），不是包管理器的命名；GNU tar 和 coreutils 都装在 `/usr/libexec/`
 下，再由 alternatives 接管 `/bin/tar`、`/bin/sleep` 和 `/usr/bin/fold`，所以装完真正
-生效，不会被 BusyBox 的同名 applet 挡在前面。安装命令按机器上的包管理器生成：25.12 用
-`apk add`，24.10 用 `opkg install`，第一次失败时先更新软件源索引再重试一次。
+生效，不会被 BusyBox 的同名 applet 挡在前面。`git-http` 装的是
+`/usr/lib/git-core/git-remote-https`，`git` 也在同一个包里被依赖进来。安装命令按机器上
+的包管理器生成：25.12 用 `apk add`，24.10 用 `opkg install`，第一次失败时先更新软件源
+索引再重试一次。
 
 诊断面板旁边的 **清空日志** 只清空页面上的报告，磁盘上的日志文件一个都不会动。
 

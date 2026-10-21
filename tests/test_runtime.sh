@@ -4341,6 +4341,158 @@ test_doctor_node_check_follows_the_agent_set() {
 		"and it closes the gate before anything is downloaded"
 }
 
+# git, which the Hermes installer needs and a stock image does not have.
+#
+# The half that is easy to miss is that `git` alone is not enough: the HTTPS
+# transport lives in git-http on OpenWrt, so a check that only asked whether
+# `git` exists would pass and the clone would then fail with "unable to find
+# remote helper for 'https'". Both halves are exercised here.
+test_doctor_git_check_follows_the_agent_set() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	make_standin_tool fold 'exit 0' >/dev/null
+	make_standin_tool sleep 'exit 0' >/dev/null
+	# A git that answers the two questions the probe asks. The exec-path is
+	# what git itself would print, and the file it points at is what the
+	# git-http package adds.
+	mkdir -p "$SANDBOX/standin/git-core"
+	: > "$SANDBOX/standin/git-core/git-remote-https"
+	chmod +x "$SANDBOX/standin/git-core/git-remote-https"
+	cat > "$SANDBOX/standin/git" <<-EOF
+	#!/bin/sh
+	case "\$1" in
+		--version) echo "git version 2.50.1" ;;
+		--exec-path) echo "$SANDBOX/standin/git-core" ;;
+	esac
+	EOF
+	chmod +x "$SANDBOX/standin/git"
+	# The same binary with no git-remote-https behind it: what installing the
+	# `git` package and not `git-http` leaves on the box. Its own directory,
+	# because the harness puts a tool on PATH under its basename and the check
+	# has to find this one as `git`.
+	mkdir -p "$SANDBOX/nohttp" "$SANDBOX/standin/git-core-nohttp"
+	cat > "$SANDBOX/nohttp/git" <<-EOF
+	#!/bin/sh
+	case "\$1" in
+		--version) echo "git version 2.50.1" ;;
+		--exec-path) echo "$SANDBOX/standin/git-core-nohttp" ;;
+	esac
+	EOF
+	chmod +x "$SANDBOX/nohttp/git"
+
+	_dgt_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl $SANDBOX/standin/fold $SANDBOX/standin/sleep mktemp mkdir rm tar"
+
+	# Hermes selected and no git: a failure naming the package and the agent.
+	_dgt_fail="$(sh_doctor_tools "$_dgt_tools" 'FCC_AGENT_SELECTION=hermes' --json |
+		grep '"name": "git"')"
+	assert_contains "$_dgt_fail" '"status": "FAIL"' \
+		"a selected Hermes with no git is a failure"
+	assert_contains "$_dgt_fail" 'opkg install git-http' \
+		"and the report names git-http, not git, because the clone needs the HTTPS transport"
+	assert_contains "$_dgt_fail" 'Required by Hermes' \
+		"and names the agent whose installer needs it"
+	assert_contains "$(sh_doctor_tools "$_dgt_tools" 'FCC_AGENT_SELECTION=hermes' --json)" \
+		'"install_allowed": false' "and a missing git is what closes the gate"
+
+	# An agent that does not need it: a warning, and the gate stays open.
+	_dgt_warn="$(sh_doctor_tools "$_dgt_tools" 'FCC_AGENT_SELECTION=claude' --json |
+		grep '"name": "git"')"
+	assert_contains "$_dgt_warn" '"status": "WARN"' \
+		"an agent that does not need git does not fail the check"
+	assert_contains "$_dgt_warn" 'Not needed by the selected agents' \
+		"and the report says why it is only a warning"
+
+	# git present with its HTTPS helper: OK.
+	_dgt_ok="$(sh_doctor_tools "$_dgt_tools $SANDBOX/standin/git" 'FCC_AGENT_SELECTION=hermes' --json |
+		grep '"name": "git"')"
+	assert_contains "$_dgt_ok" '"status": "OK"' "git with git-remote-https is OK"
+	assert_contains "$_dgt_ok" '2.50.1' "and the row carries the version it found"
+	assert_contains "$(sh_doctor_tools "$_dgt_tools $SANDBOX/standin/git" 'FCC_AGENT_SELECTION=hermes' --json)" \
+		'"install_allowed": true' "and installing it is what reopens the gate"
+
+	# git present, transport absent: still a failure, and "too limited" rather
+	# than "not found" — the binary is there, and a reader told it is missing
+	# goes looking for it, finds it, and is back where they started.
+	_dgt_partial="$(sh_doctor_tools "$_dgt_tools $SANDBOX/nohttp/git" 'FCC_AGENT_SELECTION=hermes' --json |
+		grep '"name": "git"')"
+	assert_contains "$_dgt_partial" '"status": "FAIL"' \
+		"a git without git-remote-https is still a failure"
+	assert_contains "$_dgt_partial" 'too limited' \
+		"and the report says it is present and cannot do the job"
+	assert_contains "$_dgt_partial" 'opkg install git-http' \
+		"and names the package that fills the missing half"
+
+	# Hermes already installed and no git: a warning, not a failure. The
+	# installer skips an agent it finds, so its clone never runs.
+	mkdir -p "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data/.local/bin"
+	: > "$SANDBOX/opt/fcc/data/.local/bin/hermes"
+	chmod +x "$SANDBOX/opt/fcc/data/.local/bin/hermes"
+	_dgt_have="$(sh_doctor_tools "$_dgt_tools" 'FCC_AGENT_SELECTION=hermes' --json |
+		grep '"name": "git"')"
+	assert_contains "$_dgt_have" '"status": "WARN"' \
+		"a Hermes that is already installed makes git a warning"
+	assert_contains "$_dgt_have" 'already installed' \
+		"and the report says why nothing needs it yet"
+	# The sandbox is shared by every test in this file, and an installed agent
+	# changes the effective set for every later report that does not name one.
+	rm -rf "$SANDBOX/opt/fcc"
+}
+
+# Hermes fetches its own Node rather than going through this package's node
+# provisioning, so the node row — which only exists for pi, dsh and cline —
+# never asks whether that Node can load. The installer's prerequisites stage
+# does, and fails there; this row is the part that asks before the download.
+test_doctor_hermes_cpp_runtime_is_checked_on_its_own() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	make_standin_tool fold 'exit 0' >/dev/null
+	make_standin_tool sleep 'exit 0' >/dev/null
+	mkdir -p "$SANDBOX/standin/git-core"
+	: > "$SANDBOX/standin/git-core/git-remote-https"
+	chmod +x "$SANDBOX/standin/git-core/git-remote-https"
+	cat > "$SANDBOX/standin/git" <<-EOF
+	#!/bin/sh
+	case "\$1" in
+		--version) echo "git version 2.50.1" ;;
+		--exec-path) echo "$SANDBOX/standin/git-core" ;;
+	esac
+	EOF
+	chmod +x "$SANDBOX/standin/git"
+	_hcp_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl $SANDBOX/standin/fold $SANDBOX/standin/sleep $SANDBOX/standin/git mktemp mkdir rm tar"
+
+	# The libraries present: an OK row, naming the agent it is for and not the
+	# node row that would not exist for this selection.
+	_hcp_ok="$(sh_doctor_tools "$_hcp_tools" 'FCC_AGENT_SELECTION=hermes' --json |
+		grep '"name": "libstdc++"')"
+	assert_contains "$_hcp_ok" '"status": "OK"' \
+		"a Hermes-only selection with the C++ runtime present is OK"
+	assert_contains "$_hcp_ok" 'needed to install Hermes' \
+		"and the row says which agent it exists for"
+	assert_not_contains "$(sh_doctor_tools "$_hcp_tools" 'FCC_AGENT_SELECTION=hermes' --json)" \
+		'"name": "node"' "and Hermes does not get the node row, which it does not use"
+
+	# Absent: a failure naming both packages, and a closed gate — before the
+	# installer would clone anything and stop at its prerequisites line.
+	mkdir -p "$SANDBOX/nolibs"
+	_hcp_env="FCC_NODE_LIB_DIRS=$SANDBOX/nolibs LD_LIBRARY_PATH="
+	_hcp_fail="$(sh_doctor_tools "$_hcp_tools" "$_hcp_env FCC_AGENT_SELECTION=hermes" --json |
+		grep '"name": "libstdc++"')"
+	assert_contains "$_hcp_fail" '"status": "FAIL"' \
+		"a Hermes-only selection with no C++ runtime is a failure"
+	assert_contains "$_hcp_fail" 'libstdc++.so.6' "and the report names the library"
+	assert_contains "$_hcp_fail" 'libgcc_s.so.1' "and the other one with it"
+	assert_contains "$_hcp_fail" 'opkg install libstdcpp6 libgcc1' \
+		"and says which packages provide them"
+	assert_contains "$(sh_doctor_tools "$_hcp_tools" "$_hcp_env FCC_AGENT_SELECTION=hermes" --json)" \
+		'"install_allowed": false' "and it closes the gate before the clone"
+
+	# A node agent selected: the node row has already asked the same question,
+	# so the second row would be the same finding twice.
+	assert_not_contains "$(sh_doctor_tools "$_hcp_tools" "$_hcp_env FCC_AGENT_SELECTION=hermes,pi" --json)" \
+		'"name": "libstdc++"' \
+		"the row is left out when a node agent's own row covers it"
+}
+
 # The report is about a set of agents, not about the device.
 #
 # The checks ask what the agents being installed need, so one box can be blocked

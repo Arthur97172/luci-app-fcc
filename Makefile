@@ -24,14 +24,14 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.0.0))
 # release rather than the same name over different bytes. Bumping this number is
 # what cuts the next release.
 #
-# 版本约定：每次提交 PKG_RELEASE +1（0.1.1-r1 ~ r9）；
-# 达到 r10 时 PKG_VERSION 末位 +1（0.1.1 -> 0.1.2），PKG_RELEASE 重置为 1。
+# 版本约定：每次提交 PKG_RELEASE +1（1.0.0-r1 ~ r9）；
+# 达到 r10 时 PKG_VERSION 末位 +1（1.0.0 -> 1.0.1），PKG_RELEASE 重置为 1。
 #
 # PKG_VERSION is the ./VERSION file, so "PKG_VERSION 末位 +1" means editing that
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=9
+PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0

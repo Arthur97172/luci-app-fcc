@@ -475,6 +475,34 @@ if [ -n "$_node_ids" ]; then
 	fi
 fi
 
+# The C++ runtime, for Hermes alone.
+#
+# Hermes is not one of the agents this package provisions Node for — its own
+# installer clones the repository and fetches its own — but the Node it fetches
+# is the same musl build, linked against the same libstdc++.so.6, and its
+# prerequisites stage fails on a box without it:
+#
+#     ✗ musl host: the Node.js runtime needs the system libstdc++.
+#
+# The node row above asks the same question whenever a node agent is selected;
+# this asks it when Hermes is the only thing that will need the answer. A
+# Hermes-only install was the one case where the install could reach the
+# installer and stop for a library the report never mentioned.
+if [ -z "$_node_ids" ]; then
+	case " $_effective_set " in *" hermes "*)
+		_hm_libs="$(fcc_node_missing_libs)"
+		if [ -z "$_hm_libs" ]; then
+			add_result OK "libstdc++" "present" "needed to install Hermes" ""
+		else
+			_hm_pkgs="$(fcc_node_lib_packages $_hm_libs)"
+			add_result FAIL "libstdc++" "$_hm_libs missing" "needed to install Hermes" \
+				"The musl Node.js the Hermes installer fetches needs $_hm_libs, which this image has nowhere the loader looks: $(fcc_pkg_install_hint $_hm_pkgs)." \
+				"$_hm_pkgs"
+		fi
+		;;
+	esac
+fi
+
 # FCC runtime present?
 if [ -x "$ROOT/bin/fcc-server" ]; then
 	_fv="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
