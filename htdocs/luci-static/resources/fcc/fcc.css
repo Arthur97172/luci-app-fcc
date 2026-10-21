@@ -32,10 +32,16 @@
  * notes under the toolbar use — otherwise it reads as a third button. */
 .fcc-toolbar-label { color: var(--fcc-text-dim); }
 
+/* Basic Information's System and FCC sections are a grid of cards and nothing
+ * else, so they were the only blocks on any page with no line of space under
+ * them: every other section ends in a .fcc-toolbar or a log, both of which
+ * carry their own. The margins are the toolbar's, so the two read as part of
+ * the same page. */
 .fcc-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(15em, 1fr));
 	gap: .75em;
+	margin: .5em 0 1em;
 }
 
 .fcc-card {
