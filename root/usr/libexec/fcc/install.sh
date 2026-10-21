@@ -992,6 +992,80 @@ installer_prepare_shim() {
 	[ -x "$_ip_dst" ]
 }
 
+# A launcher that runs nothing is worse than no launcher at all.
+#
+# Upstream's chooser asks `command -v <id>` and reads a hit as "already
+# installed": it skips the question, then verifies the command and aborts the
+# whole run if it cannot start. So one broken launcher fails *every* later
+# install, whatever was selected. That is what happened on 2026-10-22 — the
+# user asked for Grok Build and the run died with
+#
+#   error: Command failed with exit code 127: /opt/fcc/data/.local/bin/hermes
+#
+# — because a Hermes install interrupted after publishing its ~/.local/bin
+# wrapper (a disk-full update is in the same log minutes earlier) left a
+# two-line shell script pointing at a tree that is not there. Neither Uninstall
+# nor Reinstall helped: both keep data/, which is where the wrapper lives.
+#
+# So before the installer starts, any launcher in this runtime's bin
+# directories that provably cannot run is moved aside. Upstream then sees the
+# agent as absent and asks about it like any other, which is what lets this
+# package's answer loop skip an agent nobody selected. The file is renamed
+# rather than deleted: it is the only trace of the interrupted install, and
+# "broken" here is decided structurally, never by running the agent — Hermes'
+# own --version hangs, which is why its probe column is empty.
+installer_launcher_target() {
+	# installer_launcher_target <launcher> -> the absolute path its exec
+	# line runs, when the launcher is a shell script that runs one.
+	_ilt_head="$(head -n 1 "$1" 2>/dev/null)"
+	case "$_ilt_head" in
+		'#!/bin/sh'|'#!/bin/ash'|'#!/bin/bash'|\
+		'#!/usr/bin/env sh'|'#!/usr/bin/env ash'|'#!/usr/bin/env bash') ;;
+		*) return 1 ;;
+	esac
+	_ilt_t="$(sed -n 's/^[[:space:]]*exec[[:space:]][[:space:]]*\([^[:space:]]*\).*/\1/p' "$1" 2>/dev/null | head -n 1)"
+	# A bare word ("exec node ...") is not judged: it may resolve anywhere, and
+	# deciding otherwise would need a PATH that a future shell may not share.
+	case "$_ilt_t" in
+		/*) printf '%s' "$_ilt_t"; return 0 ;;
+	esac
+	return 1
+}
+
+installer_quarantine_broken_launchers() {
+	while IFS= read -r _iql_d; do
+		[ -d "$_iql_d" ] || continue
+		while IFS= read -r _iql_line; do
+			_iql_id="${_iql_line%%|*}"
+			[ -n "$_iql_id" ] || continue
+			_iql_f="$_iql_d/$_iql_id"
+			# A dangling symlink fails -f, and is exactly as broken as the
+			# wrapper below; both are handled here, and neither is followed
+			# into a directory that does not exist.
+			if [ -L "$_iql_f" ]; then
+				[ -e "$_iql_f" ] && continue
+				_iql_why="it is a symlink to $(readlink "$_iql_f" 2>/dev/null), which does not exist"
+			elif [ -f "$_iql_f" ]; then
+				_iql_t="$(installer_launcher_target "$_iql_f")" || continue
+				[ -n "$_iql_t" ] || continue
+				[ -x "$_iql_t" ] && continue
+				_iql_why="it runs $_iql_t, which is missing"
+			else
+				continue
+			fi
+			_iql_new="${_iql_f}.broken-$(date +%Y%m%dT%H%M%SZ)"
+			[ -e "$_iql_new" ] && _iql_new="$_iql_new.$$"
+			if mv -f "$_iql_f" "$_iql_new" 2>/dev/null; then
+				fcc_log "$LOG" "installer: moved a broken launcher aside: $_iql_f ($_iql_why), so the agent counts as not installed and the installer asks about it again"
+			fi
+		done <<EOF
+$(fcc_agents_each)
+EOF
+	done <<EOF
+$(fcc_runtime_bin_dirs "$ROOT")
+EOF
+}
+
 # Which Codex download the installer should try first.
 #
 # Codex's own installer starts at releases.openai.com. Its asset download is
@@ -1136,6 +1210,9 @@ run_installer() {
 
 	fcc_log "$LOG" "running upstream installer (agents='$_ri_label', terminal=tmux)"
 	apply_runtime_env
+	# Before anything asks upstream what is installed: a launcher that cannot
+	# run is a false "already installed", and upstream aborts the run on it.
+	installer_quarantine_broken_launchers
 
 	# Section 103: the one question in the install that cannot be asked the same
 	# way on every box is Pi's action menu, and when it is asked the other way

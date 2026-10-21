@@ -5445,6 +5445,108 @@ test_delete_backups_removes_the_backups_and_nothing_else() {
 }
 
 # ---------------------------------------------------------------------------
+# A launcher that runs nothing
+# ---------------------------------------------------------------------------
+#
+# 2026-10-22's Grok Build install died with
+#
+#   error: Command failed with exit code 127: /opt/fcc/data/.local/bin/hermes
+#
+# An interrupted Hermes install — the same log has a disk-full update minutes
+# earlier — had published the wrapper below and then stopped before installing
+# the tree it runs. Upstream treats any `command -v hermes` as "already
+# installed" and verifies it, so the agent nobody selected aborted the run of
+# the one that was; and neither Uninstall nor Reinstall removed it, because
+# both keep data/.
+#
+# The fix moves such a launcher aside before upstream is asked anything. What
+# counts as broken is decided structurally, never by running the agent —
+# Hermes' own --version hangs, which is why its probe column is empty — and
+# each decision has a case below.
+test_a_broken_launcher_is_moved_aside_before_the_installer_runs() {
+	setup_sandbox
+	# An install base of its own: the launchers this test puts down would read
+	# as installed agents to every test that runs after it, and the sandbox is
+	# shared by the whole suite.
+	_bl_base="$SANDBOX/broken"
+	_bl_root="$_bl_base/fcc"
+	_bl_bin="$_bl_root/data/.local/bin"
+	mkdir -p "$_bl_bin" "$_bl_root/bin"
+
+	# The shape found on the router: a two-line wrapper whose target is gone.
+	printf '#!/bin/sh\nexec %s/data/.hermes/hermes-agent/.hermes/bin/hermes "$@"\n' \
+		"$_bl_root" > "$_bl_bin/hermes"
+	chmod 755 "$_bl_bin/hermes"
+
+	# A real install: the same shape, with the target present and executable.
+	printf '#!/bin/sh\n' > "$_bl_root/real-codex"
+	chmod 755 "$_bl_root/real-codex"
+	printf '#!/bin/sh\nexec %s "$@"\n' "$_bl_root/real-codex" > "$_bl_bin/codex"
+	chmod 755 "$_bl_bin/codex"
+
+	# A bare word may resolve anywhere, so it is not judged.
+	printf '#!/bin/sh\nexec node /opt/fcc/grok/index.js "$@"\n' > "$_bl_bin/grok"
+	chmod 755 "$_bl_bin/grok"
+
+	# A target that exists but cannot be executed fails the same way as a
+	# missing one, so the check is -x and not -e.
+	printf 'not executable\n' > "$_bl_root/real-aider"
+	printf '#!/bin/sh\nexec %s "$@"\n' "$_bl_root/real-aider" > "$_bl_bin/aider"
+
+	# A dangling symlink reads as "installed" to upstream just the same.
+	ln -s "$_bl_root/data/.missing/bin/dsh" "$_bl_root/bin/dsh"
+
+	# Not an agent launcher: the fcc-* commands share this directory and are
+	# not upstream's to judge.
+	printf '#!/bin/sh\nexec /nope/fcc-server "$@"\n' > "$_bl_root/bin/fcc-server"
+	chmod 755 "$_bl_root/bin/fcc-server"
+
+	_bl_out="$(sh_install 'installer_quarantine_broken_launchers; echo "rc=$?"' "$_bl_base")"
+	assert_contains "$_bl_out" 'rc=0' "the sweep succeeds"
+
+	assert_no "the wrapper to the missing tree is gone" test -e "$_bl_bin/hermes"
+	_bl_moved="$(ls "$_bl_bin"/hermes.broken-* 2>/dev/null | head -n 1)"
+	assert_contains "$_bl_moved" "hermes.broken-" \
+		"the broken wrapper is renamed, not deleted"
+	assert_contains "$(cat "$_bl_moved" 2>/dev/null)" '.hermes/hermes-agent' \
+		"and its contents are kept: it is the only trace of the interrupted install"
+
+	assert_no "a wrapper to a target that cannot run is gone" test -e "$_bl_bin/aider"
+	assert_no "a dangling symlink is gone" test -L "$_bl_root/bin/dsh"
+
+	assert_file "$_bl_bin/codex"
+	assert_exec "$_bl_bin/codex"
+	assert_file "$_bl_bin/grok"
+	assert_exec "$_bl_bin/grok"
+	assert_file "$_bl_root/bin/fcc-server"
+
+	# A second sweep changes nothing: what it quarantines is not there any more.
+	sh_install 'installer_quarantine_broken_launchers' "$_bl_base" >/dev/null 2>&1
+	assert_eq "1" "$(ls "$_bl_bin"/hermes.broken-* 2>/dev/null | wc -l)" \
+		"running it again does not move the same launcher twice"
+
+	# The log has to say what happened, because the pane only shows upstream's
+	# complaint and upstream's complaint is "exit code 127" and a path.
+	_bl_log="$(cat "$_bl_root/logs/fcc-runtime.log")"
+	assert_contains "$_bl_log" 'moved a broken launcher aside' \
+		"the log records the move"
+	assert_contains "$_bl_log" 'data/.local/bin/hermes' \
+		"and names the launcher"
+	assert_contains "$_bl_log" 'which is missing' \
+		"and why it could not run"
+	assert_contains "$_bl_log" 'which does not exist' \
+		"a dangling symlink's reason is recorded too"
+	assert_not_contains "$_bl_log" 'bin/fcc-server' \
+		"and this package's own commands are left out of it"
+
+	# A sweep nothing calls is dead code, and the call has to come before the
+	# installer is asked what is installed — after it is too late.
+	assert_contains "$(cat "$LIBEXEC/install.sh")" \
+		"$(printf '\tinstaller_quarantine_broken_launchers\n')" \
+		"run_installer calls the sweep before the upstream installer starts"
+}
+
+# ---------------------------------------------------------------------------
 # Explaining a failed download
 # ---------------------------------------------------------------------------
 #
