@@ -131,6 +131,13 @@ test_uses_the_shared_version_file() {
 		"PKG_VERSION is read from ./VERSION"
 	assert_contains "$(cat "$MAKEFILE")" '$(INSTALL_DATA) ./VERSION $(1)/usr/share/luci-app-fcc/VERSION' \
 		"VERSION is installed for the runtime to read (section 37)"
+	# The fallback is what an out-of-tree build reports when VERSION is missing,
+	# and scripts/package-check.sh compares it with the real file. Bumping
+	# VERSION without touching it makes CI fail on a tree that is otherwise
+	# green, so check it here too.
+	_ts_ver="$(tr -d ' \t\r\n' < "$ROOT/VERSION")"
+	assert_contains "$(cat "$MAKEFILE")" "echo $_ts_ver)" \
+		"the Makefile's VERSION fallback is the current version"
 }
 
 test_version_file_is_wellformed() {
