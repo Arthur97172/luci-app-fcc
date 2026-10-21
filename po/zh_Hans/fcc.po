@@ -137,7 +137,7 @@ msgid "Exit code: %d"
 msgstr "退出码：%d"
 
 msgid "FCC"
-msgstr "FCC"
+msgstr "FCC智能体"
 
 msgid "FCC Runtime"
 msgstr "FCC 运行时"

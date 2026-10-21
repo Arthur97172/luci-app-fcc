@@ -91,10 +91,13 @@
 				</div>
 			</div>
 
-			<div class="cbi-value">
-				<div class="cbi-value-field">
-					<button id="fcc-save" class="cbi-button cbi-button-apply"><%:Save &amp; Apply%></button>
-				</div>
+			<!-- The form's primary action closes the form, so it sits at the
+			     right end of its own row. It is not a .cbi-value: Argon lays
+			     those out left to right and the button would sit under the
+			     labels, which read as an unfinished row rather than the end
+			     of the settings. -->
+			<div class="fcc-actions">
+				<button id="fcc-save" class="cbi-button cbi-button-apply"><%:Save &amp; Apply%></button>
 			</div>
 		</div>
 		<div id="fcc-config-status"></div>

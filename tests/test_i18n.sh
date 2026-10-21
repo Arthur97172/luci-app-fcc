@@ -152,13 +152,15 @@ test_no_long_string_is_translated_to_itself() {
 	_ts_bad="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 && length($1) > 12 { print $1 }')"
 	assert_eq "" "$_ts_bad" "no sentence is translated to itself"
 
-	# The permitted ones are exactly the product names, which have no
-	# translation to make and whose fallback is the same text anyway. Pinned as
-	# an exact set so that a *new* pass-through entry cannot slip in — an
-	# identity entry is not a no-op, it is a key we stop claiming.
+	# The permitted ones are the product names with no translation to make,
+	# whose fallback is the same text anyway. "FCC" used to be one of them: it
+	# is now translated to "FCC智能体" for the Services menu, so only the server
+	# label still passes through. Pinned as an exact set so that a *new*
+	# pass-through entry cannot slip in — an identity entry is not a no-op, it
+	# is a key we stop claiming.
 	_ts_same="$(po_pairs "$PO" | awk -F'\t' '$1 == $2 { print $1 }' | LC_ALL=C sort | tr '\n' ' ')"
 	case "$_ts_same" in
-		"FCC FCC Server "|"FCC "|"") pass ;;
+		"FCC Server "|"FCC FCC Server "|"FCC "|"") pass ;;
 		*) fail "an unexpected entry passes through untranslated: [$_ts_same]" ;;
 	esac
 }

@@ -66,6 +66,37 @@
 .fcc-right { text-align: right; }
 .fcc-nowrap { white-space: nowrap; }
 
+/* ------------------------------------------------------------------ inset */
+/* Argon gives its own elements the section inset (--section-inset, 1.25rem):
+ * headings, .cbi-value rows and .cbi-map-descr all carry it. A plain <div>
+ * this app adds gets none, so toolbars, state cards and help notes sat flush
+ * against the section's left edge while the form rows beside them were
+ * indented. Give every block in a section body the same inset the theme gives
+ * itself. .cbi-value is excluded because it already has one — applying it
+ * twice would double the indent of the form rows. The .fcc-page > rules are
+ * for the Web Console, whose blocks are direct children of the page rather
+ * than of a section. */
+.fcc-page .cbi-section-node > :not(.cbi-value),
+.fcc-page .cbi-section > :not(h3):not(.cbi-section-node),
+.fcc-page > .fcc-toolbar,
+.fcc-page > #fcc-term-status,
+.fcc-page > .fcc-term-tabs,
+.fcc-page > .fcc-term-banner,
+.fcc-page > .fcc-term-wrap,
+.fcc-page > .fcc-term-log,
+.fcc-page > .fcc-note {
+	padding-left: var(--section-inset, 1.25rem);
+	padding-right: var(--section-inset, 1.25rem);
+}
+
+/* The Settings form's primary action closes the form, so it ends the row
+ * rather than starting it — the left-to-right .cbi-value layout put it under
+ * the labels and made the form look unfinished. */
+.fcc-actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
 /* ------------------------------------------------------------------ tables */
 table.fcc-table {
 	width: 100%;
