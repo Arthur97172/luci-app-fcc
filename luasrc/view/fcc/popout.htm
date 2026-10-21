@@ -1,0 +1,87 @@
+<%#
+ luci-app-fcc — one console session in a browser window of its own.
+
+ This page is deliberately not a LuCI page: it includes neither <%+header%> nor
+ <%+footer%>, so there is no menu, no tab bar and no breadcrumb — the terminal
+ gets the whole window. It is opened from the Web Console's "Open in browser"
+ button, which passes the session in the query string.
+
+ Closing this window ends the session (fcc-popout.js arms a timed close on
+ pagehide). Reloading it does not: the reattach bumps a generation counter in
+ session.sh, which cancels the armed close. See cmd_close_later() there.
+
+ Everything it loads is served from the same package as the console: xterm,
+ the fit addon, the shared helpers and the stylesheet.
+-%>
+<!DOCTYPE html>
+<html lang="<%= (luci.i18n and luci.i18n.context and luci.i18n.context.lang) or "en" %>">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FCC — <%=session%></title>
+<link rel="stylesheet" href="<%=resource%>/fcc/xterm.min.css">
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+<style>
+	html, body {
+		height: 100%;
+		margin: 0;
+		background: #1e1e1e;
+		color: #d4d4d4;
+	}
+	body {
+		display: flex;
+		flex-direction: column;
+		font-family: system-ui, sans-serif;
+	}
+	.fcc-popout-bar {
+		display: flex;
+		align-items: center;
+		gap: .75em;
+		flex: 0 0 auto;
+		padding: .3em .8em;
+		font-size: .8em;
+		border-bottom: 1px solid #333;
+		color: #9aa0a6;
+	}
+	.fcc-popout-bar .fcc-popout-name { color: #d4d4d4; }
+	.fcc-popout-bar .fcc-spacer { flex: 1 1 auto; }
+	#fcc-popout {
+		flex: 1 1 auto;
+		min-height: 0;
+		padding: 4px;
+	}
+	.fcc-popout-status {
+		flex: 0 0 auto;
+		padding: .4em .8em;
+		border-top: 1px solid #333;
+	}
+</style>
+</head>
+<body>
+<div class="fcc-popout-bar">
+	<span class="fcc-mono fcc-popout-name"><%=session%></span>
+	<span class="fcc-spacer"></span>
+	<span><%:Closing this window ends the session.%></span>
+</div>
+<div id="fcc-popout"></div>
+<div id="fcc-popout-status" class="fcc-popout-status" hidden></div>
+<script>
+	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
+	var FCC_SESSION = '<%=session%>';
+	// The console's shared translator, FCC._(), falls back to English when
+	// there is no LuCI page around it — and this page deliberately has none.
+	// These four are the only sentences the window can print, so they are
+	// translated here, by the template, where the catalogue is loaded.
+	var FCC_I18N = {
+		ended: '<%:Session has exited.%>',
+		crashed: '<%:Agent exited unexpectedly.%>',
+		lost: '<%:Terminal connection lost. Reconnecting…%>',
+		attach: '<%:Could not attach to the session:%>'
+	};
+</script>
+<script src="<%=resource%>/fcc/fcc-common.js"></script>
+<script src="<%=resource%>/fcc/xterm.min.js"></script>
+<script src="<%=resource%>/fcc/addon-fit.min.js"></script>
+<script src="<%=resource%>/fcc/fcc-popout.js"></script>
+</body>
+</html>

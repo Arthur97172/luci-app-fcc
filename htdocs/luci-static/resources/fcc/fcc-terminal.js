@@ -165,7 +165,7 @@
 			startPolling();
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-term-status'), 'fail',
-				FCC._('Could not attach to the session: ') + err.message);
+				FCC._('Could not attach to the session:') + ' ' + err.message);
 		});
 
 		fitNow();
@@ -399,6 +399,81 @@
 		});
 	}
 
+	/**
+	 * End every session at once.
+	 *
+	 * Same confirmation as closeSession(): this kills agents, and a browser
+	 * dialog is the last chance to notice a misclick before several of them go.
+	 * The two sentences are a literal join for the reason given there — po2lmo
+	 * does not process C escapes, so a "\n" may not appear in a msgid.
+	 */
+	function endAllSessions() {
+		if (!window.confirm(FCC._('Are you sure you want to end all sessions?') + '\n' +
+				FCC._('Every running agent will be terminated and unsaved terminal state will be lost.'))) {
+			return;
+		}
+		FCC.api('session_close_all', {}, { method: 'POST' }).then(function () {
+			state.active = null;
+			stopPolling();
+			clearBanner();
+			if (state.term) {
+				state.term.reset();
+				state.term.write('\r\n[ all sessions closed ]\r\n');
+			}
+			loadSessions();
+		}).catch(function (err) {
+			FCC.notice(FCC.$('#fcc-term-status'), 'fail', err.message);
+		});
+	}
+
+	/**
+	 * Show one session in a window of its own, outside the LuCI page.
+	 *
+	 * The window is opened synchronously and navigated afterwards. Opened after
+	 * an await it would no longer be inside the click's user gesture, and the
+	 * browser would take it for a popup and block it. Because the window must
+	 * exist before a session can be chosen, it waits empty until one does.
+	 *
+	 * That window owns the session: closing it ends the session, reloading it
+	 * does not (see fcc-popout.js). The console page is unaffected and can
+	 * still attach to the same session while the window is open.
+	 */
+	function openInBrowser() {
+		var win = window.open('', '_blank');
+		var status = FCC.$('#fcc-term-status');
+		if (!win) {
+			FCC.notice(status, 'warn', FCC._('The browser blocked the new window.'));
+			return;
+		}
+
+		var popout = window.FCC_POPOUT || '';
+
+		function go(name) {
+			win.location.href = popout + '?session=' + encodeURIComponent(name);
+		}
+
+		if (state.active) { go(state.active); return; }
+		if (state.sessions.length) { go(state.sessions[0].name); return; }
+
+		var sel = FCC.$('#fcc-agent-select');
+		var agent = sel ? sel.value : '';
+		function abort(msg) {
+			try { win.close(); } catch (e) { /* already gone */ }
+			FCC.notice(status, 'fail', msg);
+		}
+		if (!agent) {
+			abort(FCC._('Install an agent first (Configuration → Agents).'));
+			return;
+		}
+
+		FCC.api('session_create', { agent: agent, cols: 80, rows: 24 }, { method: 'POST' })
+			.then(function (r) {
+				loadSessions();
+				go(r.name);
+			})
+			.catch(function (err) { abort(err.message); });
+	}
+
 	/* -------------------------------------------------------------------- init */
 
 	function init() {
@@ -409,6 +484,12 @@
 
 		var cleanupBtn = FCC.$('#fcc-term-cleanup');
 		if (cleanupBtn) { cleanupBtn.addEventListener('click', cleanupSessions); }
+
+		var closeAllBtn = FCC.$('#fcc-term-close-all');
+		if (closeAllBtn) { closeAllBtn.addEventListener('click', endAllSessions); }
+
+		var popoutBtn = FCC.$('#fcc-term-popout');
+		if (popoutBtn) { popoutBtn.addEventListener('click', openInBrowser); }
 
 		var logHide = FCC.$('#fcc-term-log-hide');
 		if (logHide) {

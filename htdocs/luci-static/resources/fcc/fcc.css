@@ -97,6 +97,25 @@
 	justify-content: flex-end;
 }
 
+/* Argon lays every form row out as a label column plus a field, and sizes the
+ * column at --form-label-width: 23rem, right-aligned. That fits a form whose
+ * labels are sentences; this page's labels are two words ("Enable FCC",
+ * "Port"), so the field column started a third of the way across a wide
+ * window and the Settings list read as a centred block instead of as part of
+ * the page — the sections and notes above and below it start at the section
+ * edge. Narrowing the column and aligning its text to the start pulls the
+ * labels back to that edge and the fields back under the rest of the content.
+ *
+ * The theme's phone layout (a container query at 40rem that stacks the label
+ * above its field) is left alone: it already overrides both of these. */
+.fcc-page {
+	--form-label-width: 12rem;
+}
+
+.fcc-page .cbi-value > .cbi-value-title {
+	text-align: start;
+}
+
 /* ------------------------------------------------------------------ tables */
 table.fcc-table {
 	width: 100%;

@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 0.1.4))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -125,6 +125,9 @@ define Package/luci-app-fcc/install
 	$(INSTALL_DATA) ./luasrc/view/fcc/console.htm $(1)/usr/lib/lua/luci/view/fcc/console.htm
 	$(INSTALL_DATA) ./luasrc/view/fcc/config.htm $(1)/usr/lib/lua/luci/view/fcc/config.htm
 	$(INSTALL_DATA) ./luasrc/view/fcc/info.htm $(1)/usr/lib/lua/luci/view/fcc/info.htm
+	# The standalone window's page. It is a view like the others, but it renders
+	# without the theme's header and footer: see luasrc/view/fcc/popout.htm.
+	$(INSTALL_DATA) ./luasrc/view/fcc/popout.htm $(1)/usr/lib/lua/luci/view/fcc/popout.htm
 	# luasrc/ maps onto /usr/lib/lua/luci/, so luasrc/fcc/util.lua is the module
 	# luci.fcc.util. Installing it anywhere else makes require() fail.
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/fcc
@@ -148,6 +151,7 @@ define Package/luci-app-fcc/install
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-terminal.js $(1)/www/luci-static/resources/fcc/fcc-terminal.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-config.js $(1)/www/luci-static/resources/fcc/fcc-config.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-info.js $(1)/www/luci-static/resources/fcc/fcc-info.js
+	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-popout.js $(1)/www/luci-static/resources/fcc/fcc-popout.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc.css $(1)/www/luci-static/resources/fcc/fcc.css
 
 	# No .lmo here. The Simplified Chinese catalogue is built into

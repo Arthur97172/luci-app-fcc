@@ -1283,6 +1283,110 @@ test_a_dead_session_reports_its_exit_code() {
 	tmux kill-session -t "$_sts_ok" 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# Ending sessions from outside a terminal
+#
+# The Web Console's two new buttons. One ends every session at once; the other
+# opens a session in a window of its own, whose closing ends it. Both are
+# backend commands driven by the controller, so both are exercised here against
+# real tmux sessions.
+# ---------------------------------------------------------------------------
+
+test_close_all_ends_every_console_session() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — closing sessions needs real panes"
+		return 0
+	fi
+
+	_cal_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_cal_root/sessions"
+	_cal_a="fcc-claude-911"
+	_cal_b="fcc-dsh-912"
+	_cal_keep="keep-913"
+	for _cal_n in "$_cal_a" "$_cal_b" "$_cal_keep"; do
+		tmux kill-session -t "$_cal_n" 2>/dev/null
+		tmux new-session -d -s "$_cal_n" 'cat' 2>/dev/null
+	done
+	# A scrollback file, to show the command removes the session's files too.
+	: > "$_cal_root/sessions/$_cal_a.out"
+
+	_cal_out="$(sh_script session.sh close-all)"
+	assert_contains "$_cal_out" '"closed": 2' "close-all counts the sessions it ended"
+	assert_no "the claude session is gone" tmux has-session -t "$_cal_a"
+	assert_no "the dsh session is gone"    tmux has-session -t "$_cal_b"
+	assert_ok "a session in another namespace is left alone" tmux has-session -t "$_cal_keep"
+	assert_eq "gone" "$([ -e "$_cal_root/sessions/$_cal_a.out" ] && echo kept || echo gone)" \
+		"the scrollback of a closed session is removed"
+
+	tmux kill-session -t "$_cal_keep" 2>/dev/null
+}
+
+test_close_later_closes_the_session_after_the_grace_period() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — the delayed close needs real panes"
+		return 0
+	fi
+
+	_clt_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_clt_root/sessions"
+	_clt_name="fcc-claude-921"
+	tmux kill-session -t "$_clt_name" 2>/dev/null
+	tmux new-session -d -s "$_clt_name" 'cat' 2>/dev/null
+
+	assert_ok "the close is armed" sh_script session.sh close-later "$_clt_name" 1
+	assert_ok "the session is still there right after the request" \
+		tmux has-session -t "$_clt_name"
+	assert_eq "armed" \
+		"$([ -e "$_clt_root/sessions/$_clt_name.closing" ] && echo armed || echo none)" \
+		"a marker records the pending close"
+
+	# The detached sleeper reaps after the grace period. Poll for the result
+	# rather than sleeping a fixed amount, so a slow machine does not turn the
+	# timing into a failure.
+	_clt_wait=0
+	while [ "$_clt_wait" -lt 15 ] && tmux has-session -t "$_clt_name" 2>/dev/null; do
+		sleep 1
+		_clt_wait=$(( _clt_wait + 1 ))
+	done
+	assert_no "the session ends once the grace period expires" \
+		tmux has-session -t "$_clt_name"
+	assert_eq "none" \
+		"$([ -e "$_clt_root/sessions/$_clt_name.closing" ] && echo armed || echo none)" \
+		"the marker is removed with the session"
+}
+
+test_a_reattach_cancels_an_armed_close() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — the delayed close needs real panes"
+		return 0
+	fi
+
+	# Reloading the standalone window unloads the page exactly as closing it
+	# does, so the window sends the same close request either way. What
+	# separates the two is the capture the reloaded page makes on the way back
+	# in: it bumps the generation counter, and the reap drops an armed close
+	# whose counter no longer matches. This is what makes "reload" safe without
+	# the browser having to tell the router which of the two happened.
+	_rcn_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_rcn_root/sessions"
+	_rcn_name="fcc-claude-922"
+	tmux kill-session -t "$_rcn_name" 2>/dev/null
+	tmux new-session -d -s "$_rcn_name" 'cat' 2>/dev/null
+
+	sh_script session.sh close-later "$_rcn_name" 2 >/dev/null
+	sh_script session.sh capture "$_rcn_name" >/dev/null
+	sleep 4
+	assert_ok "the session survives a reload" tmux has-session -t "$_rcn_name"
+	assert_eq "none" \
+		"$([ -e "$_rcn_root/sessions/$_rcn_name.closing" ] && echo armed || echo none)" \
+		"the armed close is dropped"
+
+	tmux kill-session -t "$_rcn_name" 2>/dev/null
+}
+
 test_create_keeps_the_exit_code_of_a_launcher_that_leaves_at_once() {
 	setup_sandbox
 	if ! command -v tmux >/dev/null 2>&1; then

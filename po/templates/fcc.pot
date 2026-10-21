@@ -48,6 +48,9 @@ msgstr ""
 msgid "Are you sure you want to close this session?"
 msgstr ""
 
+msgid "Are you sure you want to end all sessions?"
+msgstr ""
+
 msgid "Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation."
 msgstr ""
 
@@ -75,6 +78,9 @@ msgstr ""
 msgid "Close session"
 msgstr ""
 
+msgid "Closing this window ends the session."
+msgstr ""
+
 msgid "Component"
 msgstr ""
 
@@ -96,7 +102,13 @@ msgstr ""
 msgid "Enable FCC"
 msgstr ""
 
+msgid "End all sessions"
+msgstr ""
+
 msgid "Error"
+msgstr ""
+
+msgid "Every running agent will be terminated and unsaved terminal state will be lost."
 msgstr ""
 
 msgid "Exit code: %d"
@@ -187,6 +199,9 @@ msgid "Not installed"
 msgstr ""
 
 msgid "Open FCC Admin"
+msgstr ""
+
+msgid "Open in browser"
 msgstr ""
 
 msgid "PID"
@@ -294,10 +309,16 @@ msgstr ""
 msgid "Terminal connection lost."
 msgstr ""
 
+msgid "Terminal connection lost. Reconnecting…"
+msgstr ""
+
 msgid "The LAN access rule was removed; the port is no longer opened by this app."
 msgstr ""
 
 msgid "The LuCI app version could not be checked — the router could not reach the version source."
+msgstr ""
+
+msgid "The browser blocked the new window."
 msgstr ""
 
 msgid "The firewall rule could not be added — the server is bound to every interface without one."

@@ -37,6 +37,14 @@ function index()
 	entry({"admin", "services", "fcc", "config"}, template("fcc/config"), _("Configuration"), 20)
 	entry({"admin", "services", "fcc", "info"}, template("fcc/info"), _("Basic Information"), 30)
 
+	-- One console session in a browser window of its own, opened from the Web
+	-- Console's toolbar. It is a page, not an API action, and it is routed by
+	-- hand for the same reason the admin proxy below is: leaf = true, and no
+	-- title so the menu does not list it. Its template carries no header or
+	-- footer, so the terminal gets the whole window rather than LuCI's
+	-- navigation around it.
+	entry({"admin", "services", "fcc", "popout"}, call("act_popout")).leaf = true
+
 	-- JSON API. One leaf per action so the intent is greppable and each can be
 	-- refused individually.
 	local api = { "admin", "services", "fcc", "api" }
@@ -47,6 +55,8 @@ function index()
 		session_output = "act_session_output", session_input = "act_session_input",
 		session_resize = "act_session_resize", session_capture = "act_session_capture",
 		session_close = "act_session_close", session_cleanup = "act_session_cleanup",
+		session_close_all = "act_session_close_all",
+		session_close_later = "act_session_close_later",
 		server = "act_server",
 		install_runtime = "act_install_runtime",
 		reinstall_runtime = "act_reinstall_runtime",
@@ -558,6 +568,46 @@ function act_session_cleanup()
 	if not require_post() then return end
 	local _, code = run("session", { "cleanup" })
 	json_out('{"ok":' .. (code == 0 and "true" or "false") .. '}')
+end
+
+--- End every session this console owns. The backend answers with how many it
+--  closed; sessions outside the fcc-* namespace are not its to touch.
+function act_session_close_all()
+	if not require_post() then return end
+	relay("session", { "close-all" })
+end
+
+--- Arm a close for when the standalone window goes away.
+--
+-- Not an immediate close: a reload unloads the page too, and the session has to
+-- survive that. The backend closes it after `grace` seconds unless the page has
+-- re-attached (capture bumps a generation counter); see cmd_close_later() in
+-- session.sh for how the two requests are told apart.
+function act_session_close_later()
+	if not require_post() then return end
+	local name = util.valid_session(http.formvalue("name"))
+	if not name then return fail("invalid session") end
+	local grace = util.valid_int(http.formvalue("grace") or "8", 0, 120) or 8
+	local _, code = run("session", { "close-later", name, tostring(grace) })
+	if code ~= 0 then return fail("session not found") end
+	json_out(ok())
+end
+
+--- The standalone window: one session, no LuCI chrome.
+--
+-- The name is validated before it reaches the template, and the template only
+-- writes it into text and a JS string literal — valid_session() admits nothing
+-- but fcc-<agent>-NNN, so there is nothing to escape into.
+function act_popout()
+	local name = util.valid_session(http.formvalue("session"))
+	if not name then
+		pcall(function() http.status(400, "Bad Request") end)
+		http.prepare_content("text/plain")
+		http.write("unknown session\n")
+		return
+	end
+	local tpl = require "luci.template"
+	tpl.render("fcc/popout", { session = name })
 end
 
 -- ---------------------------------------------------------------------------

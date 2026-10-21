@@ -13,6 +13,7 @@
 
 <script>
 	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
+	var FCC_POPOUT = '<%=url("admin/services/fcc/popout")%>';
 </script>
 
 <div class="cbi-map fcc-page">
@@ -27,6 +28,8 @@
 		<label for="fcc-agent-select" class="fcc-muted"><%:Agent%></label>
 		<select id="fcc-agent-select" class="cbi-input-select"></select>
 		<button id="fcc-term-create" class="cbi-button cbi-button-apply"><%:New session%></button>
+		<button id="fcc-term-close-all" class="cbi-button cbi-button-reset"><%:End all sessions%></button>
+		<button id="fcc-term-popout" class="cbi-button cbi-button-action"><%:Open in browser%></button>
 		<div class="spacer"></div>
 		<button id="fcc-term-cleanup" class="cbi-button cbi-button-reset"><%:Clean up finished sessions%></button>
 	</div>

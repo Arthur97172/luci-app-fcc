@@ -24,6 +24,9 @@
 #   session.sh resize <name> <cols> <rows>
 #   session.sh capture <name>
 #   session.sh close  <name>
+#   session.sh close-all
+#   session.sh close-later <name> [grace-seconds]
+#   session.sh reap
 #   session.sh cleanup
 
 set -u
@@ -47,6 +50,10 @@ require_tmux() {
 
 out_file()  { printf '%s/%s.out'  "$SESSDIR" "$1"; }
 base_file() { printf '%s/%s.base' "$SESSDIR" "$1"; }
+# A pending close armed by the standalone browser window, and the counter that
+# tells a closed window apart from a reloaded one. See cmd_close_later().
+closing_file() { printf '%s/%s.closing' "$SESSDIR" "$1"; }
+gen_file()     { printf '%s/%s.gen'     "$SESSDIR" "$1"; }
 
 session_exists() {
 	tmux has-session -t "$1" 2>/dev/null
@@ -351,6 +358,9 @@ cmd_capture() {
 	_cp_name="${1:-}"
 	fcc_valid_session "$_cp_name" || { fcc_die "invalid session"; return 2; }
 	session_exists "$_cp_name" || return 1
+	# Every attach starts with a capture, which is exactly the event that tells
+	# a reloaded standalone window apart from a closed one (cmd_close_later).
+	bump_generation "$_cp_name"
 	# Current visible screen WITH escape sequences, so a reconnecting client can
 	# repaint faithfully.
 	tmux capture-pane -p -e -t "$_cp_name" 2>/dev/null
@@ -362,8 +372,105 @@ cmd_close() {
 	fcc_valid_session "$_cl_name" || { fcc_die "invalid session"; return 2; }
 	# Never touch anything outside the fcc-* namespace.
 	tmux kill-session -t "$_cl_name" 2>/dev/null
-	rm -f "$(out_file "$_cl_name")" "$(base_file "$_cl_name")"
+	rm -f "$(out_file "$_cl_name")" "$(base_file "$_cl_name")" \
+		"$(closing_file "$_cl_name")" "$(gen_file "$_cl_name")"
 	fcc_log "fcc-terminal.log" "session closed: $_cl_name"
+}
+
+# The generation counter exists for one question: is the page that armed a
+# delayed close still the page that is looking at the session? A reload runs
+# capture() again, which bumps the counter, and the reaper compares what it
+# finds with what was recorded when the close was armed. A closed window never
+# runs capture again, so the two stay equal and the close goes ahead. It is a
+# counter rather than a timestamp because two clocks are involved — the browser
+# sends the request, the router answers it — and the order the two requests
+# arrive in must not decide the outcome.
+bump_generation() {
+	_bg_name="$1"
+	_bg_f="$(gen_file "$_bg_name")"
+	_bg_g="$(cat "$_bg_f" 2>/dev/null || echo 0)"
+	case "$_bg_g" in ''|*[!0-9]*) _bg_g=0 ;; esac
+	printf '%s' "$(( _bg_g + 1 ))" > "$_bg_f"
+}
+
+cmd_close_all() {
+	require_tmux || return 1
+	_ca_n=0
+	# tmux lists every session on the box, including whatever the user runs by
+	# hand; only the fcc-<agent>-NNN namespace is this console's to close.
+	for _ca_s in $(tmux list-sessions -F '#{session_name}' 2>/dev/null); do
+		fcc_valid_session "$_ca_s" || continue
+		if tmux kill-session -t "$_ca_s" 2>/dev/null; then
+			_ca_n=$(( _ca_n + 1 ))
+		fi
+		rm -f "$(out_file "$_ca_s")" "$(base_file "$_ca_s")" \
+			"$(closing_file "$_ca_s")" "$(gen_file "$_ca_s")"
+	done
+	fcc_log "fcc-terminal.log" "session closed: all ($_ca_n)"
+	printf '{"closed": %s}\n' "$_ca_n"
+}
+
+# Arm a close for `grace` seconds from now.
+#
+# This is what the standalone browser window asks for when it goes away. The
+# close cannot be immediate: a reload also unloads the page, and the requirement
+# is that closing the window ends the session, not that reloading it does. So
+# the request leaves a marker with the generation it was armed at, and a
+# detached `sleep` + reap performs the close if nothing has re-attached by then.
+# capture() bumps the generation, so a reload within the grace period cancels
+# the close whatever order the two requests reach the router in.
+cmd_close_later() {
+	require_tmux || return 1
+	_cl_name="${1:-}"; _cl_grace="${2:-8}"
+	fcc_valid_session "$_cl_name" || { fcc_die "invalid session"; return 2; }
+	case "$_cl_grace" in ''|*[!0-9]*) _cl_grace=8 ;; esac
+	[ "$_cl_grace" -le 120 ] || _cl_grace=120
+	session_exists "$_cl_name" || return 1
+
+	_cl_g="$(cat "$(gen_file "$_cl_name")" 2>/dev/null || echo 0)"
+	case "$_cl_g" in ''|*[!0-9]*) _cl_g=0 ;; esac
+	printf '%s' "$_cl_g" > "$(closing_file "$_cl_name")"
+
+	# Detached, and detached properly: the usual detach helper is missing from
+	# some BusyBox builds, so the child ignores SIGHUP itself. All three
+	# descriptors are redirected, because the caller (rpcd) reads this script's
+	# stdout until the pipe closes — a background child holding it would keep
+	# the request open for the whole grace period.
+	sh -c 'trap "" HUP; sleep "$1"; exec "$0" reap' "$0" "$_cl_grace" \
+		</dev/null >/dev/null 2>&1 &
+	fcc_log "fcc-terminal.log" "session close requested: $_cl_name (grace ${_cl_grace}s)"
+}
+
+cmd_reap() {
+	for _rp_f in "$SESSDIR"/*.closing; do
+		[ -e "$_rp_f" ] || continue
+		_rp_name="$(basename "$_rp_f" .closing)"
+		fcc_valid_session "$_rp_name" || { rm -f "$_rp_f"; continue; }
+
+		# The session is already gone (closed from a tab, or the agent
+		# exited and cleanup reaped it) — nothing to do but drop the marker.
+		if ! session_exists "$_rp_name"; then
+			rm -f "$_rp_f"
+			continue
+		fi
+
+		_rp_g="$(cat "$(gen_file "$_rp_name")" 2>/dev/null || echo 0)"
+		case "$_rp_g" in ''|*[!0-9]*) _rp_g=0 ;; esac
+		_rp_armed="$(cat "$_rp_f" 2>/dev/null || echo 0)"
+		case "$_rp_armed" in ''|*[!0-9]*) _rp_armed=0 ;; esac
+
+		# Re-attached since the close was armed: this was a reload, not a
+		# close. Cancel it, whoever got here first.
+		if [ "$_rp_g" -ne "$_rp_armed" ]; then
+			rm -f "$_rp_f"
+			continue
+		fi
+
+		tmux kill-session -t "$_rp_name" 2>/dev/null
+		rm -f "$(out_file "$_rp_name")" "$(base_file "$_rp_name")" \
+			"$_rp_f" "$(gen_file "$_rp_name")"
+		fcc_log "fcc-terminal.log" "session closed: $_rp_name (its browser window was closed)"
+	done
 }
 
 cmd_cleanup() {
@@ -393,6 +500,9 @@ case "${1:-}" in
 	resize)  shift; cmd_resize "$@" ;;
 	capture) shift; cmd_capture "$@" ;;
 	close)   shift; cmd_close "$@" ;;
+	close-all)   cmd_close_all ;;
+	close-later) shift; cmd_close_later "$@" ;;
+	reap)    cmd_reap ;;
 	cleanup) cmd_cleanup ;;
-	*) echo "usage: session.sh {list|create|output|input|resize|capture|close|cleanup}" >&2; exit 2 ;;
+	*) echo "usage: session.sh {list|create|output|input|resize|capture|close|close-all|close-later|reap|cleanup}" >&2; exit 2 ;;
 esac

@@ -227,6 +227,13 @@ round trip rather than immediate, and the poll interval is capped at 25 seconds
 server-side. For an interactive coding agent on a router that is not
 noticeable; for a full-screen TUI redraw it can be. See *Known limitations*.
 
+A session can also leave the LuCI page. **Open in browser** on the toolbar puts
+the current session in a window of its own — no menu, no tab bar, the terminal
+filling the window. **Closing that window ends the session**; reloading it does
+not, because the reattach cancels the delayed close. **End all sessions** ends
+every session this console created after a confirmation dialog — only the
+`fcc-*` namespace, so tmux sessions you started by hand are left alone.
+
 ---
 
 ## Repository layout

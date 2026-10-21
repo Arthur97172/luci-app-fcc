@@ -56,6 +56,8 @@ act_reinstall_runtime
 act_server
 act_session_cleanup
 act_session_close
+act_session_close_all
+act_session_close_later
 act_session_create
 act_session_input
 act_session_resize
