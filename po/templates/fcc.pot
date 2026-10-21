@@ -330,6 +330,9 @@ msgstr ""
 msgid "The install path changed — install the runtime at the new location to use it."
 msgstr ""
 
+msgid "The installer will add the missing packages before it starts:"
+msgstr ""
+
 msgid "The operation failed."
 msgstr ""
 

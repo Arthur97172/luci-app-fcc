@@ -310,10 +310,20 @@
 				]));
 			});
 			box.appendChild(table);
+			/* Two kinds of blocked, and they are not the same news. When every
+			 * failure is something a package fixes, the installer adds it before
+			 * it starts and the install will run; saying "blocked" there sends
+			 * the user off to a terminal for a step they did not need to take.
+			 * With any failure left over — storage, DNS, a CPU no Node build
+			 * targets — the note stays the old one, because that one needs them. */
 			if (!d.install_allowed) {
+				var pkgs = d.packages || [];
 				box.appendChild(FCC.el('div', {
-					class: 'fcc-note fail',
-					text: FCC._('Installation is blocked until the failed checks pass.')
+					class: pkgs.length ? 'fcc-note' : 'fcc-note fail',
+					text: pkgs.length
+						? FCC._('The installer will add the missing packages before it starts:') +
+						  ' ' + pkgs.join(', ')
+						: FCC._('Installation is blocked until the failed checks pass.')
 				}));
 			}
 		}).catch(function (err) {

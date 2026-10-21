@@ -1078,14 +1078,49 @@ fcc_tar_can_extract_uv_archive() {
 }
 
 fcc_pkg_install_hint() {
-	# fcc_pkg_install_hint <package> -> the command that installs it *here*.
+	# fcc_pkg_install_hint <package...> -> the command that installs them *here*.
 	# 24.10 uses opkg and 25.12 uses apk; the hint is a command the user types,
 	# so it has to name the one their image actually has.
+	#
+	# Several packages are one hint, not several: the C++ runtime the fetched
+	# Node needs can be more than one package, and "apk add libstdcpp6" followed
+	# by a second sentence is not the same instruction as "apk add libstdcpp6
+	# libgcc1".
 	if command -v apk >/dev/null 2>&1; then
-		printf 'apk add %s' "$1"
+		printf 'apk add %s' "$*"
 	else
-		printf 'opkg install %s' "$1"
+		printf 'opkg install %s' "$*"
 	fi
+}
+
+fcc_pkg_install() {
+	# fcc_pkg_install <package...> -> install them with the image's own package
+	# manager, or fail.
+	#
+	# The hint above is what a person types; this is what the installer runs so
+	# they do not have to. The packages are the ones doctor.sh named —
+	# doctor.sh --packages prints them — so the two never disagree about what
+	# the install needs.
+	#
+	# The retry after a failed attempt exists because a fresh image may have no
+	# index yet, and apk without one refuses before writing anything. One
+	# refresh, one retry; a failure after that is a real one and is left to the
+	# caller, which reports it through the doctor's blocking output.
+	[ $# -gt 0 ] || return 0
+	if command -v apk >/dev/null 2>&1; then
+		apk add "$@" && return 0
+		apk update >/dev/null 2>&1 || true
+		apk add "$@"
+		return $?
+	fi
+	if command -v opkg >/dev/null 2>&1; then
+		opkg install "$@" && return 0
+		opkg update >/dev/null 2>&1 || true
+		opkg install "$@"
+		return $?
+	fi
+	fcc_die "no package manager found (apk or opkg)"
+	return 1
 }
 
 # ---------------------------------------------------------------------------

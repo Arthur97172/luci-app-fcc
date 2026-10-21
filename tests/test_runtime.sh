@@ -4207,6 +4207,58 @@ test_doctor_sleep_check_follows_the_agent_set() {
 	rm -rf "$SANDBOX/opt/fcc"
 }
 
+# What the installer is told to add.
+#
+# The gate used to be the end of the road: a FAIL stopped the install before
+# anything was downloaded, with a suggestion the user had to type into a shell
+# before trying again. Every blocking check whose remedy is a package now names
+# it (add_result's sixth argument), and --packages is that list in the form
+# install.sh consumes it — one name per line, and none at all when even one
+# failure is not something a package can fix.
+#
+# Silence in the mixed case is the point rather than an optimisation: adding tar
+# does not make room on the flash or resolve DNS, and an installer that changed
+# the system on the way to a refusal it already knew about would be doing harm
+# for no benefit.
+test_doctor_packages_are_what_would_clear_the_report() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	_dpk_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl mktemp mkdir rm tar"
+
+	# Two failures, a package for each: Codex is selected and fold is absent,
+	# Pi is selected and sleep is absent. The two ids arrive comma separated
+	# because the harness passes assignments through env(1), which would split
+	# a space-separated list into a command; the doctor accepts both, as
+	# fcc_effective_agents() does for install.sh's space-separated form.
+	_dpk_list="$(sh_doctor_tools "$_dpk_tools" 'FCC_AGENT_SELECTION=codex,pi' --packages)"
+	assert_contains "$_dpk_list" 'coreutils-fold' "the fold package is named"
+	assert_contains "$_dpk_list" 'coreutils-sleep' "and the sleep package"
+	assert_eq 2 "$(printf '%s\n' "$_dpk_list" | grep -c .)" \
+		"one package per line, and nothing but the packages"
+
+	# The page reads the same list out of the JSON, so a blocked install it can
+	# fix does not read like one that needs the user to go and fix it.
+	assert_contains "$(sh_doctor_tools "$_dpk_tools" 'FCC_AGENT_SELECTION=codex,pi' --json)" \
+		'"packages": ["coreutils-fold", "coreutils-sleep"]' \
+		"the report carries the list for the page too"
+
+	# One failure no package can fix — the storage check, made impossible —
+	# and the answer is nothing. Installing the other two would not unblock
+	# anything.
+	assert_eq "" "$(sh_doctor_tools "$_dpk_tools" \
+		'FCC_AGENT_SELECTION=codex,pi FCC_REQUIRED_FREE_MB=999999999' --packages)" \
+		"a failure no package can fix leaves the list empty"
+
+	# A report that passes has nothing to clear, whatever a check it no longer
+	# fails might have named.
+	make_standin_tool fold 'exit 0' >/dev/null
+	make_standin_tool sleep 'exit 0' >/dev/null
+	assert_eq "" "$(sh_doctor_tools \
+		"$_dpk_tools $SANDBOX/standin/fold $SANDBOX/standin/sleep" \
+		'FCC_AGENT_SELECTION=codex,pi' --packages)" \
+		"a passing report names no packages"
+}
+
 # The Node check. Pi, DeepSeek Harness and Cline are npm packages, all three
 # want a Node this image's own node is below, and the Pi installer's own remedy
 # — nodejs.org/dist — publishes no musl build at all, so what it installs
@@ -4821,6 +4873,7 @@ test_install_runtime_takes_the_whole_registry() {
 	# are in it, not the order they arrive in.
 	_tr_set="$(sh_install '
 		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
+		precheck_packages() { :; }
 		cmd_runtime runtime --all-agents' 2>&1 \
 		| sed -n 's/^SET=\[\(.*\)\]$/\1/p' | tr ' ' '\n' | grep . \
 		| LC_ALL=C sort | tr '\n' ' ')"
@@ -4831,6 +4884,7 @@ test_install_runtime_takes_the_whole_registry() {
 	# and is not quietly widened to everything.
 	_tr_set="$(sh_install '
 		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
+		precheck_packages() { :; }
 		cmd_runtime runtime --agents claude' 2>&1 \
 		| sed -n 's/^SET=\[\(.*\)\]$/\1/p' | tr ' ' '\n' | grep . \
 		| LC_ALL=C sort | tr '\n' ' ')"
@@ -4871,6 +4925,56 @@ test_install_runtime_takes_the_whole_registry() {
 		"the checks accept the whole registry as the one list install.sh exports"
 	assert_contains "$_tr_report" '"install_allowed"' \
 		"and answer with a report rather than a usage error"
+}
+
+# The gate's remedy, run for the user.
+#
+# Before this, a FAIL for tar or a missing applet stopped the install and left
+# the user to type the suggestion into a shell and start again — four times at
+# once, on the test router, before anything had been installed. Every one of
+# those packages is an ordinary feed package, so the install adds them and asks
+# the gate again.
+#
+# The package manager is stubbed because this asserts the decision, not apk's
+# behaviour, and because a test must never install packages on the machine
+# running it. precheck_ok counts its calls for the same reason: "asked again"
+# is the difference between a remedy and a message.
+test_install_adds_the_packages_the_gate_names() {
+	setup_sandbox
+	make_uci_shim
+
+	# A blocked report whose failures all have a package: the list is installed
+	# in one call, before the gate is asked a second time.
+	_out="$(sh_install '
+		_n=0
+		precheck_packages() { printf "coreutils-fold\ncoreutils-sleep\n"; }
+		precheck_ok() { _n=$((_n + 1)); printf "CHECK=%s\n" "$_n"; return 1; }
+		precheck_failures() { printf "[FAIL] fold\n"; }
+		fcc_pkg_install() { printf "%s\n" "$*" > "$ROOT/pkgs.out"; return 0; }
+		cmd_runtime runtime --agents codex' 2>&1)"
+	# The package manager's own output is captured into the job log rather than
+	# left on stdout, so the stub records its argument list in a file.
+	assert_eq "coreutils-fold coreutils-sleep" "$(cat "$SANDBOX/opt/fcc/pkgs.out" 2>/dev/null)" \
+		"the packages the report named are installed together"
+	assert_contains "$_out" "CHECK=2" \
+		"and the gate is asked again before it is allowed to stop anything"
+	assert_contains "$_out" "PRECHECK_FAILED" \
+		"the run still ends at the gate when the packages do not clear it"
+
+	# A failure no package can fix: nothing is installed and the gate is asked
+	# exactly once. The empty list is how the doctor says "not this".
+	_out="$(sh_install '
+		_n=0
+		precheck_packages() { :; }
+		precheck_ok() { _n=$((_n + 1)); printf "CHECK=%s\n" "$_n"; return 1; }
+		precheck_failures() { :; }
+		fcc_pkg_install() { printf "%s\n" "$*" > "$ROOT/pkgs2.out"; return 0; }
+		cmd_runtime runtime --agents codex' 2>&1)"
+	assert_no "a failure no package can fix installs nothing" \
+		test -e "$SANDBOX/opt/fcc/pkgs2.out"
+	assert_contains "$_out" "CHECK=1" "the gate is asked once"
+	assert_not_contains "$_out" "CHECK=2" "and not asked again to the same answer"
+	assert_contains "$_out" "PRECHECK_FAILED" "and the install is still refused"
 }
 
 test_reinstall_is_remove_then_install_everything() {

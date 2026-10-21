@@ -399,6 +399,9 @@ msgid ""
 "The install path changed — install the runtime at the new location to use it."
 msgstr "安装路径已更改 —— 请在新位置安装运行时后再使用。"
 
+msgid "The installer will add the missing packages before it starts:"
+msgstr "安装程序会先自动安装缺失的依赖包："
+
 msgid "The operation failed."
 msgstr "操作失败。"
 

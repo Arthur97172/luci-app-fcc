@@ -5,6 +5,9 @@
 #   doctor.sh            Human-readable report ([OK]/[WARN]/[FAIL] lines)
 #   doctor.sh --json     Machine-readable report (used by the LuCI UI)
 #   doctor.sh --blocking Only what failed, and what to do about it
+#   doctor.sh --packages The packages whose installation would clear the whole
+#                        report, one per line — and nothing when even one of the
+#                        failures is something no package can fix
 #   doctor.sh --agents <id>   Report on one agent rather than on the whole set
 #
 # The JSON form always contains "install_allowed": true|false. A FAIL on a
@@ -32,6 +35,7 @@ set -u
 
 JSON=0
 BLOCKING=0
+LIST_PACKAGES=0
 while [ $# -gt 0 ]; do
 	# ${1:-} rather than $1: the guard above already makes $1 safe here, but
 	# every other script in this directory reads its argument the same way, and
@@ -39,6 +43,7 @@ while [ $# -gt 0 ]; do
 	case "${1:-}" in
 		--json)     JSON=1 ;;
 		--blocking) BLOCKING=1 ;;
+		--packages) LIST_PACKAGES=1 ;;
 		--agents)   FCC_AGENT_SELECTION="${2:-}"; shift ;;
 		--agents=*) FCC_AGENT_SELECTION="${1#--agents=}" ;;
 	esac
@@ -66,7 +71,7 @@ done
 for _arg_id in $(printf '%s' "${FCC_AGENT_SELECTION:-}" | tr ',' ' '); do
 	if ! fcc_valid_agent "$_arg_id"; then
 		printf 'doctor.sh: unknown agent: %s\n' "$_arg_id" >&2
-		printf 'usage: doctor.sh [--json] [--blocking] [--agents <id>]\n' >&2
+		printf 'usage: doctor.sh [--json] [--blocking] [--packages] [--agents <id>]\n' >&2
 		exit 2
 	fi
 done
@@ -87,15 +92,34 @@ MIN_TMP_MB="${FCC_MIN_TMP_MB:-64}"
 RESULTS=""
 fail_count=0
 warn_count=0
+# The packages a failed check named, and how many of the failures named one.
+# The two are compared by --packages: installing packages can only clear the
+# report when there is no failure left that no package can fix.
+FIX_PACKAGES=""
+FIXABLE_FAIL_COUNT=0
 
 add_result() {
-	# add_result <OK|WARN|FAIL> <name> <value> <requirement> [hint]
+	# add_result <OK|WARN|FAIL> <name> <value> <requirement> [hint] [package]
+	#
+	# The optional sixth argument names the package that would satisfy a FAIL.
+	# It is given only where a package is the whole remedy — tar, bash, the
+	# missing applets, a C++ runtime — and is what makes the installer able to
+	# add the dependency before it runs rather than stop and ask for one. A
+	# failure with no package (storage, DNS, an unsupported CPU) stays a plain
+	# FAIL and keeps --packages silent, because installing things would not
+	# unblock it.
 	RESULTS="${RESULTS}${1}|${2}|${3}|${4}|${5:-}
 "
 	case "$1" in
 		FAIL) fail_count=$((fail_count + 1)) ;;
 		WARN) warn_count=$((warn_count + 1)) ;;
 	esac
+	# Counted separately from fail_count so the two can be compared: a report
+	# is fixable by package only when every failure named one.
+	if [ "$1" = FAIL ] && [ -n "${6:-}" ]; then
+		FIX_PACKAGES="$FIX_PACKAGES $6"
+		FIXABLE_FAIL_COUNT=$((FIXABLE_FAIL_COUNT + 1))
+	fi
 }
 
 # ---------------------------------------------------------------------------
@@ -217,7 +241,8 @@ elif [ -n "$_uv" ]; then
 else
 	_tar_v="$(tar --version 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1 | cut -c1-40)"
 	add_result FAIL "tar" "${_tar_v:-not found}" "supports --strip-components" \
-		"$(fcc_pkg_install_hint tar) — uv's installer unpacks its release with --strip-components and --no-same-owner, which BusyBox tar does not support, so the install stops before uv is installed."
+		"$(fcc_pkg_install_hint tar) — uv's installer unpacks its release with --strip-components and --no-same-owner, which BusyBox tar does not support, so the install stops before uv is installed." \
+		tar
 fi
 
 # Node (needed by some agents).
@@ -244,7 +269,8 @@ if [ -n "$_tmux" ]; then
 	add_result OK "tmux" "$_tmux" "required" ""
 else
 	add_result FAIL "tmux" "not found" "required" \
-		"$(fcc_pkg_install_hint tmux) — the Web Console and the runtime installer both need it."
+		"$(fcc_pkg_install_hint tmux) — the Web Console and the runtime installer both need it." \
+		tmux
 fi
 
 # bash — required by five of the ten agents, and absent from every stock image.
@@ -299,7 +325,8 @@ if [ -n "$_bash_v" ]; then
 	add_result OK "bash" "$_bash_v" "$_bash_req" ""
 elif [ -n "$_bash_names" ]; then
 	add_result FAIL "bash" "not found" "$_bash_req" \
-		"$(fcc_pkg_install_hint bash) — required by $_bash_names. Or select only agents that do not need it."
+		"$(fcc_pkg_install_hint bash) — required by $_bash_names. Or select only agents that do not need it." \
+		bash
 else
 	add_result WARN "bash" "not found" "$_bash_req" \
 		"Not needed by the selected agents; add it before selecting one that needs it."
@@ -368,7 +395,8 @@ for _tl_tool in $FCC_INSTALLER_TOOLS; do
 
 	if [ -n "$_tl_will_run" ]; then
 		add_result FAIL "$_tl_tool" "$_tl_state" "needed to install an agent" \
-			"$(fcc_pkg_install_hint "$_tl_pkg") — $_tl_why. Required by $_tl_will_run."
+			"$(fcc_pkg_install_hint "$_tl_pkg") — $_tl_why. Required by $_tl_will_run." \
+			"$_tl_pkg"
 	elif [ -n "$_tl_present" ]; then
 		add_result WARN "$_tl_tool" "$_tl_state" "needed to install an agent" \
 			"$_tl_present is already installed, so its installer is not run — but reinstalling it needs $_tl_tool: $(fcc_pkg_install_hint "$_tl_pkg")."
@@ -422,8 +450,14 @@ if [ -n "$_node_ids" ]; then
 		# a transcript to read.
 		_node_libs="$(fcc_node_missing_libs)"
 		if [ -n "$_node_libs" ]; then
+			# One string, two uses: the hint names every package (the loader may
+			# be missing both libraries), and the same list is what --packages
+			# hands the installer. Kept as one argument so the sixth-argument
+			# contract of add_result holds even here.
+			_node_pkgs="$(fcc_node_lib_packages $_node_libs)"
 			add_result FAIL "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
-				"The musl Node.js this package fetches needs $_node_libs, which this image has nowhere the loader looks: $(fcc_pkg_install_hint "$(fcc_node_lib_packages $_node_libs)")."
+				"The musl Node.js this package fetches needs $_node_libs, which this image has nowhere the loader looks: $(fcc_pkg_install_hint $_node_pkgs)." \
+				"$_node_pkgs"
 		else
 			add_result WARN "node" "${_node_v:-not found}" "needed to install $_node_unsatisfied" \
 				"The installer fetches a musl Node.js for them before it runs; nothing to do by hand."
@@ -517,7 +551,7 @@ if command -v curl >/dev/null 2>&1; then
 			"Cannot reach the FCC installer host."
 	fi
 else
-	add_result FAIL "curl" "not found" "required" "Install the curl package."
+	add_result FAIL "curl" "not found" "required" "Install the curl package." curl
 fi
 
 # Permissions.
@@ -532,6 +566,29 @@ fi
 # ---------------------------------------------------------------------------
 install_allowed=true
 [ "$fail_count" -gt 0 ] && install_allowed=false
+
+# The packages that would clear the report, or nothing.
+#
+# Nothing when any failure has no package behind it: an install of tar cannot
+# make room on the flash, resolve DNS or give an unsupported CPU a Node build,
+# and an installer that added packages anyway would be changing the system to
+# no purpose. Nothing either when the report already passes — there is nothing
+# to clear, and printing the packages of some earlier WARN would make the
+# installer reach for the package manager on a box that needs nothing.
+#
+# Deduplicated and in check order: the same package can be named by two checks
+# (curl is a dependency of the tar row's world too), and installing it twice is
+# at best noise in the log.
+fixable_packages() {
+	[ "$fail_count" -gt 0 ] || return 0
+	[ "$FIXABLE_FAIL_COUNT" -eq "$fail_count" ] || return 0
+	printf '%s\n' $FIX_PACKAGES | awk 'NF && !seen[$0]++'
+}
+
+if [ "$LIST_PACKAGES" -eq 1 ]; then
+	fixable_packages
+	exit 0
+fi
 
 if [ "$BLOCKING" -eq 1 ]; then
 	# Only the FAILs: this output is read by someone whose install just stopped,
@@ -552,6 +609,19 @@ if [ "$JSON" -eq 1 ]; then
 	printf '  "install_allowed": %s,\n' "$install_allowed"
 	printf '  "fail_count": %s,\n' "$fail_count"
 	printf '  "warn_count": %s,\n' "$warn_count"
+	# What the installer will add before it starts — empty unless installing
+	# packages is the whole of what stands between the report and a pass. The
+	# page reads this so a blocked install it can fix does not read like one
+	# that needs the user to go and fix it.
+	printf '  "packages": ['
+	_pkg_first=1
+	fixable_packages | while IFS= read -r _pkg_name; do
+		[ -n "$_pkg_name" ] || continue
+		[ "$_pkg_first" -eq 1 ] || printf ', '
+		_pkg_first=0
+		printf '%s' "$(fcc_json_str "$_pkg_name")"
+	done
+	printf '],\n'
 	printf '  "checks": ['
 	_first=1
 	printf '%s' "$RESULTS" | while IFS='|' read -r st name val req hint; do

@@ -109,6 +109,53 @@ precheck_ok() {
 	printf '%s' "$_po_rep" | grep -q '"install_allowed":[[:space:]]*true'
 }
 
+precheck_packages() {
+	# Section 3.6.4's fourth answer, made actionable: the checks that a package
+	# would satisfy name the package, and this is the list. Empty unless
+	# installing packages is the whole of what stands between this box and a
+	# passing report — on a box whose storage is short, adding tar would not
+	# unblock anything, and changing the system to no purpose is not a kindness.
+	"${FCC_LIBDIR:-/usr/libexec/fcc}/doctor.sh" --packages 2>/dev/null
+}
+
+install_prerequisite_packages() {
+	# Add the missing prerequisites before the gate is asked a second time.
+	#
+	# The gate used to be the end of the road: a FAIL meant an install stopped
+	# before anything was downloaded, with a suggestion the user had to go and
+	# type into a shell and then start the install again. Every one of those
+	# packages — tar, bash, the Coreutils applets, the C++ runtime — is an
+	# ordinary feed package, so the install can simply add it. Measured on the
+	# test router: an install of every agent stopped at four of these at once
+	# and installed nothing.
+	#
+	# The report is asked again afterwards rather than trusted to have been
+	# fixed: a package manager that fails has its own reasons (no network, no
+	# room, a package the feed does not carry), and the check that is still
+	# failing is what names them to the user. It is also what keeps this from
+	# being a second veto — the gate below is still the only thing that decides.
+	#
+	# Returns 2 when there was nothing to install, so the caller can tell that
+	# from an install that succeeded: the report would come back identical and
+	# asking it again would only repeat its HTTPS probe.
+	_ipr_pkgs="$(precheck_packages)"
+	[ -n "$_ipr_pkgs" ] || return 2
+
+	_ipr_list="$(printf '%s ' $_ipr_pkgs)"
+	fcc_log "$LOG" "preflight: installing prerequisites:${_ipr_list% }"
+	if _ipr_out="$(fcc_pkg_install $_ipr_pkgs 2>&1 </dev/null)"; then
+		fcc_log "$LOG" "preflight: installed${_ipr_list% }"
+		return 0
+	fi
+	# The package manager's own last words, so a package that could not be
+	# fetched or unpacked says why. The failing check below still names the
+	# missing tool and the package; this is the evidence underneath it.
+	printf '%s\n' "$_ipr_out" | tail -n 20 | while IFS= read -r _ipr_line; do
+		[ -n "$_ipr_line" ] && fcc_log "$LOG" "  $_ipr_line"
+	done
+	return 1
+}
+
 precheck_failures() {
 	# Section 3.6.4: a blocked install has to say which check failed, what it
 	# found, what it needed and what to do — "precheck failed" is none of those.
@@ -121,6 +168,28 @@ precheck_failures() {
 	# more than the few seconds this takes on a router that is about to refuse
 	# the install anyway.
 	"${FCC_LIBDIR:-/usr/libexec/fcc}/doctor.sh" --blocking 2>/dev/null
+}
+
+precheck_blocked() {
+	# The install is not going to start. Say what stopped it, in the log, and
+	# answer the caller with the single machine-readable token it matches on.
+	#
+	# The report goes into the log and nowhere else. When this runs as a job its
+	# stdout *is* that same file, so echoing it here as well would print the
+	# whole thing twice; and the log is where both readers look — the job panel
+	# tails it, and it is what a person opens when the install stops. One
+	# fcc_log call per line, so each keeps its own timestamp and gets redacted
+	# like every other entry.
+	fcc_lock_release "$_cr_lock"
+	fcc_log "$LOG" "install aborted: compatibility precheck failed"
+	_cr_blocked="$(precheck_failures)"
+	if [ -n "$_cr_blocked" ]; then
+		printf '%s\n' "$_cr_blocked" | while IFS= read -r _cr_line; do
+			fcc_log "$LOG" "$_cr_line"
+		done
+	fi
+	printf 'PRECHECK_FAILED\n'
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -1687,23 +1756,18 @@ cmd_runtime() {
 	export FCC_AGENT_SELECTION FCC_AGENT_NONE
 
 	if ! precheck_ok; then
-		fcc_lock_release "$_cr_lock"
-		fcc_log "$LOG" "install aborted: compatibility precheck failed"
-		_cr_blocked="$(precheck_failures)"
-		# The report goes into the log and nowhere else. When this runs as a job
-		# its stdout *is* that same file, so echoing it here as well would print
-		# the whole thing twice; and the log is where both readers look — the job
-		# panel tails it, and it is what a person opens when the install stops.
-		# One fcc_log call per line, so each keeps its own timestamp and gets
-		# redacted like every other entry.
-		if [ -n "$_cr_blocked" ]; then
-			printf '%s\n' "$_cr_blocked" | while IFS= read -r _cr_line; do
-				fcc_log "$LOG" "$_cr_line"
-			done
+		# The gate named something. When what it named is a package — tar, bash,
+		# an applet, the C++ runtime the fetched Node loads against — add it and
+		# ask again, rather than stopping an install the user already asked for
+		# so they can go and type the suggestion into a terminal. Anything else
+		# (storage, DNS, an unsupported CPU) is not something this script can
+		# change, and the report goes straight to the log.
+		install_prerequisite_packages
+		_cr_prc=$?
+		if [ "$_cr_prc" -eq 2 ] || ! precheck_ok; then
+			precheck_blocked || return 1
 		fi
-		# stdout keeps the single machine-readable token the callers match on.
-		printf 'PRECHECK_FAILED\n'
-		return 1
+		fcc_log "$LOG" "preflight: compatibility checks now pass"
 	fi
 
 	# --- section 23 step 3: disk space ------------------------------------
