@@ -999,11 +999,23 @@ installer_prepare_shim() {
 # file from GitHub Releases. That retry has no timeout at all: on a 24.10.8
 # box it transferred 2.8 MB in five minutes from the first host and then sat
 # on the second until this package's own 30-minute deadline rolled the install
-# back. The retry path is also what the Codex installer uses when GitHub is
-# the chosen source, and that path is known-good when its API answers — which
-# is exactly the endpoint the fallback needs. So when the API answers and
-# Codex is in the set, start at GitHub; when it does not, leave upstream's
-# first choice alone, because that box's network is the other way round.
+# back; a second run installed in five minutes. The source is an environment
+# variable inside Codex's own installer, so the pane's environment can choose
+# it.
+#
+# The choice is measured, not assumed. Both hosts are asked for the first
+# three megabytes of the same asset for five seconds, and GitHub is chosen
+# only when it is both fast enough to finish on its own (at least 1 MB in
+# those five seconds) and at least twice what releases.openai.com delivered.
+# Anything else — an unresolvable version, an unknown architecture, a slow or
+# missing host — leaves upstream's first choice exactly where it was, so a
+# box whose OpenCode download already worked cannot be sent somewhere worse.
+installer_codex_probe_bytes() {
+	# installer_codex_probe_bytes <url> -> bytes fetched in five seconds
+	curl -sS -o /dev/null --range 0-3145727 \
+		--connect-timeout 5 --max-time 5 -w '%{size_download}' "$1" 2>/dev/null || :
+}
+
 installer_codex_prefers_github() {
 	# installer_codex_prefers_github <agents> <mode>
 	_icpg_agents="$1"
@@ -1019,8 +1031,39 @@ installer_codex_prefers_github() {
 		*) return 1 ;;
 	esac
 	command -v curl >/dev/null 2>&1 || return 1
-	curl -fsS -o /dev/null --connect-timeout 5 --max-time 10 \
-		"https://api.github.com/repos/openai/codex/releases/latest" 2>/dev/null
+	# Codex supports these two targets and exits on anything else, so there is
+	# nothing to choose for an architecture it will refuse to install on.
+	_icpg_arch="$(uname -m 2>/dev/null)"
+	case "$_icpg_arch" in
+		x86_64|amd64) _icpg_target=x86_64-unknown-linux-musl ;;
+		arm64|aarch64) _icpg_target=aarch64-unknown-linux-musl ;;
+		*) return 1 ;;
+	esac
+	# The tag names the version both hosts publish under. No tag, no opinion.
+	_icpg_tag="$(curl -fsS --connect-timeout 5 --max-time 15 \
+		"https://api.github.com/repos/openai/codex/releases/latest" 2>/dev/null \
+		| grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 \
+		| sed 's/.*"\([^"]*\)"$/\1/')"
+	case "$_icpg_tag" in
+		rust-v*) _icpg_ver="${_icpg_tag#rust-v}" ;;
+		*) return 1 ;;
+	esac
+	_icpg_asset="codex-package-$_icpg_target.tar.gz"
+	_icpg_ob="$(installer_codex_probe_bytes \
+		"https://releases.openai.com/codex/releases/$_icpg_ver/$_icpg_asset")"
+	_icpg_gb="$(installer_codex_probe_bytes \
+		"https://github.com/openai/codex/releases/download/$_icpg_tag/$_icpg_asset")"
+	case "$_icpg_ob" in ''|*[!0-9]*) _icpg_ob=0 ;; esac
+	case "$_icpg_gb" in ''|*[!0-9]*) _icpg_gb=0 ;; esac
+	# 1 MB in five seconds is 200 KB/s, which finishes 159 MB inside this
+	# package's own 30-minute deadline. Below that GitHub cannot do the job
+	# either, so the default is left alone rather than made slower.
+	[ "$_icpg_gb" -ge 1048576 ] || return 1
+	# And it has to beat the first choice clearly. Equal or merely similar
+	# speeds keep upstream's order; this only reroutes a box whose first host
+	# has already shown it is the slow one.
+	[ "$_icpg_gb" -gt $((_icpg_ob * 2)) ] || return 1
+	fcc_log "$LOG" "installer: starting Codex at GitHub Releases (five-second probe: ${_icpg_ob} bytes from releases.openai.com, ${_icpg_gb} from GitHub)"
 }
 
 # The environment the installer pane sources, in one place so that the PATH the
@@ -1038,7 +1081,6 @@ installer_write_env() {
 	if installer_codex_prefers_github "${2:-}" "${3:-}"; then
 		printf 'export CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false\n' \
 			>> "$1" 2>/dev/null || return 1
-		fcc_log "$LOG" "installer: Codex will download from GitHub Releases, whose API answers from this box, rather than releases.openai.com, upstream's first choice"
 	fi
 	return 0
 }

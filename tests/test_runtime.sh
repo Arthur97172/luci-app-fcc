@@ -2668,38 +2668,88 @@ test_the_installer_pane_finds_the_ldd_stand_in_first() {
 # Releases only after its 300-second asset cap has already spent itself on a
 # 159 MB file. Starting at the host that answers is what the pane's environment
 # decides, because the choice is an environment variable inside Codex's own
-# installer. See installer_codex_prefers_github().
+# installer. The choice is measured: GitHub must be fast enough on its own and
+# at least twice what the first host delivered, so a box whose first host is
+# fine is never rerouted. See installer_codex_prefers_github().
 test_installer_starts_codex_at_the_download_that_answers() {
 	setup_sandbox
-	mkdir -p "$SANDBOX/bin"
-	make_standin_tool curl "printf '%s\n' \"\$*\" >> '$SANDBOX/curl.log'; exit 0" >/dev/null
+	mkdir -p "$SANDBOX/bin" "$SANDBOX/standin"
+	cat > "$SANDBOX/standin/curl" <<CURL_STAND_IN
+#!/bin/sh
+printf '%s\n' "\$*" >> "$SANDBOX/curl.log"
+case " \$* " in
+	*"api.github.com/repos/openai/codex/releases/latest"*)
+		printf '{"tag_name": "rust-v0.163.0"}'
+		;;
+	*"releases.openai.com/codex/releases/0.163.0/codex-package-"*)
+		cat "$SANDBOX/openai.bytes"
+		;;
+	*"github.com/openai/codex/releases/download/rust-v0.163.0/codex-package-"*)
+		cat "$SANDBOX/github.bytes"
+		;;
+esac
+CURL_STAND_IN
+	chmod 755 "$SANDBOX/standin/curl"
 	ln -s "$SANDBOX/standin/curl" "$SANDBOX/bin/curl"
 
-	# Codex is selected and the endpoint the GitHub fallback uses answers: the
-	# pane is told to start there, and the probe asked that endpoint.
+	# The first host delivers 50 KB in the five-second window and GitHub
+	# delivers the whole 4 MB range: the pane is told to start at GitHub, and
+	# both hosts were asked for the same asset, not just for an API answer.
+	printf '50000' > "$SANDBOX/openai.bytes"
+	printf '4194304' > "$SANDBOX/github.bytes"
 	sh_install "installer_write_env '$SANDBOX/codexenv.sh' codex set" >/dev/null 2>&1
 	assert_contains "$(cat "$SANDBOX/codexenv.sh")" \
 		'export CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false' \
-		"a reachable GitHub API makes Codex download from GitHub Releases"
+		"a slow releases.openai.com and a fast GitHub make Codex download from GitHub"
 	assert_contains "$(cat "$SANDBOX/curl.log")" \
 		"api.github.com/repos/openai/codex/releases/latest" \
-		"and the probe asks the endpoint the fallback itself uses"
+		"the probe resolves the version through the API the fallback itself uses"
+	assert_contains "$(cat "$SANDBOX/curl.log")" \
+		"releases.openai.com/codex/releases/0.163.0/codex-package-x86_64-unknown-linux-musl.tar.gz" \
+		"and measures the first host's asset"
+	assert_contains "$(cat "$SANDBOX/curl.log")" \
+		"github.com/openai/codex/releases/download/rust-v0.163.0/codex-package-x86_64-unknown-linux-musl.tar.gz" \
+		"against the same asset on GitHub"
 	assert_eq "false" \
 		"$(sh -c ". '$SANDBOX/codexenv.sh'; printf '%s' \"\$CODEX_INSTALLER_USE_RELEASES_OPENAI_COM\"")" \
 		"the value reads back from the file the pane sources"
+
+	# Both hosts fast: upstream's first choice stays. This is the case that
+	# must not regress — a box where the download already worked is untouched.
+	printf '4194304' > "$SANDBOX/openai.bytes"
+	sh_install "installer_write_env '$SANDBOX/eqenv.sh' codex set" >/dev/null 2>&1
+	assert_not_contains "$(cat "$SANDBOX/eqenv.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
+		"an equally fast first host keeps upstream's order"
+
+	# First host fast, GitHub slow: again nothing changes.
+	printf '50000' > "$SANDBOX/github.bytes"
+	sh_install "installer_write_env '$SANDBOX/slowghenv.sh' codex set" >/dev/null 2>&1
+	assert_not_contains "$(cat "$SANDBOX/slowghenv.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
+		"a slow GitHub never becomes the chosen source"
+
+	# GitHub below the 1 MB floor cannot finish the job either, however slow
+	# the first host was: leave the default rather than make it worse.
+	printf '50000' > "$SANDBOX/openai.bytes"
+	printf '800000' > "$SANDBOX/github.bytes"
+	sh_install "installer_write_env '$SANDBOX/slowboth.sh' codex set" >/dev/null 2>&1
+	assert_not_contains "$(cat "$SANDBOX/slowboth.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
+		"a GitHub too slow to finish does not replace the default"
 
 	# A set without Codex never probes and never sets it.
 	: > "$SANDBOX/curl.log"
 	sh_install "installer_write_env '$SANDBOX/claudeenv.sh' claude set" >/dev/null 2>&1
 	assert_not_contains "$(cat "$SANDBOX/claudeenv.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
 		"an install that does not include Codex leaves the variable unset"
-	assert_eq "" "$(cat "$SANDBOX/curl.log")" "and does not probe GitHub at all"
+	assert_eq "" "$(cat "$SANDBOX/curl.log")" "and does not touch the network at all"
 
-	# "No opinion" installs every default agent, Codex among them.
+	# "No opinion" installs every default agent, Codex among them; with the
+	# same slow/fast pair it makes the same measured choice.
+	printf '50000' > "$SANDBOX/openai.bytes"
+	printf '4194304' > "$SANDBOX/github.bytes"
 	sh_install "installer_write_env '$SANDBOX/defaultenv.sh' '' default" >/dev/null 2>&1
 	assert_contains "$(cat "$SANDBOX/defaultenv.sh")" \
 		'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false' \
-		"the default set includes Codex, so it gets the same choice"
+		"the default set includes Codex, so it gets the same measured choice"
 
 	# An explicit empty selection is a decision, not a default: no probe.
 	: > "$SANDBOX/curl.log"
@@ -2708,8 +2758,7 @@ test_installer_starts_codex_at_the_download_that_answers() {
 		"with no agents selected the variable is left alone"
 	assert_eq "" "$(cat "$SANDBOX/curl.log")" "and nothing is probed"
 
-	# GitHub unreachable: leave the choice to upstream rather than send this
-	# box at a host it cannot read.
+	# No API answer means no version to compare, and so no rerouting.
 	make_standin_tool curl 'exit 22' >/dev/null
 	sh_install "installer_write_env '$SANDBOX/nogh.sh' codex set" >/dev/null 2>&1
 	assert_not_contains "$(cat "$SANDBOX/nogh.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
