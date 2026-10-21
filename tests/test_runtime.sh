@@ -5547,6 +5547,107 @@ test_a_broken_launcher_is_moved_aside_before_the_installer_runs() {
 }
 
 # ---------------------------------------------------------------------------
+# An install does not delete the agents it was not asked about
+# ---------------------------------------------------------------------------
+#
+# runtime/ holds more than the runtime. `uv tool install` puts a tool under
+# runtime/uv-tools and the interpreter it runs on under runtime/python, and
+# Aider is installed that way — so every install renamed the tree aside and,
+# once it had succeeded, deleted the old copy. An install naming some other
+# agent therefore deleted Aider without asking: 2026-10-22's log shows Aider
+# installed at 07:27 and the page saying "Install it from the Configuration
+# page to use it" at 07:29, with a Grok install committing its backup in
+# between.
+#
+# keep_previous_agent_tools() moves the parts the new runtime does not own out
+# of the backup before that copy is deleted. The FCC package is owned by the
+# new runtime and must not be brought back, and anything the new runtime has
+# under the same name must not be overwritten — both are checks below.
+test_an_install_keeps_the_agents_it_did_not_replace() {
+	setup_sandbox
+	_kt_base="$SANDBOX/keep"
+	_kt_root="$_kt_base/fcc"
+	_kt_bk="$_kt_root/backup/20261021T232839Z"
+	mkdir -p "$_kt_root/runtime/uv-tools/free-claude-code/bin" \
+	         "$_kt_root/runtime/python/cpython-3.14.7-x/bin" \
+	         "$_kt_root/bin" "$_kt_root/logs" "$_kt_bk/data"
+	# What this install put down.
+	printf 'new fcc\n' > "$_kt_root/runtime/uv-tools/free-claude-code/bin/fcc-server"
+	printf 'new uv\n'  > "$_kt_root/bin/uv"
+	printf 'new fcc-server\n' > "$_kt_root/bin/fcc-server"
+	printf 'py314\n'   > "$_kt_root/runtime/python/cpython-3.14.7-x/bin/python3"
+	# What the previous runtime held: Aider's tool, the interpreter its venv
+	# runs on, the launcher in bin/ that points at the tool, and copies of the
+	# things the new install owns under the same names.
+	mkdir -p "$_kt_bk/runtime/uv-tools/aider-chat/bin" \
+	         "$_kt_bk/runtime/uv-tools/free-claude-code/bin" \
+	         "$_kt_bk/runtime/python/cpython-3.12.8-x/bin" \
+	         "$_kt_bk/runtime/python/cpython-3.14.7-x/bin" \
+	         "$_kt_bk/bin"
+	printf 'old aider\n' > "$_kt_bk/runtime/uv-tools/aider-chat/bin/aider"
+	printf 'old fcc\n'   > "$_kt_bk/runtime/uv-tools/free-claude-code/bin/fcc-server"
+	printf 'py312\n'     > "$_kt_bk/runtime/python/cpython-3.12.8-x/bin/python3"
+	# uv keeps a version-less name beside each interpreter as a symlink into the
+	# live tree; during the carry-over that link is dangling, and skipping it
+	# would leave the restored tool with no interpreter name uv knows.
+	ln -s "$_kt_root/runtime/python/cpython-3.12.8-x" \
+		"$_kt_bk/runtime/python/cpython-3.12-linux-x86_64-musl"
+	printf 'old py314\n' > "$_kt_bk/runtime/python/cpython-3.14.7-x/bin/python3"
+	printf '#!/bin/sh\nexec %s/runtime/uv-tools/aider-chat/bin/aider "$@"\n' \
+		"$_kt_root" > "$_kt_bk/bin/aider"
+	chmod 755 "$_kt_bk/bin/aider"
+	printf 'old uv\n'         > "$_kt_bk/bin/uv"
+	printf 'old fcc-server\n' > "$_kt_bk/bin/fcc-server"
+
+	_kt_out="$(sh_install "keep_previous_agent_tools '$_kt_bk'; echo \"rc=\$?\"" "$_kt_base")"
+	assert_contains "$_kt_out" 'rc=0' "the carry-over reports that it kept something"
+
+	assert_contains "$(cat "$_kt_root/runtime/uv-tools/aider-chat/bin/aider" 2>/dev/null)" \
+		'old aider' "Aider's tool is in the new runtime tree"
+	assert_contains "$(cat "$_kt_root/runtime/python/cpython-3.12.8-x/bin/python3" 2>/dev/null)" \
+		'py312' "and so is the interpreter its venv runs on"
+	assert_ok "the version-less name uv keeps beside it is carried too" \
+		test -L "$_kt_root/runtime/python/cpython-3.12-linux-x86_64-musl"
+	assert_eq "$_kt_root/runtime/python/cpython-3.12.8-x" \
+		"$(readlink "$_kt_root/runtime/python/cpython-3.12-linux-x86_64-musl" 2>/dev/null)" \
+		"and still names the interpreter it named before"
+	assert_exec "$_kt_root/bin/aider" "and the launcher that points at them"
+	assert_contains "$(cat "$_kt_root/bin/aider" 2>/dev/null)" 'aider-chat/bin/aider' \
+		"the launcher is the one that was installed, unchanged"
+
+	assert_contains "$(cat "$_kt_root/runtime/uv-tools/free-claude-code/bin/fcc-server")" \
+		'new fcc' "the FCC package is the new runtime, not the old one"
+	assert_contains "$(cat "$_kt_root/bin/uv")" 'new uv' "a launcher the install wrote is not overwritten"
+	assert_contains "$(cat "$_kt_root/bin/fcc-server")" 'new fcc-server' "nor is the server"
+	assert_contains "$(cat "$_kt_root/runtime/python/cpython-3.14.7-x/bin/python3")" \
+		'py314' "nor a Python version the new runtime has"
+
+	assert_file "$_kt_bk/runtime/uv-tools/free-claude-code/bin/fcc-server" \
+		"the old FCC package stays in the backup, so a rollback still has it"
+
+	_kt_log="$(cat "$_kt_root/logs/fcc-runtime.log")"
+	assert_contains "$_kt_log" 'kept the tools this install did not replace' \
+		"the log says what was carried over"
+	assert_contains "$_kt_log" 'uv-tools/aider-chat' "and names Aider's tool"
+	assert_contains "$_kt_log" 'python/cpython-3.12.8-x' "and the interpreter"
+	assert_contains "$_kt_log" 'bin/aider' "and the launcher"
+
+	_kt_out="$(sh_install "keep_previous_agent_tools '$_kt_bk'; echo \"rc=\$?\"" "$_kt_base")"
+	assert_contains "$_kt_out" 'rc=1' "a second pass has nothing left to keep"
+
+	# The carry-over must run only after the health check: before it, the
+	# backup is what a rollback restores, and a tool moved out of it would be
+	# lost with the new tree.
+	_kt_src="$LIBEXEC/install.sh"
+	_kt_keep="$(grep -n 'keep_previous_agent_tools "\$_cr_backup"' "$_kt_src" | cut -d: -f1)"
+	_kt_health="$(grep -n 'wait_for_health "\$FCC_HEALTH_TIMEOUT"' "$_kt_src" | tail -n 1 | cut -d: -f1)"
+	_kt_commit="$(grep -n 'commit_backup "\$_cr_backup"' "$_kt_src" | cut -d: -f1)"
+	assert_ok "the carry-over is called in cmd_runtime" test -n "$_kt_keep"
+	assert_ok "and after the health check" test "${_kt_keep:-0}" -gt "${_kt_health:-0}"
+	assert_ok "and before the backup's copy is deleted" test "${_kt_keep:-0}" -lt "${_kt_commit:-0}"
+}
+
+# ---------------------------------------------------------------------------
 # Explaining a failed download
 # ---------------------------------------------------------------------------
 #

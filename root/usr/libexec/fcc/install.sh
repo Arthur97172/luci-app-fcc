@@ -1564,6 +1564,79 @@ prune_backups() {
 	return 0
 }
 
+# The runtime tree holds things that are not the runtime.
+#
+# `uv tool install` puts a tool under UV_TOOL_DIR and the interpreter it runs
+# on under UV_PYTHON_INSTALL_DIR, and this package points both at <root>/
+# runtime (common.sh, fcc_runtime_env_value). Aider is installed that way, so
+# it lives in the tree every install renames aside and, once the install has
+# succeeded, deletes. An install that names some other agent then deletes it
+# without ever asking: on 2026-10-22 Aider was installed at 07:27 and the
+# Configuration page said "Install it from the Configuration page to use it" at
+# 07:29, because a Grok install had committed its backup in between. The same
+# commit deleted the cpython-3.12 Aider's venv runs on, so the tool and its
+# interpreter have to be brought back together.
+#
+# So what the new runtime does not own is moved out of the backup before the
+# backup's copy is deleted: every uv tool except the FCC package itself (that
+# one *is* the runtime, and the new one replaced it), every interpreter
+# version the new runtime does not have, and every launcher in bin/ the new
+# install did not write. A move within one filesystem is a rename, so this
+# costs no space the box did not already hold — the space it keeps is an
+# installed agent, which is the point.
+#
+# Called only after the health check. Until then the backup is the rollback
+# source, and taking a tool out of it would lose that tool whenever a rollback
+# ran.
+keep_previous_agent_tools() {
+	# keep_previous_agent_tools <backup-dir> -> 0 when something was kept
+	_kp_bk="$1"
+	_kp_kept=""
+	[ -n "$_kp_bk" ] && [ -d "$_kp_bk" ] || return 2
+	_kp_rt="$(fcc_dir_runtime)"
+	_kp_bin="$(fcc_dir_bin)"
+	mkdir -p "$_kp_rt/uv-tools" "$_kp_rt/python" "$_kp_bin" 2>/dev/null
+
+	for _kp_sub in uv-tools python; do
+		_kp_src="$_kp_bk/runtime/$_kp_sub"
+		[ -d "$_kp_src" ] || continue
+		for _kp_e in "$_kp_src"/*; do
+			# -L as well as -e: uv keeps a version-less name next to each
+			# interpreter as a symlink to the versioned one, and here that
+			# symlink is dangling — it points into the live tree, where this
+			# install's own Python exists and the one the old tool runs on does
+			# not. Skipping it would leave the restored tool with no
+			# interpreter name uv knows.
+			[ -e "$_kp_e" ] || [ -L "$_kp_e" ] || continue
+			_kp_n="${_kp_e##*/}"
+			# The FCC package is the runtime this install just replaced.
+			if [ "$_kp_sub" = uv-tools ] && [ "$_kp_n" = free-claude-code ]; then
+				continue
+			fi
+			[ -e "$_kp_rt/$_kp_sub/$_kp_n" ] || [ -L "$_kp_rt/$_kp_sub/$_kp_n" ] && continue
+			if mv "$_kp_e" "$_kp_rt/$_kp_sub/$_kp_n" 2>/dev/null; then
+				_kp_kept="$_kp_kept $_kp_sub/$_kp_n"
+			fi
+		done
+	done
+
+	_kp_src="$_kp_bk/bin"
+	if [ -d "$_kp_src" ]; then
+		for _kp_e in "$_kp_src"/* "$_kp_src"/.[!.]*; do
+			[ -e "$_kp_e" ] || [ -L "$_kp_e" ] || continue
+			_kp_n="${_kp_e##*/}"
+			[ -e "$_kp_bin/$_kp_n" ] || [ -L "$_kp_bin/$_kp_n" ] && continue
+			if mv "$_kp_e" "$_kp_bin/$_kp_n" 2>/dev/null; then
+				_kp_kept="$_kp_kept bin/$_kp_n"
+			fi
+		done
+	fi
+
+	[ -n "$_kp_kept" ] || return 1
+	fcc_log "$LOG" "kept the tools this install did not replace:$_kp_kept"
+	return 0
+}
+
 commit_backup() {
 	# The update succeeded, so the moved-aside runtime tree is dead weight.
 	# Section 78 asks for the last successful backup to be kept; the data copy
@@ -2159,7 +2232,17 @@ cmd_runtime() {
 	fi
 
 	# The update is verified and the server is answering; the previous runtime
-	# is no longer needed (section 78 keeps the data copy).
+	# is no longer needed (section 78 keeps the data copy). First carry forward
+	# the tools that belong to an agent rather than to the runtime — this is
+	# the first moment that is safe, since before the health check the backup
+	# is what a rollback restores, and a tool moved out of it would be lost
+	# with the new tree.
+	if keep_previous_agent_tools "$_cr_backup"; then
+		# runtime.json was written before the health check, and the agents
+		# carried over were not installed by this run, so it has to be told
+		# about them now.
+		write_runtime_metadata
+	fi
 	commit_backup "$_cr_backup"
 
 	_cr_after="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
