@@ -928,11 +928,10 @@ fcc_node_agents_in() {
 #     libgcc_s.so.1
 #
 # and a stock OpenWrt image has neither: the C++ runtime is a package of its own
-# (libstdcpp6 where apk is the package manager, libstdcpp where opkg is) and
-# libgcc_s arrives with libgcc1. Measured on the test router — 25.12.5, x86_64,
-# musl, 2026-10-19 — libgcc1 was installed and libstdcpp6 was not, and the Node
-# the installer had just fetched and reported as installed then failed to load
-# with
+# (libstdcpp6, under opkg and apk alike) and libgcc_s arrives with libgcc1.
+# Measured on the test router — 25.12.5, x86_64, musl, 2026-10-19 — libgcc1 was
+# installed and libstdcpp6 was not, and the Node the installer had just fetched
+# and reported as installed then failed to load with
 #
 #     Error loading shared library libstdc++.so.6: No such file or directory
 #     (needed by /opt/fcc/data/.local/share/pi-node/current/bin/node)
@@ -954,18 +953,17 @@ FCC_NODE_LIBS="libstdc++.so.6 libgcc_s.so.1"
 fcc_node_lib_package() {
 	# fcc_node_lib_package <soname> -> the package that provides it here.
 	#
-	# The package name is the one thing about this that differs between the two
-	# images this package supports, so it is asked of the image rather than
-	# written down once and wrong half the time — the same reasoning as
-	# fcc_pkg_install_hint() below.
+	# The name is libstdcpp6 under opkg *and* apk. It is named after the
+	# SONAME's major suffix (libstdc++.so.6), not after anything the package
+	# manager does, and asking which manager is installed to decide is how this
+	# got the wrong answer for 24.10 at first. The target feeds say so plainly:
+	# 24.10.8 x86/64, mediatek/filogic, ramips/mt7621 and qualcommax/ipq807x
+	# each carry "Package: libstdcpp6", and 25.12.6 ships libstdcpp6-14.3.0
+	# as an .apk. OpenWrt made the libstdcpp -> libstdcpp6 rename back in 21.02;
+	# an image that only knows the old name is older than either release this
+	# package supports.
 	case "$1" in
-		libstdc++.so.6)
-			if command -v apk >/dev/null 2>&1; then
-				printf 'libstdcpp6'
-			else
-				printf 'libstdcpp'
-			fi
-			;;
+		libstdc++.so.6) printf 'libstdcpp6' ;;
 		libgcc_s.so.1) printf 'libgcc1' ;;
 	esac
 }

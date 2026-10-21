@@ -4332,7 +4332,7 @@ test_doctor_node_check_follows_the_agent_set() {
 	assert_contains "$_dnc_libs" 'libstdc++.so.6' \
 		"and the report names the library rather than only the Node"
 	assert_contains "$_dnc_libs" 'libgcc_s.so.1' "and the other one with it"
-	assert_contains "$_dnc_libs" 'opkg install libstdcpp libgcc1' \
+	assert_contains "$_dnc_libs" 'opkg install libstdcpp6 libgcc1' \
 		"and says which packages provide them, which is the part a reader can act on"
 	assert_not_contains "$_dnc_libs" 'nothing to do by hand' \
 		"and does not promise the installer handles it, because it does not"
@@ -5691,7 +5691,7 @@ exit 1')" || skip "no musl Node architecture on this host"
 	if [ -n "$(sh_common "FCC_NODE_LIB_DIRS='$SANDBOX/nolibs' LD_LIBRARY_PATH= fcc_node_missing_libs")" ]; then
 		assert_contains "$_dpr_log" 'libstdc++.so.6' \
 			"and the log names the library the loader could not find"
-		assert_contains "$_dpr_log" 'opkg install libstdcpp libgcc1' \
+		assert_contains "$_dpr_log" 'opkg install libstdcpp6 libgcc1' \
 			"and the package that provides it, which is the part a reader can act on"
 	fi
 }
