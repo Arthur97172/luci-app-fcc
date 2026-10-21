@@ -540,6 +540,51 @@ test_the_admin_link_goes_through_the_luci_proxy() {
 }
 
 # ---------------------------------------------------------------------------
+# The comments in the templates
+#
+# A `<%# … %>` comment ends at the first `%>` it contains, so quoting a
+# template tag inside one ends the comment at that tag's closing bracket.
+# Everything after it is then rendered as though it were page: the rest of the
+# prose is printed as text, and the next partial is expanded where that text
+# stands. That is what the standalone window did when it was first written —
+# its comment named the header and footer partials by their tags, so the page
+# opened with the LuCI footer, its version line and Argon's, above the
+# terminal, and the tail of the comment printed underneath. Every other check
+# on the views asks for markup or for msgids; none of them read the comments
+# between.
+#
+# The rule enforced here is the one the source can be read against: no `<%`
+# inside a comment. A tag cannot be written there without one, and a tag there
+# is what ends the comment early.
+# ---------------------------------------------------------------------------
+
+test_no_template_tag_is_written_inside_a_comment() {
+	_ts_comments="$(awk '
+		{
+			s = $0
+			if (!inc) {
+				i = index(s, "<%#")
+				if (!i) next
+				s = substr(s, i + 3)
+				inc = 1
+			}
+			c = index(s, "%>")
+			if (c) {
+				print substr(s, 1, c - 1)
+				inc = 0
+			} else {
+				print s
+			}
+		}
+	' "$ROOT"/luasrc/view/fcc/*.htm)"
+
+	assert_ne "" "$_ts_comments" "the views do write comments"
+
+	assert_not_contains "$_ts_comments" '<%' \
+		"no template tag is written inside a <%# … %> comment"
+}
+
+# ---------------------------------------------------------------------------
 # The System list on Basic Information
 #
 # Section 15's System list, in the order the page shows it: what the CPU is,

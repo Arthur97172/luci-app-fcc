@@ -1,10 +1,16 @@
 <%#
  luci-app-fcc — one console session in a browser window of its own.
 
- This page is deliberately not a LuCI page: it includes neither <%+header%> nor
- <%+footer%>, so there is no menu, no tab bar and no breadcrumb — the terminal
- gets the whole window. It is opened from the Web Console's "Open in browser"
- button, which passes the session in the query string.
+ This page is deliberately not a LuCI page: it renders neither the header nor
+ the footer partial, so there is no menu, no tab bar and no breadcrumb — the
+ terminal gets the whole window. It is opened from the Web Console's "Open in
+ browser" button, which passes the session in the query string.
+
+ The two partials are named in prose rather than by their template tags on
+ purpose. A comment ends at the first closing tag it meets, so writing one
+ inside this block would end the comment there: the rest of this text would be
+ printed into the page, and the second partial would be rendered — header,
+ footer, its LuCI version line and all — above the terminal.
 
  Closing this window ends the session (fcc-popout.js arms a timed close on
  pagehide). Reloading it does not: the reattach bumps a generation counter in
