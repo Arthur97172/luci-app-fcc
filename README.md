@@ -152,6 +152,14 @@ OpenCode、Hermes、Grok Build、Muse Code——交给各自的 bash 安装脚�
 缺的那个包装上。没有这些预检时，安装会在下载和构建之后才失败，日志里只有安装器的一句
 `bash is required. Install it first, then rerun this installer.`
 
+`cline` 是唯一一个装包也解决不了的：Cline 只发布 glibc 的 Linux 构建，没有 musl 版本，
+而 OpenWrt 是 musl。它的 npm 包装上的可执行文件，ELF 解释器指向
+`/lib64/ld-linux-x86-64.so.2`——这个文件在 OpenWrt 上并不存在，Node 执行它时只会得到
+一句 `spawnSync … ENOENT`，安装就停在那里。所以在这类系统上，Cline 不会被交给安装器：
+它从勾选集里去掉并说明原因，安装器关于它的提问一律回答 no；如果它是唯一要装的 Agent，
+安装直接以 `AGENT_UNSUPPORTED` 拒绝，而不是去撞那个必然的失败。诊断报告把它标为 WARN
+"not available"，而不是报成缺少依赖。
+
 `luci-compat` 是另一个关键依赖，而且不那么显眼。OpenWrt 24.10 和 25.12 把 LuCI 核心
 迁到了 ucode：`luci-base` 已经完全不包含 `/usr/lib/lua/luci`。本包的控制器和视图所
 运行的 Lua 调度器与模板引擎现在位于 `luci-lua-runtime`，而 `luci-compat` 依赖它——
@@ -179,7 +187,7 @@ Node——都不会去动系统，而是直接拒绝安装并给出完整报告�
 | bash | `bash` | Claude Code、OpenCode、Hermes、Grok Build、Muse Code |
 | fold | `coreutils-fold` | Codex 的安装脚本 |
 | sleep | `coreutils-sleep` | Pi 的安装脚本（它的 sleep 要接受小数秒） |
-| Node 的 C++ 运行库 | `libstdcpp6`，必要时还有 `libgcc1` | Pi、DeepSeek Harness、Cline 取回的 musl Node |
+| Node 的 C++ 运行库 | `libstdcpp6`，必要时还有 `libgcc1` | Pi、DeepSeek Harness 取回的 musl Node |
 | curl | `curl` | 下载安装器与运行时 |
 
 包名在 24.10（opkg）和 25.12（apk）上相同。`libstdcpp6` 跟的是 SONAME 的主版本号
@@ -343,6 +351,9 @@ tag——所以同一个版本重跑是幂等的，不会因为 tag 已存在而
   而不是 WARN：一个摆在必然失败前面的"警告"，只会教人忽略那唯一重要的一行。
 * **五个 Agent 需要 `bash`。** 见*依赖*。安装前会自动把它装上；只有装不上时
   （没有网络、空间不足）安装才会在下载任何东西之前被拒绝，报告里写明缺的是什么。
+* **Cline 在 OpenWrt 上装不了。** 它只发布 glibc 构建、没有 musl 版本，所以诊断页面把
+  它标为 WARN "not available"，安装时自动跳过并说明原因，见*依赖*。其余九个 Agent
+  不受影响。
 * **首次安装不能一个 Agent 都不选。** 上游的选择器拒绝空集合，并且会从头重问一遍，
   所以"不选任何 Agent"在全新安装上无法完成。本包直接拒绝并说明原因，而不是让安装器
   空转。已经装过 Agent 之后再选空集合是允许的——上游会保留已安装的那些。

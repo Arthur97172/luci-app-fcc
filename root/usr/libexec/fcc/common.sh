@@ -657,6 +657,86 @@ fcc_all_agents() {
 }
 
 # ---------------------------------------------------------------------------
+# libc, and the agents that cannot run on this one
+# ---------------------------------------------------------------------------
+# OpenWrt is musl. Cline is the one agent in the registry that has no musl
+# build: `npm install -g cline` fetches a launcher plus a platform package,
+# @cline/cli-linux-x64, and that package holds a single binary linked against
+# glibc — its ELF interpreter is /lib64/ld-linux-x86-64.so.2. The npm metadata
+# publishes six platform packages (linux/darwin/windows x x64/arm64) and no
+# -musl variant of any of them (checked against cline@3.0.73 and the
+# @cline/cli-linux-x64@3.0.73 tarball, 2026-10-21).
+#
+# Measured on the 24.10.8 test router: npm reports "added 331 packages", the
+# postinstall hard-links the binary to node_modules/cline/bin/.cline, and
+# `cline --version` then dies with
+#
+#     spawnSync .../cline/bin/.cline ENOENT
+#
+# even though the file is there and executable — the kernel cannot find its
+# interpreter, so execve fails with ENOENT. The image has /lib/ld-musl-*.so.1
+# and no /lib64/ld-linux-x86-64.so.2 at all. Upstream stops at the first agent
+# that fails and keeps the completed changes rather than rolling back (§79), so
+# a single glibc-only agent is the difference between "install every agent" and
+# "install none of the later ones", FCC package and PATH setup included.
+#
+# The answer is not a check that blocks the install: Cline is not something the
+# user can fix with a package. The install leaves it out of the set it drives
+# (install.sh) and the report says why (doctor.sh), so the other nine still
+# install and Cline is reported as unavailable rather than silently missing.
+fcc_libc() {
+	# fcc_libc -> "musl", "glibc" or "unknown"
+	#
+	# The loader's presence is the evidence, not `ldd --version`: BusyBox has no
+	# ldd, and an installer can answer that question from a shim. This is the
+	# same probe doctor.sh used to carry inline; both now ask it here so the
+	# report and the install cannot disagree about the libc.
+	for _fl_p in /lib/ld-musl-*.so.1 /lib/ld-musl-*.so; do
+		[ -e "$_fl_p" ] && { printf 'musl'; return 0; }
+	done
+	for _fl_p in /lib/ld-linux*.so.* /lib64/ld-linux*.so.*; do
+		[ -e "$_fl_p" ] && { printf 'glibc'; return 0; }
+	done
+	printf 'unknown'
+}
+
+fcc_agent_unsupported_reason() {
+	# fcc_agent_unsupported_reason <id> -> why that agent cannot be installed
+	# here, or nothing when it can.
+	#
+	# A sentence, not a flag: it is what the install log and the doctor's agent
+	# row print, so the person reading either learns what is wrong with Cline
+	# rather than only that it is missing. See the comment above for the
+	# measurement behind it.
+	case "$1" in
+		cline)
+			case "$(fcc_libc)" in
+				musl) printf 'Cline publishes only glibc Linux builds; there is no musl build, so it cannot run on this system.' ;;
+			esac
+			;;
+	esac
+}
+
+fcc_unsupported_agents_in() {
+	# fcc_unsupported_agents_in "<id[,id...]|id id...>" -> which of that set
+	# cannot be installed here, space separated, in the table's order, and
+	# empty when all of them can
+	_fua_set="$(printf '%s' "$1" | tr ',' ' ')"
+	_fua_out=""
+	while IFS='|' read -r _fua_id _fua_rest; do
+		case "$_fua_id" in ''|\#*) continue ;; esac
+		case " $_fua_set " in
+			*" $_fua_id "*) ;;
+			*) continue ;;
+		esac
+		[ -n "$(fcc_agent_unsupported_reason "$_fua_id")" ] && _fua_out="$_fua_out $_fua_id"
+	done <<-EOF
+	$(fcc_agents_each)
+	EOF
+	printf '%s' "${_fua_out# }"
+}
+
+# ---------------------------------------------------------------------------
 # bash: a prerequisite of five agents, and not a part of OpenWrt
 # ---------------------------------------------------------------------------
 # The upstream installer hands five of the ten agents to their own installers,

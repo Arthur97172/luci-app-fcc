@@ -694,6 +694,16 @@ installer_answer_for() {
 			_iaf_launcher="${_iaf_line##* for }"
 			_iaf_launcher="${_iaf_launcher%%\?*}"
 			_iaf_id="$(fcc_agent_by_launcher "$_iaf_launcher")"
+			# An agent this system cannot install is declined even in "no
+			# opinion" mode, where every other question gets upstream's own
+			# answer (yes for an agent that is not already there). cmd_runtime
+			# has already removed it from an explicit set; this is the other
+			# half, for the set nobody wrote down.
+			if [ -n "$_iaf_id" ]; then
+				case " ${FCC_AGENT_SKIP:-} " in
+					*" $_iaf_id "*) printf 'n'; return 0 ;;
+				esac
+			fi
 			case "$_iaf_mode" in
 				default)
 					# An empty answer is Enter, and prompt_yes_no() reads that
@@ -1728,6 +1738,55 @@ cmd_runtime() {
 	_cr_before="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
 	_cr_installed="$(fcc_installed_agents "$ROOT")"
 
+	# --- agents this system cannot install --------------------------------
+	# Cline is one: its npm package carries a glibc-only binary and there is no
+	# musl build, so `cline --version` dies in the loader on every OpenWrt image
+	# (common.sh has the measurement). Upstream stops at the first agent that
+	# fails, which would take the FCC package and the PATH setup with it. The
+	# agent therefore leaves the set before the installer is driven — in "no
+	# opinion" mode too, where the set is upstream's defaults rather than a list
+	# the caller gave — and the answerer declines its question as well, because
+	# in that mode every other agent is answered yes.
+	#
+	# The whole run is refused when every agent that was asked for is
+	# unavailable: upstream would re-ask "Select at least one coding agent."
+	# until the deadline, and an install that installs nothing is not a better
+	# answer than the reason.
+	_cr_requested="$_cr_agents"
+	if [ "$_cr_none" = 1 ]; then
+		_cr_considered=""
+	elif [ -n "$_cr_requested" ]; then
+		_cr_considered="$_cr_requested"
+	else
+		_cr_considered="$(fcc_default_agents) $_cr_installed"
+	fi
+	FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "$_cr_considered")"
+	if [ -n "$FCC_AGENT_SKIP" ]; then
+		_cr_kept=""
+		for _cr_id in $_cr_agents; do
+			case " $FCC_AGENT_SKIP " in
+				*" $_cr_id "*) ;;
+				*) _cr_kept="$_cr_kept $_cr_id" ;;
+			esac
+		done
+		_cr_agents="${_cr_kept# }"
+		for _cr_id in $FCC_AGENT_SKIP; do
+			_cr_why="$(fcc_agent_unsupported_reason "$_cr_id")"
+			_cr_name="$(fcc_agent_name "$_cr_id")"
+			[ -n "$_cr_name" ] || _cr_name="$_cr_id"
+			fcc_log "$LOG" "installer: not installing $_cr_name: $_cr_why"
+			printf '%s is not installed: %s\n' "$_cr_name" "$_cr_why"
+		done
+	fi
+	if [ -n "$_cr_requested" ] && [ -z "$_cr_agents" ]; then
+		fcc_lock_release "$_cr_lock"
+		fcc_log "$LOG" "aborted: none of the requested agents can be installed on this system"
+		printf 'None of the agents you selected can be installed on this system.\n'
+		printf 'Choose a different agent and install again.\n'
+		printf 'AGENT_UNSUPPORTED\n'
+		return 1
+	fi
+
 	# Section 3.6.5 lets the user uncheck every agent, and the flag that says so
 	# is honoured below. But upstream's chooser refuses to accept an empty set —
 	# it prints "Select at least one coding agent." and asks the whole list
@@ -1849,6 +1908,19 @@ cmd_runtime() {
 		# No selection means upstream's own answers, and upstream's default for
 		# every agent it does not already find is yes — so all of them.
 		_cr_node_wanted="$(fcc_node_agents_in "$FCC_NODE_AGENTS")"
+	fi
+	# An agent that is not being installed needs no Node. Cline on musl is the
+	# case, and a Cline-only install would otherwise download 30 MB for an
+	# agent that was just left out.
+	if [ -n "$FCC_AGENT_SKIP" ]; then
+		_cr_node_kept=""
+		for _cr_node_id in $_cr_node_wanted; do
+			case " $FCC_AGENT_SKIP " in
+				*" $_cr_node_id "*) ;;
+				*) _cr_node_kept="$_cr_node_kept $_cr_node_id" ;;
+			esac
+		done
+		_cr_node_wanted="${_cr_node_kept# }"
 	fi
 	_cr_node_missing=""
 	for _cr_node_id in $_cr_node_wanted; do

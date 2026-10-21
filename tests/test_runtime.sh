@@ -4927,6 +4927,111 @@ test_install_runtime_takes_the_whole_registry() {
 		"and answer with a report rather than a usage error"
 }
 
+# Cline has no musl build, and an install that includes it would fail there and
+# stop upstream at that step — taking the FCC package and the PATH setup with
+# it (§79). Measured on the 24.10.8 test router, 2026-10-21: npm installs the
+# package, the postinstall writes the hard link, and `cline --version` dies with
+# "spawnSync .../bin/.cline ENOENT" because the binary wants
+# /lib64/ld-linux-x86-64.so.2 and the image has only /lib/ld-musl-*.so.1.
+#
+# The build host is glibc, so the probe is answered for a musl router in the
+# snippets. That is not the seam problem the install_lib comment warns about:
+# fcc_libc() is overwritten after the real common.sh has been sourced, so every
+# line that decides what happens is the line under test.
+test_cline_is_left_out_on_musl() {
+	setup_sandbox
+	make_uci_shim
+
+	# The reason itself: a sentence naming the missing build, and nothing at all
+	# for a glibc box or for an agent that has one.
+	assert_contains "$(sh_common 'fcc_libc() { printf musl; }
+		fcc_agent_unsupported_reason cline')" 'glibc Linux builds' \
+		"on musl the report says what Cline lacks"
+	assert_eq "" "$(sh_common 'fcc_libc() { printf glibc; }
+		fcc_agent_unsupported_reason cline')" \
+		"and says nothing about Cline on a glibc box"
+	assert_eq "" "$(sh_common 'fcc_libc() { printf musl; }
+		fcc_agent_unsupported_reason aider')" \
+		"and nothing about an agent that has a musl build"
+
+	# The answerer declines the question, whichever mode asked it. In "set" mode
+	# Cline would otherwise be a yes because it was selected; in "default" mode
+	# every other agent gets upstream's own answer, which is yes when the agent
+	# is absent, so silence here would install it anyway.
+	assert_eq "n" "$(sh_install 'fcc_libc() { printf musl; }
+		FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "cline pi")"
+		installer_answer_for "Install Cline for fcc-cline? [Y/n]" "cline pi" set')" \
+		"a selected Cline is declined on musl"
+	assert_eq "n" "$(sh_install 'fcc_libc() { printf musl; }
+		FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "cline pi")"
+		installer_answer_for "Install Cline for fcc-cline? [Y/n]" "" default')" \
+		"and so is the one nobody selected"
+	assert_eq "y" "$(sh_install 'fcc_libc() { printf glibc; }
+		FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "cline pi")"
+		installer_answer_for "Install Cline for fcc-cline? [Y/n]" "cline pi" set')" \
+		"a glibc box still answers yes when Cline was selected"
+
+	# --all-agents is the page's Install button, and the set it drives no longer
+	# contains Cline. precheck_ok reports the set and stops the run before the
+	# backup and the download, the same seam the test above uses.
+	_all="$(sh_install '
+		fcc_libc() { printf musl; }
+		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
+		precheck_packages() { :; }
+		cmd_runtime runtime --all-agents' 2>&1)"
+	assert_not_contains "$_all" 'cline' \
+		"--all-agents no longer hands Cline to the installer on musl"
+	assert_contains "$_all" 'Cline is not installed' \
+		"and the job says it was left out rather than dropping it silently"
+	assert_contains "$_all" 'SET=[claude codex pi opencode hermes dsh grok muse aider]' \
+		"the other nine are still there, in registry order"
+
+	# Asking for Cline alone is refused before anything is downloaded: upstream
+	# would otherwise re-ask until the deadline, because a chooser with every
+	# answer no has no set to accept.
+	_only="$(sh_install '
+		fcc_libc() { printf musl; }
+		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
+		precheck_packages() { :; }
+		cmd_runtime runtime --agents cline' 2>&1)"
+	assert_contains "$_only" 'AGENT_UNSUPPORTED' \
+		"a Cline-only install stops with a verdict"
+	assert_not_contains "$_only" 'SET=[' \
+		"and never reaches the installer"
+}
+
+# The doctor's side of the same fact: the agent row says "not available", with
+# the reason, and the requirements the report checks no longer include an agent
+# that will not be installed. The second half matters — a FAIL for a Node only
+# Cline needed would block an install that was never going to run it.
+test_doctor_reports_agents_this_system_cannot_install() {
+	setup_sandbox
+
+	# A libexec whose libc is musl. fcc_libc() reads the loader that is really
+	# on the box, and this box is glibc; a copy with the answer overridden is
+	# the only way to ask doctor.sh the musl question.
+	_md_lib="$SANDBOX/libexec-musl"
+	mkdir -p "$_md_lib"
+	cp "$LIBEXEC"/*.sh "$_md_lib/"
+	printf '\nfcc_libc() { printf musl; }\n' >> "$_md_lib/common.sh"
+
+	_md_report="$(sh_doctor_tools "$DOCTOR_TOOLS" "FCC_LIBDIR=$_md_lib" --json 2>&1)"
+	_md_row="$(printf '%s\n' "$_md_report" | grep '"name": "Cline"')"
+	assert_contains "$_md_row" '"status": "WARN"' \
+		"Cline is a warning, not a failure — the other agents still install"
+	assert_contains "$_md_row" 'not available' \
+		"and the row says the agent cannot be had here"
+	assert_contains "$_md_row" 'no musl build' \
+		"with the reason, not just the verdict"
+
+	# No Node row when Cline is the only agent asked for: it is the npm agent
+	# whose requirement would otherwise appear, and the install leaves it out.
+	_md_node="$(sh_doctor_tools "$DOCTOR_TOOLS" "FCC_LIBDIR=$_md_lib FCC_AGENT_SELECTION=cline" \
+		--json 2>&1 | grep '"name": "node"')"
+	assert_eq "" "$_md_node" \
+		"an agent that is not installed adds no Node requirement to the report"
+}
+
 # The gate's remedy, run for the user.
 #
 # Before this, a FAIL for tar or a missing applet stopped the install and left

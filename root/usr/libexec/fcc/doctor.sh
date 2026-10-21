@@ -148,17 +148,10 @@ fi
 
 # libc (section 3.6.4). The runtime's private Python comes from uv, which
 # fetches a build matched to the libc it finds; a musl router and a glibc host
-# therefore get different interpreters. Probing for the loader is what works
-# everywhere — `ldd --version` is not implemented by busybox.
-_libc="unknown"
-for _lc_p in /lib/ld-musl-*.so.1 /lib/ld-musl-*.so; do
-	[ -e "$_lc_p" ] && { _libc="musl"; break; }
-done
-if [ "$_libc" = unknown ]; then
-	for _lc_p in /lib/ld-linux*.so.* /lib64/ld-linux*.so.*; do
-		[ -e "$_lc_p" ] && { _libc="glibc"; break; }
-	done
-fi
+# therefore get different interpreters. The probe lives in common.sh now
+# because install.sh asks the same question about Cline, and one answer is the
+# only way the report and the install can agree.
+_libc="$(fcc_libc)"
 case "$_libc" in
 	musl) add_result OK "libc" "musl" "musl" "" ;;
 	*)    add_result WARN "libc" "$_libc" "musl" \
@@ -302,6 +295,23 @@ elif [ -n "$_selection" ]; then
 	_effective_set="$(fcc_effective_agents "$_selection" "$ROOT")"
 else
 	_effective_set="$(fcc_default_agents) $_installed_set"
+fi
+
+# An agent this system cannot install is not a requirement of the install.
+# Cline on musl is the case: it is in the default set before the libc question
+# is asked, and the install leaves it out (install.sh), so a Node or a bash it
+# would have needed must not turn the report red for an install that will not
+# run it. The per-agent row below still says it is unavailable, with the reason.
+_unsupported_set="$(fcc_unsupported_agents_in "$_effective_set")"
+if [ -n "$_unsupported_set" ]; then
+	_kept_set=""
+	for _us_id in $_effective_set; do
+		case " $_unsupported_set " in
+			*" $_us_id "*) ;;
+			*) _kept_set="$_kept_set $_us_id" ;;
+		esac
+	done
+	_effective_set="$_kept_set"
 fi
 
 _bash_req="needed by: $(printf '%s' "$FCC_BASH_AGENTS" | tr ' ' ',')"
@@ -512,6 +522,15 @@ fi
 while IFS='|' read -r _ad_id _ad_name _ad_launch _ad_rest; do
 	case "$_ad_id" in ''|\#*) continue ;; esac
 	[ -n "$_ad_launch" ] || continue
+	# An agent this system has no build for is not "not installed" — that
+	# reads as something the user can fix from the page, and there is no such
+	# installer to run. Cline on musl is the case; common.sh carries the
+	# measurement and the sentence.
+	_ad_unsupported="$(fcc_agent_unsupported_reason "$_ad_id")"
+	if [ -n "$_ad_unsupported" ]; then
+		add_result WARN "$_ad_name" "not available" "optional" "$_ad_unsupported"
+		continue
+	fi
 	# The shared rule, not a bare `command -v`. This file already asks the
 	# question the right way for its bash check above — fcc_installed_agents
 	# takes the root — and the two answers have to agree. The launchers live in

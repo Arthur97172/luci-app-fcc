@@ -185,6 +185,18 @@ preflight then installs it if it is missing. Without either, the install failed
 after the download and the build, with nothing in the log but upstream's
 `bash is required. Install it first, then rerun this installer.`
 
+`cline` is the one no package can fix: Cline publishes glibc Linux builds only
+and there is no musl build, while OpenWrt is musl. The executable its npm
+package installs has an ELF interpreter of `/lib64/ld-linux-x86-64.so.2`, which
+does not exist on OpenWrt, so Node fails to run it with nothing but
+`spawnSync … ENOENT` and the install stops there. On such a system Cline is
+therefore kept away from the installer rather than failed over: it is dropped
+from the selected set with a line saying why, every question the installer asks
+about it is answered no, and when it was the only agent asked for, the install
+is refused with `AGENT_UNSUPPORTED` instead of being allowed to hit that
+guaranteed failure. The diagnostics report it as a WARN "not available", not as
+a missing dependency.
+
 `luci-compat` is the other load-bearing one, and less obviously so. OpenWrt
 24.10 and 25.12 moved LuCI's core to ucode: `luci-base` no longer ships
 `/usr/lib/lua/luci` at all. The Lua dispatcher and template engine that this
@@ -219,7 +231,7 @@ What it may install:
 | bash | `bash` | Claude Code, OpenCode, Hermes, Grok Build, Muse Code |
 | fold | `coreutils-fold` | Codex's installer |
 | sleep | `coreutils-sleep` | Pi's installer, whose sleep must take fractions |
-| Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node Pi, DeepSeek Harness and Cline fetch |
+| Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node Pi and DeepSeek Harness fetch |
 | curl | `curl` | Downloading the installer and the runtime |
 
 The names are the same on 24.10 (opkg) and 25.12 (apk). `libstdcpp6` follows
@@ -412,6 +424,10 @@ the release.
 * **Five agents need `bash`.** See *Requirements*. The preflight installs it;
   only when it cannot be installed (no network, no space) is the install
   refused before anything is downloaded, with the missing piece named.
+* **Cline cannot be installed on OpenWrt.** It ships glibc builds only and no
+  musl build, so the diagnostics report it as a WARN "not available", and an
+  install drops it with a line saying why — see *Requirements*. The other nine
+  agents are unaffected.
 * **A first install cannot select zero agents.** Upstream's chooser refuses an
   empty set and re-asks the whole list, so "no agents" cannot be completed on a
   fresh install. This package refuses it outright and says why, rather than
