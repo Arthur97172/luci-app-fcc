@@ -385,19 +385,49 @@ end
 -- this list because the body may have been rewritten, and Content-Encoding
 -- because the upstream was asked for an identity encoding, so a coding header
 -- would be a lie.
+-- Content-Type is in the list because serve() sets that one itself, from the
+-- value it read: relaying the upstream's spelling as well would put the header
+-- on the response twice whenever the upstream spells it "content-type", which
+-- is how the FCC server spells it.
 local DROP_HEADERS = {
 	["connection"] = true, ["keep-alive"] = true, ["content-length"] = true,
 	["content-encoding"] = true, ["transfer-encoding"] = true,
+	["content-type"] = true,
 	["proxy-authenticate"] = true, ["proxy-authorization"] = true,
 	["te"] = true, ["trailer"] = true, ["upgrade"] = true,
 }
+
+--- Find a response header whatever case the upstream spelled it in.
+--
+-- HTTP/1.1 field names are case-insensitive, and the two servers this reads
+-- from do not agree on a spelling: uvicorn — the FCC server — sends every name
+-- lowercased, while the fixtures in tests/proxy_driver.lua wrote them the
+-- conventional way. Reading response.headers["Content-Type"] therefore found
+-- the header under the tests and missed it on the device, and the miss was
+-- invisible because what it falls back to is a plausible-looking default: the
+-- Admin UI was relayed as application/octet-stream, so a browser downloaded the
+-- page as a file called "adminproxy" instead of rendering it. Measured on the
+-- test router, 2026-10-21.
+--
+-- @return key    the spelling the upstream used, or nil when it sent none
+-- @return value  that header's value
+local function find_header(response, name)
+	local want = name:lower()
+	for key, value in pairs(response.headers or {}) do
+		if type(key) == "string" and key:lower() == want then
+			return key, value
+		end
+	end
+	return nil, nil
+end
 
 --- A source for the upstream response body, one chunk at a time.
 --
 -- The request asks the upstream to close the connection when it is done, so a
 -- response with no chunked framing ends when the socket does.
 local function body_source(response, buffer, sock)
-	if response.headers["Transfer-Encoding"] == "chunked" then
+	local _, encoding = find_header(response, "Transfer-Encoding")
+	if encoding == "chunked" then
 		return httpclient.chunksource(sock, buffer)
 	end
 	return ltn12.source.cat(ltn12.source.string(buffer), sock:blocksource())
@@ -488,18 +518,25 @@ function serve()
 			tostring(buffer or response or "unknown error") .. ".")
 	end
 
-	local mime = response.headers["Content-Type"]
+	-- Read through find_header, not with an exact-case index: this is the
+	-- lookup that made the browser download the Admin UI instead of rendering
+	-- it, because the upstream's "content-type" was not the "Content-Type" the
+	-- index asked for and the fallback below is a download.
+	local _, mime = find_header(response, "Content-Type")
 	if type(mime) ~= "string" or mime == "" then
 		mime = "application/octet-stream"
 	end
 	local lower = mime:lower()
 
 	-- A redirect that points at the upstream has to point at the proxy instead,
-	-- or the browser follows it to the router's own /admin.
-	local location = response.headers["Location"]
+	-- or the browser follows it to the router's own /admin. The new value is
+	-- written back under the key the upstream used, for the same reason as
+	-- above — and because writing it to "Location" while the relay loop reads
+	-- "location" would send the unrewritten value and drop the rewritten one.
+	local location_key, location = find_header(response, "Location")
 	if type(location) == "string" and location:sub(1, 1) == "/" then
 		if location == FCC_ROOT or location:sub(1, #FCC_ROOT + 1) == FCC_ROOT .. "/" then
-			response.headers["Location"] = base .. location:sub(#FCC_ROOT + 1)
+			response.headers[location_key] = base .. location:sub(#FCC_ROOT + 1)
 		end
 	end
 

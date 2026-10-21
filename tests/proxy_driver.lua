@@ -109,6 +109,7 @@ end
 -- asked for.
 local ANSWER = nil
 local SENT = nil
+local CHUNKED = false
 
 package.preload["luci.httpclient"] = function()
 	return {
@@ -134,9 +135,11 @@ package.preload["luci.httpclient"] = function()
 			}, ANSWER.buffer or "", sock
 		end,
 		chunksource = function(sock, buffer)
-			-- The proxy only reaches this for a chunked upstream, which the
-			-- tests here do not produce; returning the buffer is the honest
-			-- reduction rather than a wrong decode.
+			-- Recorded rather than decoded: whether body_source() chose this is
+			-- what the case-insensitive Transfer-Encoding read decides, and the
+			-- decode itself is luci.httpclient's. Returning the buffer is the
+			-- honest reduction rather than a fake dechunking.
+			CHUNKED = true
 			return require("luci.ltn12").source.cat(
 				require("luci.ltn12").source.string(buffer or ""), sock.blocksource())
 		end,
@@ -183,6 +186,7 @@ local function reset(env)
 	BODY = ""
 	ANSWER = nil
 	SENT = nil
+	CHUNKED = false
 	for k, v in pairs(env or {}) do ENV[k] = v end
 	if not ENV.REQUEST_METHOD then ENV.REQUEST_METHOD = "GET" end
 	if not ENV.REQUEST_URI then
@@ -328,6 +332,38 @@ ANSWER = { code = 307, status = "HTTP/1.1 307 Temporary Redirect",
 proxy.serve()
 eq("redirect/location_rewritten", HEADERS["Location"],
 	"/cgi-bin/luci/admin/services/fcc/adminproxy/")
+
+-- The FCC server is uvicorn, and uvicorn lowercases every response header
+-- name. The fixtures above spell them the conventional way, which is what hid
+-- this bug: the exact-case reads worked here and failed on the router. The
+-- checks below use the upstream's spelling, so a fallback to an exact-case
+-- index fails here instead of in a browser that downloads "adminproxy".
+reset({})
+ANSWER = { headers = { ["content-type"] = "text/html; charset=utf-8" },
+	chunks = { '<link href="/admin/static/app.css">' } }
+proxy.serve()
+eq("lowercase/content_type_kept", HEADERS["Content-Type"], "text/html; charset=utf-8")
+contains("lowercase/html_still_rewritten", written(),
+	"/cgi-bin/luci/admin/services/fcc/adminproxy/static/app.css")
+check("lowercase/content_type_not_relayed_twice", HEADERS["content-type"] == nil)
+
+reset({})
+ANSWER = { code = 307, status = "HTTP/1.1 307 Temporary Redirect",
+	headers = { ["content-type"] = "text/html", ["location"] = "/admin/" },
+	chunks = { "" } }
+proxy.serve()
+eq("lowercase/location_rewritten", HEADERS["location"],
+	"/cgi-bin/luci/admin/services/fcc/adminproxy/")
+check("lowercase/location_not_relayed_twice", HEADERS["Location"] == nil)
+
+-- A chunked response is read with the chunk framing whatever case the header
+-- was spelled in; reading it as a plain stream would write the chunk sizes to
+-- the browser as part of the body.
+reset({})
+ANSWER = { headers = { ["content-type"] = "text/plain", ["transfer-encoding"] = "chunked" },
+	chunks = { "5\r\nhello\r\n0\r\n\r\n" } }
+proxy.serve()
+check("lowercase/transfer_encoding_recognised", CHUNKED)
 
 -- ---------------------------------------------------------------------------
 -- The event feed, which cannot be streamed through LuCI
