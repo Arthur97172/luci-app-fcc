@@ -49,18 +49,24 @@ FCC_SESSION_PREFIX="fcc-"
 # not install slowly, it fails part-way, and the failure arrives as an installer
 # error rather than as "not enough space".
 #
-# The floor is a round 1 GB rather than the 741 MB measured, and the gap is the
-# point: that figure is one agent at one moment. A second agent adds its own
-# tool, a new release is larger than the last, and uv's cache grows with the
-# Python it builds — while the cost of guessing low is an install that dies
-# half-way and leaves a partial runtime on the device. 1 GB is also a number a
-# person can hold against their free space without doing arithmetic.
+# The floor is a round 2 GB rather than the 741 MB measured, and the gap is the
+# point: that figure is one agent at one moment. Three things sit on the same
+# filesystem as the runtime besides it — the backup set (up to backup_keep,
+# three, copies of data/), the new runtime written beside the old one during an
+# update, and uv's cache, which grows with the Python it builds — while the
+# cost of guessing low is an install that dies half-way and leaves a partial
+# runtime on the device. The test router showed what 1 GB leaves: a failed
+# attempt plus the retention it keeps put free space under the floor, and every
+# retry was then refused before it started. 2 GB covers the measured peak, one
+# backup set and one update's worth of overlap. It is also a number a person can
+# hold against their free space without doing arithmetic.
 #
-# This replaces the 768 MB that followed the first measurement, which in turn
-# replaced the 512 MB the spec had recorded. 512 was written before anything was
-# measured and sits 200 MB under the peak; 768 covered the peak but nothing
-# above it. See DESIGN_SPEC.md section 54.
-FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-1024}"
+# This replaces the 1 GB that followed the second router measurement, which in
+# turn replaced the 768 MB after the first, which replaced the 512 MB the spec
+# had recorded. 512 was written before anything was measured and sits 200 MB
+# under the peak; 768 covered the peak but nothing above it; 1 GB covered the
+# peak but not the backups. See DESIGN_SPEC.md section 54.
+FCC_MIN_FREE_MB="${FCC_MIN_FREE_MB:-2048}"
 
 fcc_die() { printf '%s\n' "fcc: $*" >&2; return 1; }
 

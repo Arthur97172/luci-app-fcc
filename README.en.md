@@ -71,12 +71,16 @@ and runs it. Python, `uv` and the runtime itself are installed under the
 configured install path (`/opt/fcc` by default), never into this package.
 
 **Check the free space first: the filesystem holding the install path needs at
-least 1 GB available.** When there is less, this package refuses the install
-before downloading anything and says how much is missing, rather than letting it
-fail half-way. The runtime itself — Python 3.14, `uv`, the agents — peaks at
-around 741 MB measured, and 1 GB is that rounded up with room to spare: one more
-agent, a larger release, or a growing `uv` cache all eat into the margin, and
-guessing low leaves half a runtime on the device.
+least 2 GB available, and 4 GB is recommended.** When there is less, this
+package refuses the install before downloading anything and says how much is
+missing, rather than letting it fail half-way. The runtime itself — Python 3.14,
+`uv`, the agents — peaks at around 741 MB measured, and 2 GB is that rounded up
+with room to spare: sharing the filesystem with the runtime are the backups (up
+to three copies of `data/`), the new runtime written beside the old one during
+an update, and a `uv` cache that grows with the Python it builds — one more
+agent or a larger release all eat into the margin, and guessing low leaves half
+a runtime on the device. 4 GB is recommended because backups accumulate across
+failed retries, and that margin costs less than cleaning up by hand afterwards.
 
 The installer then asks which coding agents to install, and that conversation
 only reads `/dev/tty` — there is no flag or environment variable that skips it.
