@@ -95,6 +95,11 @@
 .fcc-actions {
 	display: flex;
 	justify-content: flex-end;
+	/* The same vertical margins the toolbars carry. Without them the button
+	 * sat on the section's bottom edge, while every .fcc-toolbar on the page
+	 * — Start/Stop/Restart, the runtime row, Run checks — has a line of space
+	 * above and below it. */
+	margin: .5em 0 1em;
 }
 
 /* Argon lays every form row out as a label column plus a field, and sizes the
