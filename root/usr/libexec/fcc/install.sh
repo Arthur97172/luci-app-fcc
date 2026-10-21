@@ -1009,10 +1009,18 @@ installer_prepare_shim() {
 # those five seconds) and at least twice what releases.openai.com delivered.
 # Anything else — an unresolvable version, an unknown architecture, a slow or
 # missing host — leaves upstream's first choice exactly where it was, so a
-# box whose OpenCode download already worked cannot be sent somewhere worse.
+# box whose Codex download already worked cannot be sent somewhere worse.
+#
+# -f and -L are both load-bearing. GitHub does not serve release assets itself:
+# /releases/download/ answers 302 and the bytes come from a second host, so a
+# probe that does not follow the redirect measures 0 there on every box and
+# would report GitHub as dead on exactly the routers that need it. Measured on
+# the test router: without -L, 0 bytes; with -L, the whole 3 MB range in under
+# five seconds. That is what Codex's own downloader does (it uses curl -fL), so
+# the probe follows the same path the real download will.
 installer_codex_probe_bytes() {
 	# installer_codex_probe_bytes <url> -> bytes fetched in five seconds
-	curl -sS -o /dev/null --range 0-3145727 \
+	curl -fsSL -o /dev/null --range 0-3145727 \
 		--connect-timeout 5 --max-time 5 -w '%{size_download}' "$1" 2>/dev/null || :
 }
 

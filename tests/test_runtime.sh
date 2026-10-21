@@ -2677,6 +2677,17 @@ test_installer_starts_codex_at_the_download_that_answers() {
 	cat > "$SANDBOX/standin/curl" <<CURL_STAND_IN
 #!/bin/sh
 printf '%s\n' "\$*" >> "$SANDBOX/curl.log"
+# GitHub serves no assets itself: /releases/download/ answers 302 and the
+# bytes come from a second host. So this stand-in answers with nothing unless
+# the request follows redirects, exactly as the real host does. A probe
+# without -L therefore measures 0 here, which is how the router behaved when
+# the first version of this check was run against it.
+_follow=0
+for _a in "\$@"; do
+	case "\$_a" in
+		-L|-*L) _follow=1 ;;
+	esac
+done
 case " \$* " in
 	*"api.github.com/repos/openai/codex/releases/latest"*)
 		printf '{"tag_name": "rust-v0.163.0"}'
@@ -2685,7 +2696,7 @@ case " \$* " in
 		cat "$SANDBOX/openai.bytes"
 		;;
 	*"github.com/openai/codex/releases/download/rust-v0.163.0/codex-package-"*)
-		cat "$SANDBOX/github.bytes"
+		[ "\$_follow" = 1 ] && cat "$SANDBOX/github.bytes"
 		;;
 esac
 CURL_STAND_IN
@@ -2695,6 +2706,8 @@ CURL_STAND_IN
 	# The first host delivers 50 KB in the five-second window and GitHub
 	# delivers the whole 4 MB range: the pane is told to start at GitHub, and
 	# both hosts were asked for the same asset, not just for an API answer.
+	# The stand-in answers 0 for GitHub unless the probe follows redirects, so
+	# this case fails if -L is ever dropped from the probe.
 	printf '50000' > "$SANDBOX/openai.bytes"
 	printf '4194304' > "$SANDBOX/github.bytes"
 	sh_install "installer_write_env '$SANDBOX/codexenv.sh' codex set" >/dev/null 2>&1
