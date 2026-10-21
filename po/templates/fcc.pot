@@ -75,6 +75,9 @@ msgstr ""
 msgid "Clean up finished sessions"
 msgstr ""
 
+msgid "Clear log"
+msgstr ""
+
 msgid "Close session"
 msgstr ""
 

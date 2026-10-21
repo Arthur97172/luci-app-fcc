@@ -110,6 +110,9 @@ msgstr ""
 msgid "Clean up finished sessions"
 msgstr "清理已结束的会话"
 
+msgid "Clear log"
+msgstr "清空日志"
+
 msgid "Close session"
 msgstr "关闭会话"
 

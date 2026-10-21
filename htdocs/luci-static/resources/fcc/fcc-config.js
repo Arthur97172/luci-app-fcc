@@ -403,6 +403,12 @@
 		});
 
 		FCC.$('#fcc-doctor-run').addEventListener('click', runDoctor);
+		/* The report is drawn into this page and nowhere else, so this clears
+		 * what is on screen and nothing on disk. */
+		FCC.$('#fcc-doctor-clear').addEventListener('click', function () {
+			var box = FCC.$('#fcc-doctor');
+			if (box) { box.innerHTML = ''; }
+		});
 
 		loadConfig().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
