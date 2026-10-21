@@ -585,6 +585,59 @@ test_no_template_tag_is_written_inside_a_comment() {
 }
 
 # ---------------------------------------------------------------------------
+# Reattaching to a session
+#
+# `tmux capture-pane -p` separates the pane's rows with a bare LF — that is
+# what tmux 3.6 printed when it was measured, `hello\nworld\n` — and xterm runs
+# with convertEol off, because the live stream is a raw pty stream that writes
+# its own carriage returns. With it off, an LF moves down one row and keeps the
+# column, so painting the capture unchanged made every row start where the one
+# above it ended: after logging out and back in, the console showed the agent's
+# screen as a staircase until the browser was zoomed, which fired a resize, a
+# pane resize and a full repaint by the agent.
+#
+# The fix has three parts, and each is checked here because each is a line that
+# can be written back out: the capture is turned into CRLF, it is painted
+# through that conversion, and the pane is told the window's size before the
+# screen is taken — a captured grid wider than the terminal wraps at the wrong
+# column even with the line endings right.
+# ---------------------------------------------------------------------------
+
+test_a_reattached_screen_is_painted_with_crlf() {
+	_ts_common="$ROOT/htdocs/luci-static/resources/fcc/fcc-common.js"
+	_ts_term="$ROOT/htdocs/luci-static/resources/fcc/fcc-terminal.js"
+	_ts_pop="$ROOT/htdocs/luci-static/resources/fcc/fcc-popout.js"
+
+	assert_contains "$(cat "$_ts_common")" 'function captureBytes(b64)' \
+		"the shared helpers turn a capture's bare LFs into CRLF"
+	assert_contains "$(cat "$_ts_common")" 'captureBytes: captureBytes' \
+		"and export that to the pages"
+
+	assert_contains "$(cat "$_ts_term")" 'state.term.write(FCC.captureBytes(r.data))' \
+		"the console paints a reattached screen with CRLF line endings"
+	assert_contains "$(cat "$_ts_pop")" 'term.write(FCC.captureBytes(r.data))' \
+		"and so does the standalone window"
+	# The live stream is deliberately still painted raw: it is the pty's own
+	# bytes, and its carriage returns are already in it.
+	assert_contains "$(cat "$_ts_term")" 'state.term.write(FCC.b64ToBytes(r.data))' \
+		"the console still paints the live stream as it arrived"
+
+	# fitNow() now resolves when the pane has been told the new size, and
+	# attach waits on it before asking for the screen.
+	_ts_order="$(awk '
+		/^	function attach\(/ { inside = 1 }
+		inside && /fitNow\(\)/ { fit = NR }
+		inside && /session_capture/ { cap = NR }
+		inside && /^	}$/ {
+			print (fit && cap && fit < cap) ? "sized" : "captured first"
+			exit
+		}
+	' "$_ts_term")"
+	assert_eq "sized" "$_ts_order" \
+		"the console sizes the pane before it captures its screen"
+}
+
+# ---------------------------------------------------------------------------
 # The System list on Basic Information
 #
 # Section 15's System list, in the order the page shows it: what the CPU is,

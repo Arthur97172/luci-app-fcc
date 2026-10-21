@@ -33,6 +33,7 @@
 
 	var term = null;
 	var fit = null;
+	var lastSize = null;    // last cols/rows sent to the session
 	var offset = 0;
 	var polling = false;
 	var pollAbort = null;
@@ -72,13 +73,32 @@
 		});
 
 		window.addEventListener('resize', fitNow);
+
+		/* The box changes on its own too — a scrollbar appears, the first paint
+		 * lands after this runs. Attach waits on fitNow(), so the pane is this
+		 * window's size before its screen is captured. */
+		if (window.ResizeObserver) {
+			var ro = new window.ResizeObserver(function () {
+				if (fitTimer) { return; }
+				fitTimer = setTimeout(function () { fitTimer = null; fitNow(); }, 150);
+			});
+			ro.observe(FCC.$('#fcc-popout'));
+		}
 	}
 
+	var fitTimer = null;
+
 	function fitNow() {
-		if (!fit || !term) { return; }
-		try { fit.fit(); } catch (e) { /* the element may not be laid out yet */ }
-		if (!polling) { return; }
-		FCC.api('session_resize', {
+		if (!fit || !term || !session) { return Promise.resolve(); }
+		try { fit.fit(); } catch (e) { return Promise.resolve(); }
+		/* Before the page has laid out, fit() proposes a size the backend
+		 * refuses. Leave it to the observer, which fires once it has one. */
+		if (term.cols < 20 || term.rows < 5) { return Promise.resolve(); }
+		if (lastSize && lastSize.cols === term.cols && lastSize.rows === term.rows) {
+			return Promise.resolve();
+		}
+		lastSize = { cols: term.cols, rows: term.rows };
+		return FCC.api('session_resize', {
 			name: session,
 			cols: term.cols,
 			rows: term.rows
@@ -89,13 +109,18 @@
 
 	function attach() {
 		note('');
+		lastSize = null;
 
-		// Repaint from the pane's current screen, then continue from the end of
-		// the captured stream — a reload shows what is on screen now instead of
-		// replaying everything the window has already shown.
-		FCC.api('session_capture', { name: session }, { method: 'GET' }).then(function (r) {
+		// The pane is resized to this window first: the capture below is the
+		// pane's grid, and a grid wider than the terminal wraps at the wrong
+		// column. Then repaint from that screen and continue from the end of
+		// the captured stream — a reload shows what is on screen now instead
+		// of replaying everything the window has already shown.
+		fitNow().then(function () {
+			return FCC.api('session_capture', { name: session }, { method: 'GET' });
+		}).then(function (r) {
 			term.reset();
-			term.write(FCC.b64ToBytes(r.data));
+			term.write(FCC.captureBytes(r.data));
 			return FCC.api('session_output', { name: session, offset: 0, wait: 0 },
 				{ method: 'GET' });
 		}).then(function (r) {

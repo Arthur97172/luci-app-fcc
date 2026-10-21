@@ -27,6 +27,8 @@
 		active: null,       // session name
 		term: null,         // xterm.Terminal
 		fit: null,          // FitAddon
+		ro: null,           // ResizeObserver on the terminal's box
+		size: null,         // last cols/rows sent to the active session
 		offset: 0,
 		polling: false,
 		pollAbort: null,
@@ -133,34 +135,75 @@
 		});
 
 		window.addEventListener('resize', fitNow);
+
+		/* The terminal's box can change without the window changing: Argon's
+		 * menu finishes laying out, a scrollbar appears, the page is painted
+		 * after a fresh login. Only the window's resize was watched, so a
+		 * terminal fitted against the old box kept its old column count — and
+		 * a captured screen painted into it at the wrong width stayed wrong
+		 * until the user zoomed, which fires a resize and forces a refit. */
+		if (window.ResizeObserver) {
+			state.ro = new window.ResizeObserver(scheduleFit);
+			state.ro.observe(FCC.$('#fcc-term'));
+		}
 	}
 
+	var fitTimer = null;
+
+	/* A resize observer fires on every frame of a layout change, so the refit
+	 * waits for it to settle rather than resizing tmux a dozen times. */
+	function scheduleFit() {
+		if (fitTimer) { return; }
+		fitTimer = setTimeout(function () { fitTimer = null; fitNow(); }, 150);
+	}
+
+	/* Resolves when the pane has been told this window's size — which is what
+	 * attach waits for before it asks for the screen. */
 	function fitNow() {
-		if (!state.fit) { return; }
-		try { state.fit.fit(); } catch (e) { /* element may be hidden */ }
-		if (state.active && state.term) {
-			FCC.api('session_resize', {
-				name: state.active,
-				cols: state.term.cols,
-				rows: state.term.rows
-			}, { method: 'POST' }).catch(function () { /* session may have ended */ });
+		if (!state.fit) { return Promise.resolve(); }
+		try { state.fit.fit(); } catch (e) { return Promise.resolve(); }
+		if (!state.active || !state.term) { return Promise.resolve(); }
+
+		var cols = state.term.cols, rows = state.term.rows;
+		/* Before the page has laid out, fit() proposes a size the backend
+		 * refuses. Leave it to the observer, which fires once it has one. */
+		if (cols < 20 || rows < 5) { return Promise.resolve(); }
+		if (state.size && state.size.cols === cols && state.size.rows === rows) {
+			return Promise.resolve();
 		}
+		state.size = { cols: cols, rows: rows };
+
+		/* The pane reflows to the same grid, and the agent repaints on the
+		 * SIGWINCH that follows — which is what heals the screen after a zoom
+		 * or a window resize. */
+		return FCC.api('session_resize', {
+			name: state.active,
+			cols: cols,
+			rows: rows
+		}, { method: 'POST' }).catch(function () { /* session may have ended */ });
 	}
 
 	function attach(name) {
 		state.active = name;
+		state.size = null;      // the new session's pane may be a different size
 		clearBanner();
 		renderTabs();
 		ensureTerm();
 
-		// Repaint from the pane's current screen, then continue from the end of
-		// the captured stream. This makes reconnecting to an existing session
-		// show what is on screen right now rather than replaying everything.
-		FCC.api('session_capture', { name: name }, { method: 'GET' }).then(function (r) {
+		// The pane is resized to this window first: a captured screen is the
+		// pane's own grid, and painting a grid wider than the terminal wraps
+		// every row at the wrong column. Then repaint from that screen and
+		// continue from the end of the captured stream, so reconnecting shows
+		// what is on screen now rather than replaying everything.
+		fitNow().then(function () {
+			return FCC.api('session_capture', { name: name }, { method: 'GET' });
+		}).then(function (r) {
+			if (state.active !== name) { return null; }   // the user switched tabs
 			state.term.reset();
-			state.term.write(FCC.b64ToBytes(r.data));
+			state.term.write(FCC.captureBytes(r.data));
 			return FCC.api('session_output', { name: name, offset: 0, wait: 0 }, { method: 'GET' });
 		}).then(function (r) {
+			if (!r || state.active !== name) { return; }
 			state.offset = r.offset;
 			startPolling();
 		}).catch(function (err) {
@@ -168,7 +211,6 @@
 				FCC._('Could not attach to the session:') + ' ' + err.message);
 		});
 
-		fitNow();
 		state.term.focus();
 	}
 

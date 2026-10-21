@@ -152,6 +152,36 @@
 		return out;
 	}
 
+	/**
+	 * Base64 of a captured screen, with every bare LF made into CRLF.
+	 *
+	 * `tmux capture-pane -p` separates the pane's rows with an LF and nothing
+	 * else. xterm is built with convertEol off — it has to be, because the live
+	 * stream is a raw pty stream that writes its own carriage returns — and
+	 * with it off an LF moves down one row and leaves the column where it was.
+	 * Painting a captured screen unchanged therefore starts every row where
+	 * the one above it ended: the screen arrives as a staircase. The capture is
+	 * the only input that needs this; the live stream must not be touched.
+	 */
+	function captureBytes(b64) {
+		var src = b64ToBytes(b64);
+		var extra = 0, prev = 0, i;
+		for (i = 0; i < src.length; i++) {
+			if (src[i] === 10 && prev !== 13) { extra++; }
+			prev = src[i];
+		}
+		if (!extra) { return src; }
+		var out = new Uint8Array(src.length + extra);
+		var n = 0;
+		prev = 0;
+		for (i = 0; i < src.length; i++) {
+			if (src[i] === 10 && prev !== 13) { out[n++] = 13; }
+			out[n++] = src[i];
+			prev = src[i];
+		}
+		return out;
+	}
+
 	/** String -> base64 of its UTF-8 bytes. */
 	function strToB64(str) {
 		var bytes = new TextEncoder().encode(str);
@@ -185,6 +215,7 @@
 		$: $,
 		notice: notice,
 		b64ToBytes: b64ToBytes,
+		captureBytes: captureBytes,
 		strToB64: strToB64
 	};
 })();
