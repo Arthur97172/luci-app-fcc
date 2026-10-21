@@ -2664,6 +2664,64 @@ test_the_installer_pane_finds_the_ldd_stand_in_first() {
 		"$SANDBOX/opt/fcc/shim" "and no shim directory is put on PATH without it"
 }
 
+# Codex's installer prefers releases.openai.com and falls back to GitHub
+# Releases only after its 300-second asset cap has already spent itself on a
+# 159 MB file. Starting at the host that answers is what the pane's environment
+# decides, because the choice is an environment variable inside Codex's own
+# installer. See installer_codex_prefers_github().
+test_installer_starts_codex_at_the_download_that_answers() {
+	setup_sandbox
+	mkdir -p "$SANDBOX/bin"
+	make_standin_tool curl "printf '%s\n' \"\$*\" >> '$SANDBOX/curl.log'; exit 0" >/dev/null
+	ln -s "$SANDBOX/standin/curl" "$SANDBOX/bin/curl"
+
+	# Codex is selected and the endpoint the GitHub fallback uses answers: the
+	# pane is told to start there, and the probe asked that endpoint.
+	sh_install "installer_write_env '$SANDBOX/codexenv.sh' codex set" >/dev/null 2>&1
+	assert_contains "$(cat "$SANDBOX/codexenv.sh")" \
+		'export CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false' \
+		"a reachable GitHub API makes Codex download from GitHub Releases"
+	assert_contains "$(cat "$SANDBOX/curl.log")" \
+		"api.github.com/repos/openai/codex/releases/latest" \
+		"and the probe asks the endpoint the fallback itself uses"
+	assert_eq "false" \
+		"$(sh -c ". '$SANDBOX/codexenv.sh'; printf '%s' \"\$CODEX_INSTALLER_USE_RELEASES_OPENAI_COM\"")" \
+		"the value reads back from the file the pane sources"
+
+	# A set without Codex never probes and never sets it.
+	: > "$SANDBOX/curl.log"
+	sh_install "installer_write_env '$SANDBOX/claudeenv.sh' claude set" >/dev/null 2>&1
+	assert_not_contains "$(cat "$SANDBOX/claudeenv.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
+		"an install that does not include Codex leaves the variable unset"
+	assert_eq "" "$(cat "$SANDBOX/curl.log")" "and does not probe GitHub at all"
+
+	# "No opinion" installs every default agent, Codex among them.
+	sh_install "installer_write_env '$SANDBOX/defaultenv.sh' '' default" >/dev/null 2>&1
+	assert_contains "$(cat "$SANDBOX/defaultenv.sh")" \
+		'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false' \
+		"the default set includes Codex, so it gets the same choice"
+
+	# An explicit empty selection is a decision, not a default: no probe.
+	: > "$SANDBOX/curl.log"
+	sh_install "installer_write_env '$SANDBOX/noneenv.sh' '' none" >/dev/null 2>&1
+	assert_not_contains "$(cat "$SANDBOX/noneenv.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
+		"with no agents selected the variable is left alone"
+	assert_eq "" "$(cat "$SANDBOX/curl.log")" "and nothing is probed"
+
+	# GitHub unreachable: leave the choice to upstream rather than send this
+	# box at a host it cannot read.
+	make_standin_tool curl 'exit 22' >/dev/null
+	sh_install "installer_write_env '$SANDBOX/nogh.sh' codex set" >/dev/null 2>&1
+	assert_not_contains "$(cat "$SANDBOX/nogh.sh")" 'CODEX_INSTALLER_USE_RELEASES_OPENAI_COM' \
+		"an unreachable GitHub API leaves upstream's first choice alone"
+
+	# The stand-in is on $SANDBOX/bin, which sh_install prepends to PATH for
+	# every later test in this process; a curl that only logs would answer
+	# every health probe after this one. Remove both halves.
+	rm -f "$SANDBOX/bin/curl" "$SANDBOX/standin/curl"
+	rm -rf "$SANDBOX/opt/fcc"
+}
+
 # The tar check decides by unpacking a real archive rather than by reading a
 # version string, because a version string does not answer the question: BusyBox
 # tar reports one and cannot do this, and a BusyBox built with the long options

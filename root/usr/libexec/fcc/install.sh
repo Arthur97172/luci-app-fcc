@@ -991,10 +991,42 @@ installer_prepare_shim() {
 	[ -x "$_ip_dst" ]
 }
 
+# Which Codex download the installer should try first.
+#
+# Codex's own installer starts at releases.openai.com. Its asset download is
+# capped at 300 seconds and the asset is 159 MB; when the host delivers a few
+# KB/s the cap fires after a couple of megabytes, and the retry is the same
+# file from GitHub Releases. That retry has no timeout at all: on a 24.10.8
+# box it transferred 2.8 MB in five minutes from the first host and then sat
+# on the second until this package's own 30-minute deadline rolled the install
+# back. The retry path is also what the Codex installer uses when GitHub is
+# the chosen source, and that path is known-good when its API answers — which
+# is exactly the endpoint the fallback needs. So when the API answers and
+# Codex is in the set, start at GitHub; when it does not, leave upstream's
+# first choice alone, because that box's network is the other way round.
+installer_codex_prefers_github() {
+	# installer_codex_prefers_github <agents> <mode>
+	_icpg_agents="$1"
+	_icpg_mode="$2"
+	case "$_icpg_mode" in
+		default) : ;;
+		set)
+			case " $_icpg_agents " in
+				*" codex "*) : ;;
+				*) return 1 ;;
+			esac
+			;;
+		*) return 1 ;;
+	esac
+	command -v curl >/dev/null 2>&1 || return 1
+	curl -fsS -o /dev/null --connect-timeout 5 --max-time 10 \
+		"https://api.github.com/repos/openai/codex/releases/latest" 2>/dev/null
+}
+
 # The environment the installer pane sources, in one place so that the PATH the
 # pane gets can be read and tested without starting a terminal.
 installer_write_env() {
-	# installer_write_env <path>
+	# installer_write_env <path> [<agents> <mode>]
 	fcc_runtime_env_exports "$ROOT" > "$1" 2>/dev/null || return 1
 	# Appended, so that the shim directory is prepended to the PATH those
 	# exports already built — and so that a box without the shim file is left
@@ -1002,6 +1034,11 @@ installer_write_env() {
 	if installer_prepare_shim; then
 		printf 'export PATH=%s:"$PATH"\n' \
 			"$(fcc_shquote "$(installer_shim_dir)")" >> "$1" 2>/dev/null || return 1
+	fi
+	if installer_codex_prefers_github "${2:-}" "${3:-}"; then
+		printf 'export CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false\n' \
+			>> "$1" 2>/dev/null || return 1
+		fcc_log "$LOG" "installer: Codex will download from GitHub Releases, whose API answers from this box, rather than releases.openai.com, upstream's first choice"
 	fi
 	return 0
 }
@@ -1071,7 +1108,7 @@ run_installer() {
 	# running for the Web Console would start with the console's HOME, not this
 	# one, and install a second runtime into it. Sourcing a file is what makes
 	# the environment certain rather than likely.
-	installer_write_env "$_ri_env" || {
+	installer_write_env "$_ri_env" "$_ri_agents" "$_ri_mode" || {
 		fcc_log "$LOG" "failed to write the installer environment"
 		return 1
 	}
