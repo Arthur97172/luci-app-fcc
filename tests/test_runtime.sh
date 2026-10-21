@@ -5400,6 +5400,51 @@ rc=1" "$_tr_calls" "a removal that fails stops the reinstall"
 }
 
 # ---------------------------------------------------------------------------
+# Delete backups
+# ---------------------------------------------------------------------------
+#
+# backup/ is the rollback source; it is kept and pruned (section 25) but it is
+# not the runtime, and the page needs a way to reclaim it without the purge
+# that takes the configuration and the data along with it. So what this pins is
+# both halves: the directory goes, and everything beside it stays.
+test_delete_backups_removes_the_backups_and_nothing_else() {
+	setup_sandbox
+	_fc_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_fc_root/backup/20261001T000000Z/data" \
+	         "$_fc_root/backup/20261002T000000Z/runtime" \
+	         "$_fc_root/data/providers" "$_fc_root/runtime" "$_fc_root/logs"
+	printf 'credentials\n' > "$_fc_root/data/providers/key"
+	printf '#!/bin/sh\n' > "$_fc_root/runtime/fcc-server"
+	printf 'previous\n' > "$_fc_root/logs/fcc-runtime.log"
+
+	_fc_out="$(sh_install 'cmd_cleanbackups; echo "rc=$?"')"
+	assert_contains "$_fc_out" 'rc=0' "deleting the backups succeeds"
+	assert_contains "$_fc_out" 'OK' "and reports the same OK an uninstall does"
+
+	assert_no "the backup directory is gone" test -d "$_fc_root/backup"
+	assert_file "$_fc_root/data/providers/key" "the configuration and data survive"
+	assert_file "$_fc_root/runtime/fcc-server" \
+		"and so does the runtime the button promises not to touch"
+	assert_contains "$(cat "$_fc_root/logs/fcc-runtime.log")" \
+		'removed 2 saved backup(s)' "the log says how many went"
+
+	# A running install's backup is its rollback source, so the delete is
+	# refused while one holds the lock. The lock names a live pid — the test
+	# process — because a lock whose job is gone is reclaimed, which is the
+	# behaviour tested elsewhere and not the one being checked here.
+	mkdir -p "$_fc_root/backup/20261003T000000Z"
+	_fc_ld="$(sh_common 'fcc_lock_dir')"
+	mkdir -p "$_fc_ld/fcc-install.lock"
+	printf '%s' "$$" > "$_fc_ld/fcc-install.lock/pid"
+	_fc_out="$(sh_install 'cmd_cleanbackups; echo "rc=$?"')"
+	assert_contains "$_fc_out" 'rc=1' "a running install blocks the delete"
+	assert_contains "$_fc_out" 'another install or update is running' \
+		"and the reason is the one the page already shows for this case"
+	assert_dir "$_fc_root/backup" "the backup it would have needed is still there"
+	rm -rf "$_fc_ld/fcc-install.lock"
+}
+
+# ---------------------------------------------------------------------------
 # Explaining a failed download
 # ---------------------------------------------------------------------------
 #

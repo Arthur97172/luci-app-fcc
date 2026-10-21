@@ -93,6 +93,15 @@ msgstr ""
 msgid "Could not attach to the session:"
 msgstr ""
 
+msgid "Delete backups"
+msgstr ""
+
+msgid "Delete backups removes the copies an install sets aside — the previous runtime, and your data as it was before the install — and nothing else. They are what a failed install is rolled back to, so the button is refused while an install or update is running."
+msgstr ""
+
+msgid "Delete the saved backups? The runtime, the agents and your configuration are kept; every backup is removed. It cannot be undone."
+msgstr ""
+
 msgid "Detecting versions…"
 msgstr ""
 

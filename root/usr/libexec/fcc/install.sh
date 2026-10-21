@@ -19,6 +19,7 @@
 #   install.sh reinstall                  Remove the runtime and install it
 #                                         again with every agent (keeps data)
 #   install.sh uninstall [--purge]        Remove the runtime (keeps data unless --purge)
+#   install.sh cleanbackups               Delete the saved backups (keeps everything else)
 #   install.sh check                      Pre-install compatibility report (JSON)
 #
 # Locals are per-function prefixed — see the note at the top of common.sh.
@@ -2091,6 +2092,47 @@ cmd_runtime() {
 	return 0
 }
 
+# Delete the saved backups, and nothing else.
+#
+# backup/ holds what rollback_runtime() restores from: the data as it was when
+# an install started and, for an update, the previous runtime. They are kept on
+# purpose (section 25) and pruned to the newest few, but they are also the one
+# part of the install path nothing uses between runs, and on a box where an
+# install has failed a few times they are the largest thing there. This is the
+# operation that reclaims that space without touching the runtime, the agents,
+# the configuration or the data.
+#
+# It takes the install lock before deleting anything. The backup is the rollback
+# source of a job that is still running, so removing it mid-install would turn a
+# recoverable failure into an unrecoverable one. An update holds its own lock,
+# and is refused the same way; the two checks mirror cmd_runtime().
+cmd_cleanbackups() {
+	_cc_lock="$(fcc_lock_acquire install)" || {
+		fcc_log "$LOG" "delete backups refused: another install/update is running"
+		printf 'another install or update is running\n'
+		return 1
+	}
+	if fcc_lock_held update; then
+		fcc_lock_release "$_cc_lock"
+		fcc_log "$LOG" "delete backups refused: an update is running"
+		printf 'another install or update is running\n'
+		return 1
+	fi
+	_cc_root="$(fcc_dir_backup)"
+	_cc_count=0
+	if [ -d "$_cc_root" ]; then
+		for _cc_ent in "$_cc_root"/* "$_cc_root"/.[!.]* "$_cc_root"/..?*; do
+			[ -e "$_cc_ent" ] || continue
+			_cc_count=$((_cc_count + 1))
+		done
+		rm -rf "$_cc_root"
+	fi
+	fcc_lock_release "$_cc_lock"
+	fcc_log "$LOG" "removed $_cc_count saved backup(s)"
+	printf 'OK\n'
+	return 0
+}
+
 cmd_uninstall() {
 	_cu_purge=0
 	[ "${1:-}" = "--purge" ] && _cu_purge=1
@@ -2141,6 +2183,7 @@ case "${1:-}" in
 	runtime)   shift; cmd_runtime "$@" ;;
 	reinstall) cmd_reinstall ;;
 	uninstall) shift; cmd_uninstall "$@" ;;
+	cleanbackups) cmd_cleanbackups ;;
 	check)     check_report ;;
-	*) echo "usage: install.sh {runtime [--agents a,b] [--all-agents] | reinstall | uninstall [--purge] | check}" >&2; exit 2 ;;
+	*) echo "usage: install.sh {runtime [--agents a,b] [--all-agents] | reinstall | uninstall [--purge] | cleanbackups | check}" >&2; exit 2 ;;
 esac

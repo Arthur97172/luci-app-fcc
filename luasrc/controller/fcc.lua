@@ -61,6 +61,7 @@ function index()
 		install_runtime = "act_install_runtime",
 		reinstall_runtime = "act_reinstall_runtime",
 		uninstall_runtime = "act_uninstall_runtime",
+		delete_backups = "act_delete_backups",
 		job = "act_job",
 		doctor = "act_doctor",
 		update_check = "act_update_check",
@@ -443,6 +444,16 @@ function act_uninstall_runtime()
 	if purge then argv[#argv + 1] = "--purge" end
 	-- Removal is fast, but the agent set makes it a job too, for one code path.
 	start_job(argv, "fcc-runtime.log", "install")
+end
+
+--- Delete the saved backups, and nothing else.
+--
+-- A job rather than a direct call for the same reason as Uninstall: the backend
+-- takes the install lock, so "something else is already running" has a place to
+-- be said, and the outcome lands in the log the pane is already showing.
+function act_delete_backups()
+	if not require_post() then return end
+	start_job({ "install", "cleanbackups" }, "fcc-runtime.log", "install")
 end
 
 function act_update_runtime()

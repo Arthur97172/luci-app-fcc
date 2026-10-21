@@ -416,6 +416,59 @@ test_the_config_page_installs_every_agent() {
 }
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Delete backups
+#
+# backup/ is what rollback_runtime() restores from and the newest few are kept
+# on purpose (section 25). It is also the one part of the install path nothing
+# uses between runs, so it gets its own button rather than being reachable only
+# through a purge that also takes the configuration and the data. The button
+# has to reach a verb of its own: sending uninstall with a flag would delete
+# the runtime, which is the opposite of what the button says.
+# ---------------------------------------------------------------------------
+
+test_the_config_page_can_delete_the_backups() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+	_ts_install="$ROOT/root/usr/libexec/fcc/install.sh"
+
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-cleanbackups"' \
+		"the Configuration page has a Delete backups button"
+	assert_contains "$(cat "$_ts_view")" '<%:Delete backups%>' \
+		"and it is labelled by a translatable string"
+
+	# The order is the point of the button: between the uninstall that keeps
+	# the backups and the purge that takes them along with everything else.
+	_ts_un="$(grep -n 'id="fcc-runtime-uninstall"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_cb="$(grep -n 'id="fcc-runtime-cleanbackups"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_purge="$(grep -n 'id="fcc-runtime-purge"' "$_ts_view" | head -1 | cut -d: -f1)"
+	assert_ne "" "$_ts_cb" "the button is in the toolbar"
+	if [ -n "$_ts_un" ] && [ -n "$_ts_cb" ] && [ -n "$_ts_purge" ] \
+		&& [ "$_ts_un" -lt "$_ts_cb" ] && [ "$_ts_cb" -lt "$_ts_purge" ]; then
+		pass
+	else
+		fail "Delete backups does not sit between Uninstall and Uninstall and remove all data"
+	fi
+
+	assert_contains "$(cat "$_ts_js")" "runJobAction('delete_backups', {}," \
+		"the button calls the delete_backups action"
+	assert_contains "$(cat "$_ts_js")" "Delete the saved backups?" \
+		"and asks before deleting them"
+
+	assert_contains "$(cat "$_ts_ctrl")" 'delete_backups = "act_delete_backups"' \
+		"the action is routed in the controller"
+	assert_contains "$(cat "$_ts_ctrl")" '"install", "cleanbackups"' \
+		"and asks install.sh for the verb that only deletes backups"
+
+	# The verb exists, and it is not uninstall with an argument: the two delete
+	# different things.
+	assert_contains "$(cat "$_ts_install")" 'cleanbackups)' \
+		"install.sh dispatches the cleanbackups verb"
+	assert_contains "$(cat "$_ts_install")" 'cmd_cleanbackups()' \
+		"and implements it"
+}
+
 # The agent dropdown, and the one thing it is for
 #
 # Upstream stops at the first agent it cannot install and rolls the whole run

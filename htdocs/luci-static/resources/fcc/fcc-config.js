@@ -405,6 +405,16 @@
 			}
 			runJobAction('uninstall_runtime', {}, 'install', 'fcc-runtime.log');
 		});
+		/* The only one of these that leaves the runtime alone, so the dialog says
+		 * what survives as well as what goes: a reader deciding whether to press
+		 * it is weighing space against an undo they lose, not against the runtime
+		 * they are about to delete. */
+		FCC.$('#fcc-runtime-cleanbackups').addEventListener('click', function () {
+			if (!window.confirm(FCC._('Delete the saved backups? The runtime, the agents and your configuration are kept; every backup is removed. It cannot be undone.'))) {
+				return;
+			}
+			runJobAction('delete_backups', {}, 'install', 'fcc-runtime.log');
+		});
 		FCC.$('#fcc-runtime-purge').addEventListener('click', function () {
 			if (!window.confirm(FCC._('Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone.'))) {
 				return;
