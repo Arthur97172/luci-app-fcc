@@ -10,12 +10,16 @@ Three pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
-| **Configuration** | FCC server settings (address, port, log level), the runtime install path, start/stop/restart, and a link to the FCC Admin page. |
+| **Configuration** | FCC server settings (address, port, log level), the runtime install path, the agents to install, install/reinstall/update/uninstall, start/stop/restart, the diagnostics report, and a link to the FCC Admin page. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage, and FCC update checks. |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
 shell. It does **not** contain Python, Node.js, `uv`, the FCC runtime or any
 coding agent — those are installed separately, on demand, under `/opt/fcc`.
+
+![The Web Console: a Claude Code session running inside LuCI](screenshot.png)
+
+*The Web Console — one tmux session per agent, in the browser.*
 
 ---
 
@@ -166,8 +170,9 @@ downloads `uv` again and therefore needs it.
 Why not simply depend on it, then? Because on 25.12 that makes this package
 unselectable: upstream's tar carries a variant gate (`TAR_XZ` on, `xz-utils` off
 by default) that the metadata generator copies onto every dependent, so the
-dependency does not resolve under any default configuration. The diagnostics
-report's FAIL plus install hint is the substitute.
+dependency does not resolve under any default configuration. The substitute is
+not a report you have to act on by hand: **when an install starts, the gaps a
+package can fill are filled automatically**, in the section below.
 
 `bash` is deliberately *not* in that list. Upstream's installer hands five of the
 ten agents — Claude Code, OpenCode, Hermes, Grok Build and Muse Code — to their
@@ -175,10 +180,10 @@ own bash installers, and OpenWrt images ship busybox ash and no bash at all.
 Depending on it would mean dragging a shell onto every router that only wanted to
 look at the status page, so it is required only when one of those agents is
 selected, and the *Configuration* page's diagnostics report it: a FAIL with the
-install command when the selected set needs it, a WARN when it does not. Without
-that check the install failed after the download and the build, with nothing in
-the log but upstream's `bash is required. Install it first, then rerun this
-installer.`
+install command when the selected set needs it, a WARN when it does not. The
+preflight then installs it if it is missing. Without either, the install failed
+after the download and the build, with nothing in the log but upstream's
+`bash is required. Install it first, then rerun this installer.`
 
 `luci-compat` is the other load-bearing one, and less obviously so. OpenWrt
 24.10 and 25.12 moved LuCI's core to ucode: `luci-base` no longer ships
@@ -194,6 +199,38 @@ The FCC runtime has its own requirements — currently Python 3.14 (upstream pin
 business, not this package's: installing `luci-app-fcc` must not pull a language
 runtime onto a router that only wanted to look at the status page. That is also
 why the runtime is installed on demand rather than shipped here.
+
+### Packages the preflight installs
+
+*Configuration* → **Diagnostics** → **Run checks** lists every check with its
+value, requirement, result and suggestion. When **Install FCC Runtime**,
+**Reinstall** or **Update** is pressed and *every* failing check is one a
+package can clear, the installer adds those packages, asks the diagnostics
+again, and only downloads the runtime once the report passes. A failure no
+package remedies — not enough free space, DNS, unreachable HTTPS, a CPU with no
+Node build — changes nothing and refuses the install with the full report.
+
+What it may install:
+
+| Check | Package | Needed when |
+| --- | --- | --- |
+| tar | `tar` | GNU tar, for `--strip-components` and `--no-same-owner` |
+| tmux | `tmux` | The console and the installer, always |
+| bash | `bash` | Claude Code, OpenCode, Hermes, Grok Build, Muse Code |
+| fold | `coreutils-fold` | Codex's installer |
+| sleep | `coreutils-sleep` | Pi's installer, whose sleep must take fractions |
+| Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node Pi, DeepSeek Harness and Cline fetch |
+| curl | `curl` | Downloading the installer and the runtime |
+
+The names are the same on 24.10 (opkg) and 25.12 (apk). `libstdcpp6` follows
+the SONAME's major suffix (`libstdc++.so.6`), not the package manager; GNU tar
+and coreutils install under `/usr/libexec/` with alternatives taking over
+`/bin/tar`, `/bin/sleep` and `/usr/bin/fold`, so they take effect instead of
+losing to BusyBox's applet of the same name. The command follows the image:
+`apk add` on 25.12, `opkg install` on 24.10, with one repository-index update
+and a retry when the first attempt fails.
+
+**Clear log**, beside **Run checks**, empties the panel and nothing on disk.
 
 ---
 
@@ -233,6 +270,8 @@ filling the window. **Closing that window ends the session**; reloading it does
 not, because the reattach cancels the delayed close. **End all sessions** ends
 every session this console created after a confirmation dialog — only the
 `fcc-*` namespace, so tmux sessions you started by hand are left alone.
+**Clean up finished sessions** reaps only sessions whose process has already
+exited, and their leftover files; running sessions are not touched.
 
 ---
 
@@ -370,9 +409,9 @@ the release.
   failing silently and an install is refused before it starts. The diagnostics
   report calls tmux a FAIL rather than a WARN: a warning in front of a guaranteed
   failure only teaches the reader to ignore the one line that mattered.
-* **Five agents need `bash`.** See *Requirements*. Selecting them on a box with
-  no bash fails after the download rather than before it; the *Configuration*
-  page's diagnostics report it up front.
+* **Five agents need `bash`.** See *Requirements*. The preflight installs it;
+  only when it cannot be installed (no network, no space) is the install
+  refused before anything is downloaded, with the missing piece named.
 * **A first install cannot select zero agents.** Upstream's chooser refuses an
   empty set and re-asks the whole list, so "no agents" cannot be completed on a
   fresh install. This package refuses it outright and says why, rather than
