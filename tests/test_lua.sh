@@ -669,4 +669,91 @@ LUA
 		"the probe answers from the root it was given"
 }
 
+test_the_menu_survives_a_lost_config_file() {
+	# A package manager whose conffile handling goes wrong can leave the package
+	# installed with /etc/config/fcc gone — that is what happened on the test
+	# router on 2026-10-21. The controller used to return early from index() in
+	# that state, so "Services" showed no FCC and there was no way to reach the
+	# page that would rewrite the file. The handlers already fall back to the
+	# defaults (act_config_get above), so the menu must not depend on the file.
+	#
+	# The probe makes file_exists answer false for everything, which is the state
+	# the old guard tested, and records the entries index() registers.
+	if [ -z "$LUA" ]; then
+		skip "no Lua interpreter available"
+		return
+	fi
+
+	_ts_p="$(mktemp)"
+	cat > "$_ts_p" <<'LUA'
+local ROOT = assert(os.getenv("FCC_TEST_ROOT"))
+
+table.insert(package.loaders, 1, function(name)
+	local rel
+	if name == "luci.controller.fcc" then
+		rel = "/luasrc/controller/fcc.lua"
+	else
+		local short = name:match("^luci%.fcc%.([a-z_]+)$")
+		if short then rel = "/luasrc/fcc/" .. short .. ".lua" end
+	end
+	if not rel then return nil end
+	local fh = io.open(ROOT .. rel, "r")
+	if not fh then return nil end
+	local src = fh:read("*a"); fh:close()
+	return assert(loadstring(src, "@" .. rel))
+end)
+
+package.preload["nixio.fs"] = function()
+	return { access = function() return nil end, stat = function() return nil end }
+end
+package.preload["luci.model.uci"] = function()
+	return { cursor = function() return nil end }
+end
+package.preload["luci.http"] = function()
+	return { getenv = function() end, prepare_content = function() end,
+	         write = function() end, status = function() end }
+end
+
+-- Everything the controller could ask the filesystem about is absent.
+local util = require "luci.fcc.util"
+util.file_exists = function() return false end
+
+local seen, count = {}, 0
+_G.entry = function(path)
+	count = count + 1
+	seen[table.concat(path, "/")] = true
+	return {}
+end
+_G.firstchild = function() return {} end
+_G.template   = function() return {} end
+_G.call       = function() return {} end
+_G._          = function(s) return s end
+
+local ctrl = require "luci.controller.fcc"
+ctrl.index()
+
+print("menu=" .. tostring(seen["admin/services/fcc"]))
+print("config=" .. tostring(seen["admin/services/fcc/config"]))
+print("api=" .. tostring(seen["admin/services/fcc/api/status"]))
+print("proxy=" .. tostring(seen["admin/services/fcc/adminproxy"]))
+print("entries=" .. count)
+LUA
+
+	_ts_out="$(FCC_TEST_ROOT="$ROOT" \
+		FCC_LIBEXEC="$ROOT/tests/no-such-libexec" \
+		FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
+		FCC_VERSION_FILE="$ROOT/VERSION" \
+		PATH="/usr/bin:/bin" "$LUA" "$_ts_p" 2>&1)"
+	rm -f "$_ts_p"
+
+	assert_contains "$_ts_out" "menu=true" \
+		"the FCC menu entry exists when the config file is missing: [$_ts_out]"
+	assert_contains "$_ts_out" "config=true" \
+		"the Configuration page, which rewrites it, stays reachable"
+	assert_contains "$_ts_out" "api=true" \
+		"the JSON API is registered as well"
+	assert_contains "$_ts_out" "proxy=true" \
+		"the Admin proxy route is registered too"
+}
+
 tests_main

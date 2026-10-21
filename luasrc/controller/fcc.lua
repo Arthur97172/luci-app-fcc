@@ -22,10 +22,14 @@ local agents = require "luci.fcc.agents"
 -- Menu
 -- ---------------------------------------------------------------------------
 function index()
-	if not util.file_exists("/etc/config/fcc") then
-		return
-	end
-
+	-- There is deliberately no check for /etc/config/fcc here. The menu used to
+	-- hide itself when that conffile was missing, and a package manager's failed
+	-- upgrade can leave it missing while the package counts as installed — which
+	-- turned a recoverable state into an app with no menu entry and no way to
+	-- reach the page that would write the file back. The handlers already fall
+	-- back to the shipped defaults when it is absent (act_config_get), and saving
+	-- from the Configuration page recreates it, so the menu must not depend on it.
+	--
 	-- firstchild() forwards the menu entry to whichever child the signed-in user
 	-- may actually reach, so the parent node needs no template of its own.
 	entry({"admin", "services", "fcc"}, firstchild(), _("FCC"), 60)

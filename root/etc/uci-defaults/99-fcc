@@ -25,7 +25,12 @@ if [ ! -f /etc/config/fcc ]; then
 fi
 
 # Clear LuCI index/module caches so the new menu entry appears immediately.
-rm -f /tmp/luci-indexcache 2>/dev/null
+# The ucode dispatcher names its cache luci-indexcache.<hash>.json, so a run of
+# this script on its own has to remove that form as well; default_postinst()
+# removes both during an install. Removing only the bare name leaves a cached
+# menu that predates the package, which is what hid FCC from Services after a
+# failed upgrade on 2026-10-21.
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*.json 2>/dev/null
 rm -rf /tmp/luci-modulecache 2>/dev/null
 
 exit 0
