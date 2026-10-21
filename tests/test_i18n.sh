@@ -24,6 +24,7 @@ POT="$ROOT/po/templates/fcc.pot"
 PO="$ROOT/po/zh_Hans/fcc.po"
 VIEWS="$ROOT/luasrc/view/fcc"
 JS="$ROOT/htdocs/luci-static/resources/fcc"
+CTRL="$ROOT/luasrc/controller"
 
 # Emit one "msgid<TAB>msgstr" line per catalogue entry, skipping the header
 # entry (msgid ""). The parser lives in tests/po.awk so this file contains no
@@ -81,6 +82,23 @@ $_ts_s
 EOF
 	done
 
+	# The controller names the tab bar and the Services menu, so its strings
+	# are user-visible translations just like a view's — and they are the ones
+	# with no second copy anywhere: a view can stop printing a page title
+	# without that title leaving the UI.
+	for _ts_f in "$CTRL"/*.lua; do
+		[ -f "$_ts_f" ] || continue
+		_ts_s="$(grep -o '_("[^"]*")' "$_ts_f" | sed 's/^_("//; s/")$//' \
+			| grep -v '^$')"
+		[ -n "$_ts_s" ] || continue
+		while IFS= read -r _ts_one; do
+			printf '%s\n' "$_ts_pot" | grep -Fxq -- "$_ts_one" \
+				|| _ts_bad="$_ts_bad $(basename "$_ts_f"):[$_ts_one]"
+		done <<EOF
+$_ts_s
+EOF
+	done
+
 	assert_eq "" "$(printf '%s' "$_ts_bad" | sed 's/^ //')" \
 		"every <%:…%> and FCC._(…) string is in the template"
 }
@@ -97,6 +115,10 @@ test_pot_has_no_orphans() {
 			[ -f "$_ts_f" ] || continue
 			grep -o "FCC\._('[^']*')" "$_ts_f" | sed "s/^FCC\._('//; s/')$//"
 			grep -o 'FCC\._("[^"]*")' "$_ts_f" | sed 's/^FCC\._("//; s/")$//'
+		done
+		for _ts_f in "$CTRL"/*.lua; do
+			[ -f "$_ts_f" ] || continue
+			grep -o '_("[^"]*")' "$_ts_f" | sed 's/^_("//; s/")$//'
 		done
 	} | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | LC_ALL=C sort -u)"
 

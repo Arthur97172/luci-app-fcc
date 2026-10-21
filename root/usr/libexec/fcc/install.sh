@@ -1351,6 +1351,70 @@ wait_for_health() {
 	return 1
 }
 
+close_fcc_sessions() {
+	# close_fcc_sessions <root> -> the closed session names on stdout.
+	#
+	# A Web Console pane execs <root>/bin/fcc-claude, so an open session is one
+	# of the processes the upstream installer refuses to run beside — and the
+	# installer replaces the launcher that pane is executing, so leaving it
+	# running is not an option either. Closing the session is how the console
+	# already ends one.
+	#
+	# The pane's own command line decides. The naming convention
+	# (fcc-<agent>-<number>) is this package's, but the tmux server is shared,
+	# so a session whose pane is not running something from <root> is not
+	# this install's and is left alone.
+	_cs_root="$1"
+	case "$_cs_root" in */) _cs_root="${_cs_root%/}" ;; esac
+	command -v tmux >/dev/null 2>&1 || return 0
+	tmux list-panes -a -F '#{session_name} #{pane_pid}' 2>/dev/null \
+		| grep '^fcc-[a-z0-9]\{1,16\}-[0-9]\{3\} ' \
+		| while read -r _cs_s _cs_pid; do
+			_cs_cmd="$(tr '\0' ' ' < "/proc/$_cs_pid/cmdline" 2>/dev/null)" || continue
+			case "$_cs_cmd" in
+				*"$_cs_root"/*) : ;;
+				*) continue ;;
+			esac
+			tmux kill-session -t "$_cs_s" 2>/dev/null && printf '%s ' "$_cs_s"
+		done
+	return 0
+}
+
+stop_fcc_processes() {
+	# stop_fcc_processes -> 0 when nothing named in FCC_PROCESS_NAMES is left.
+	#
+	# /etc/init.d/fcc stop ends procd's instance, and now also the detached
+	# server the launchers start. What it does not know about is an agent in a
+	# console session, which the installer counts as running FCC too. Anything
+	# still alive here would make upstream abort the run a moment later, and the
+	# rollback that followed would be the only thing the user saw — so the check
+	# runs before the installer is executed, and its result is the install's.
+	#
+	# Both scans are scoped to $ROOT. The processes that block an install are
+	# this tree's: procd's server, the one a launcher detached from bin/, and
+	# an agent a console pane is running from the same place. A process that
+	# merely shares a name — another FCC tree, a developer's own launcher — is
+	# not the installer's business and is not signalled.
+	_st_closed="$(close_fcc_sessions "$ROOT" 2>/dev/null || true)"
+	[ -n "$_st_closed" ] && fcc_log "$LOG" "closed console session(s) for the install: $_st_closed"
+
+	_st_found=""
+	for _st_n in $FCC_PROCESS_NAMES; do
+		_st_p="$(fcc_process_ids "$_st_n" "$ROOT" 2>/dev/null || true)"
+		[ -n "$_st_p" ] || continue
+		_st_found="$_st_found $_st_n(PID $(printf '%s' "$_st_p" | tr '\n' ',' | sed 's/,$//'))"
+	done
+	[ -n "$_st_found" ] || return 0
+
+	fcc_log "$LOG" "stopping FCC process(es) the installer will not run beside:$_st_found"
+	if fcc_stop_processes 15 "$ROOT" $FCC_PROCESS_NAMES; then
+		fcc_log "$LOG" "stopped them; the installer can run"
+		return 0
+	fi
+	fcc_log "$LOG" "could not stop every FCC process; the installer would abort on them, so it was not started"
+	return 1
+}
+
 # Remove the entries a failed attempt added to a directory, and nothing else.
 #
 # <before-file> holds the names the directory had when the attempt started,
@@ -1399,6 +1463,10 @@ rollback_runtime() {
 	# renamed aside before the update started.
 	_rb_dir="$1"
 	_rb_was="$2"
+	# Whether the data this function puts back is in place. A restore that could
+	# not copy it (a full device is exactly the case this path runs on) leaves
+	# the backup's copy as the only one, so the cleanup below must not delete it.
+	_rb_data_ok=1
 
 	# A first install is not an update, and section 79's two messages are both
 	# about an update: "FCC Server remains stopped" says the server was running
@@ -1503,15 +1571,16 @@ rollback_runtime() {
 		done
 		if [ -d "$_rb_dir/data" ]; then
 			rm -rf "$ROOT/data" 2>/dev/null
-			cp -a "$_rb_dir/data" "$ROOT/data" 2>/dev/null
+			cp -a "$_rb_dir/data" "$ROOT/data" 2>/dev/null || _rb_data_ok=0
 		fi
 		[ -f "$_rb_dir/runtime.json" ] && cp "$_rb_dir/runtime.json" "$ROOT/runtime.json" 2>/dev/null
 	fi
 
-	# Section 25's retention applies to failed updates too. The directory this
-	# rollback just consumed is the newest, so it is the one that survives —
-	# which is right, since it is the state the router was in when the update
-	# was attempted.
+	# Section 25's retention applies to failed updates too, and the directory
+	# this rollback consumed is the newest, so it is the one an over-full
+	# backlog keeps. What it is kept *for* is the restore just above, and once
+	# that restore has succeeded there is nothing in it but a second copy of the
+	# live tree — see the cleanup on the success path below.
 	prune_backups
 
 	# Whatever version is on disk now is the truth; drop the cached one so the
@@ -1521,6 +1590,23 @@ rollback_runtime() {
 	[ "$_rb_was" = true ] && /etc/init.d/fcc start >/dev/null 2>&1
 
 	if [ -x "$ROOT/bin/fcc-server" ] && wait_for_health "$FCC_HEALTH_TIMEOUT"; then
+		# The previous tree is live again — runtime/ and bin/ were moved back,
+		# and data/ was restored from this directory — so what is left here is a
+		# duplicate of the device's own state, and by far the largest thing a
+		# failed attempt leaves behind: the copy of data/ was 273 MB per attempt,
+		# measured on the test router on 2026-10-21. Section 25's retention kept
+		# three of them, 820 MB in all, and that backlog is what pushed free
+		# space under FCC_MIN_FREE_MB and made every later attempt fail the
+		# storage precheck before it could start. Deleting a directory that has
+		# just been consumed is safe for exactly that reason; a restore that did
+		# not happen — the tree is still in the backup, or the copy of data/
+		# failed — leaves it in place, and so does a rollback that ends below
+		# with ROLLBACK_FAILED.
+		if [ "$_rb_data_ok" -eq 1 ] && [ -n "$_rb_dir" ] && [ -d "$_rb_dir" ] \
+				&& [ ! -e "$_rb_dir/runtime" ] && [ ! -e "$_rb_dir/bin" ]; then
+			rm -rf "$_rb_dir" 2>/dev/null \
+				&& fcc_log "$LOG" "removed the consumed backup ${_rb_dir##*/}"
+		fi
 		fcc_log "$LOG" "Update failed. Previous FCC version restored."
 		printf 'ROLLED_BACK\n'
 		return 0
@@ -1654,6 +1740,16 @@ cmd_runtime() {
 	# --- sections 23 steps 7-8: stop --------------------------------------
 	# The upstream installer refuses to run while FCC processes are alive.
 	/etc/init.d/fcc stop >/dev/null 2>&1
+	# And the init script cannot know about every one of them: the agents in
+	# open console sessions and any server a launcher detached with
+	# --auto-started are not procd's children. If they survive this, upstream
+	# aborts the run and the user sees only the rollback, so stop here instead,
+	# with the reason in the log and the previous runtime put back.
+	if ! stop_fcc_processes; then
+		rollback_runtime "$_cr_backup" "$_cr_was_running"
+		fcc_lock_release "$_cr_lock"
+		return 1
+	fi
 
 	_cr_script="$ROOT/cache/fcc-install-$$.sh"
 	if ! download_installer "$_cr_script"; then
@@ -1776,6 +1872,10 @@ cmd_uninstall() {
 	_cu_purge=0
 	[ "${1:-}" = "--purge" ] && _cu_purge=1
 	/etc/init.d/fcc stop >/dev/null 2>&1
+	# Everything below deletes the tree those processes are executing from.
+	# Leaving a detached server or an agent behind would keep the files alive
+	# with no name left to stop them by, and the next install would find them.
+	stop_fcc_processes || true
 	# Remove everything except data/ and backup/ unless --purge.
 	for _cu_d in runtime bin cache sessions; do
 		[ -d "$ROOT/$_cu_d" ] && rm -rf "$ROOT/$_cu_d"

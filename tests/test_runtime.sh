@@ -1864,6 +1864,72 @@ test_active_sessions_reports_a_count() {
 	esac
 }
 
+# The upstream installer refuses to run while any fcc-* process is alive, and
+# procd's stop only knows the instance it forked. These pin the two probes the
+# helpers use — argv[0], and a command line naming the command — and that a
+# process matching one is actually ended rather than merely reported.
+test_process_ids_find_a_process_by_name_and_by_command_line() {
+	setup_sandbox
+	# A shell, not sleep: on a host whose sleep is a coreutils multi-call
+	# binary, a symlink called fcc-testprobe is rejected by the binary itself
+	# ("coreutils: unknown program"), so the probe would exit before it could
+	# be found. A shell ignores argv[0] and keeps running.
+	ln -sf "$(command -v sh)" "$SANDBOX/fcc-testprobe"
+	"$SANDBOX/fcc-testprobe" -c 'while :; do sleep 1; done' &
+	_tp_pid=$!
+	sleep 1
+	assert_eq "$_tp_pid" "$(sh_common 'fcc_process_ids fcc-testprobe')" \
+		"a process named fcc-testprobe is found by its argv[0]"
+
+	# The shape of the interpreter started for a script called fcc-server:
+	# argv[0] is the interpreter, and the name is a word after a path separator.
+	sh -c 'while :; do sleep 1; done' /fcc-testword &
+	_tw_pid=$!
+	sleep 1
+	assert_eq "$_tw_pid" "$(sh_common 'fcc_process_ids fcc-testword')" \
+		"a command line that names fcc-testword is found"
+	assert_eq "" "$(sh_common 'fcc_process_ids fcc-nosuchprocess')" \
+		"a name no process carries finds nothing"
+
+	# The scope is what keeps a stop from signalling a stranger's process. This
+	# probe is under $SANDBOX, so asking for matches under an unrelated root
+	# must return nothing, and asking under $SANDBOX must find it.
+	assert_eq "" "$(sh_common "fcc_process_ids fcc-testprobe $SANDBOX/elsewhere")" \
+		"a root the process is not under finds nothing"
+	assert_eq "$_tp_pid" "$(sh_common "fcc_process_ids fcc-testprobe $SANDBOX")" \
+		"a root the process is under finds it"
+
+	kill "$_tp_pid" "$_tw_pid" 2>/dev/null
+	wait "$_tp_pid" 2>/dev/null
+	wait "$_tw_pid" 2>/dev/null
+}
+
+test_stop_processes_ends_a_matching_process() {
+	setup_sandbox
+	# Same probe as above, and for the same reason: the name has to reach a
+	# program that runs under it.
+	ln -sf "$(command -v sh)" "$SANDBOX/fcc-testprobe"
+	"$SANDBOX/fcc-testprobe" -c 'while :; do sleep 1; done' &
+	_sp_pid=$!
+	sleep 1
+
+	# The root is $SANDBOX here, which is where the probe lives: a stop is
+	# always asked to look under one tree, never at the whole box.
+	sh_common "fcc_stop_processes 5 $SANDBOX fcc-testprobe" >/dev/null 2>&1
+	assert_eq "0" "$?" "fcc_stop_processes reports that nothing is left"
+
+	# A regression must fail this test, not hang the suite until the probe's
+	# own 300 seconds are up: the guard ends it after ten and the status then
+	# says it did not go on SIGTERM as asked.
+	( sleep 10; kill -KILL "$_sp_pid" 2>/dev/null ) &
+	_sp_guard=$!
+	wait "$_sp_pid" 2>/dev/null
+	_sp_status=$?
+	kill "$_sp_guard" 2>/dev/null
+	wait "$_sp_guard" 2>/dev/null
+	assert_eq "143" "$_sp_status" "the process ended on SIGTERM"
+}
+
 test_find_server_exe_prefers_the_runtime_tree() {
 	setup_sandbox
 	_fx_bin="$SANDBOX/opt/fcc/bin"
@@ -2019,6 +2085,16 @@ test_rollback_restores_the_previous_runtime() {
 	# The binary the failed install left must not survive the restore.
 	assert_contains "$(cat "$_rb_root/bin/fcc-server" 2>/dev/null)" "http.server" \
 		"the previous binary is back, not the one the failed install left"
+	# Once the tree is live again the backup is a second copy of it — 273 MB of
+	# data/ per attempt on the test router — and keeping it is what filled the
+	# flash until every retry failed the storage precheck.
+	if [ -d "$_bk" ]; then
+		fail "the consumed backup was left behind: $_bk"
+	else
+		pass
+	fi
+	assert_contains "$_log" "removed the consumed backup" \
+		"the log records the backup being reclaimed"
 
 	kill "$_rb_pid" 2>/dev/null
 	wait "$_rb_pid" 2>/dev/null
@@ -2052,6 +2128,14 @@ test_rollback_reports_when_the_server_cannot_be_restarted() {
 	# a status rather than taking the caller down with it.
 	assert_eq "previous interpreter" "$(cat "$_rr_root/runtime/marker" 2>/dev/null)" \
 		"the files are restored even though the server will not start"
+	# A rollback that ends here is the one case the backup is still worth
+	# keeping: it is the only surviving copy of the data the restore copied
+	# back, and the router is in a state a person has to look at.
+	if [ -d "$_bk" ]; then
+		pass
+	else
+		fail "a failed rollback deleted the only surviving backup: $_bk"
+	fi
 }
 
 # Section 79's two messages are both about an *update*: one names a previous

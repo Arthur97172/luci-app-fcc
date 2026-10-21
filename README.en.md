@@ -314,11 +314,11 @@ name, the tag and the release name. The release carrying
 sh scripts/version.sh    # 0.1.1-r2
 ```
 
-There is no tag to push. A push to `main` runs the static checks, builds all four
-architectures and install-smoke-tests every one of them, and publishes only if
-all of them pass; the workflow creates the tag itself, from the same two files
-the packages are stamped with. Bumping `PKG_RELEASE` is what cuts the next
-release.
+There is no tag to push. A push to `main` runs the static checks, builds once
+against the 24.10 SDK and once against the 25.12 SDK — both x86_64 — and
+install-smoke-tests each in its own release rootfs, publishing only if all of it
+passes; the workflow creates the tag itself, from the same two files the
+packages are stamped with. Bumping `PKG_RELEASE` is what cuts the next release.
 
 The release number is part of the name because it is part of the package: a
 rebuild under the same `VERSION` takes a new `PKG_RELEASE`, so `0.1.1-r1` and
@@ -331,11 +331,14 @@ version is idempotent rather than a failure on a tag that already exists. A pull
 request never publishes.
 
 The assets are this package alone — `luci-app-fcc_<version>-r<release>_all.ipk`,
-`luci-app-fcc-<version>-r<release>.apk` and `SHA256SUMS`. All four architectures
-build the same file (`PKGARCH:=all`), and the copies are compared rather than
-merged: two SDKs disagreeing about the same package fails the release. The FCC
-runtime is installed on demand over the network, so there is no prebuilt runtime
-tarball in the release.
+`luci-app-fcc-<version>-r<release>.apk` and `SHA256SUMS`. There is one build per
+release: the package is `PKGARCH:=all` (pure Lua, JavaScript and shell), so the
+file an x86_64 SDK produces installs on ARM, MIPS and x86 alike, and an aarch64
+build would only compile the same dependency chain a second time. When more than
+one artifact does arrive, the copies are compared rather than merged — an SDK
+disagreeing about the same package fails the release. The FCC runtime is
+installed on demand over the network, so there is no prebuilt runtime tarball in
+the release.
 
 ---
 

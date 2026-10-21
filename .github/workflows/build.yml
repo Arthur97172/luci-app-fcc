@@ -1,16 +1,20 @@
 # luci-app-fcc — CI build.
 #
 # DESIGN_SPEC.md section 15 requires CI to produce both an OpenWrt 24.10 .ipk
-# and an OpenWrt 25.12 .apk; section 61 gives the matrix (each release, on
-# x86_64 and aarch64). That matrix is reproduced here rather than split across
-# two near-identical files, so there is one place to change the supported
-# releases and no way for the two to drift apart.
+# and an OpenWrt 25.12 .apk, and sections 90 and 91 require each of them to be
+# installed with the release's own package manager and followed by
+# `/etc/init.d/fcc status`. The matrix below covers exactly that: one SDK per
+# release, and one install of each release's package in its own rootfs.
 #
-# The package is PKGARCH:=all — it ships only Lua, JavaScript and ash — so the
-# per-architecture builds are not producing different binaries. They are here
-# because section 61 asks for them, and because they are what proves the
-# manifest and the Lua module paths are right in a real buildroot rather than
-# only in the static checks.
+# Only x86_64 is built. The package is PKGARCH:=all — it ships only Lua,
+# JavaScript and ash — so the aarch64 SDK compiled the same dependency chain a
+# second time and produced the same package, and the aarch64 rootfs leg
+# installed that same payload through qemu. That dimension was dropped on
+# 2026-10-21 as redundant work, not because the package stopped supporting
+# those systems: the artifact is architecture-independent and installs on ARM,
+# MIPS and x86 alike. Sections 61 and 92 still list aarch64 in the matrix;
+# DESIGN_SPEC.md is the specification and is not edited here, so this is the
+# one place the two disagree.
 #
 # A push to main also publishes a GitHub release (section 62), named after the
 # version in ./VERSION and the Makefile's PKG_RELEASE. There is no tag to push
@@ -93,6 +97,10 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # One entry per packaging format, which is the only thing that differs
+      # between them: 24.10 writes an opkg .ipk, 25.12 an apk .apk. The SDK's
+      # target does not reach the artifact — PKGARCH:=all — so a second
+      # architecture would only repeat this work.
       matrix:
         include:
           - release: '24.10.8'
@@ -100,20 +108,10 @@ jobs:
             target: x86/64
             sdk: openwrt-sdk-24.10.8-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             ext: ipk
-          - release: '24.10.8'
-            arch: aarch64
-            target: armsr/armv8
-            sdk: openwrt-sdk-24.10.8-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-            ext: ipk
-          - release: '25.12.5'
+          - release: '25.12.6'
             arch: x86_64
             target: x86/64
-            sdk: openwrt-sdk-25.12.5-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-            ext: apk
-          - release: '25.12.5'
-            arch: aarch64
-            target: armsr/armv8
-            sdk: openwrt-sdk-25.12.5-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            sdk: openwrt-sdk-25.12.6-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             ext: apk
 
     steps:
@@ -407,11 +405,10 @@ jobs:
   # the SDK built against, so the feeds the declared dependencies must resolve
   # from are the matching ones.
   #
-  # The aarch64 entries run an arm64 rootfs under qemu; what they add over the
-  # x86_64 entries is small, since the package is PKGARCH:=all and the payload
-  # is identical. They are here because the matrix in section 92 says aarch64,
-  # and because "installs on the architecture we ship" is worth stating rather
-  # than assuming.
+  # It runs per packaging format, not per architecture: with PKGARCH:=all the
+  # aarch64 leg installed the same payload under qemu, so it is gone with the
+  # aarch64 build (see the note at the top of this file). What remains is still
+  # the check sections 90 and 91 ask for, on both package managers.
   # ---------------------------------------------------------------------------
   smoke:
     name: Install smoke test (${{ matrix.release }} / ${{ matrix.arch }})
@@ -430,23 +427,11 @@ jobs:
             rootfs: openwrt-24.10.8-x86-64-rootfs.tar.gz
             platform: linux/amd64
             ext: ipk
-          - release: '24.10.8'
-            arch: aarch64
-            target: armsr/armv8
-            rootfs: openwrt-24.10.8-armsr-armv8-rootfs.tar.gz
-            platform: linux/arm64
-            ext: ipk
-          - release: '25.12.5'
+          - release: '25.12.6'
             arch: x86_64
             target: x86/64
-            rootfs: openwrt-25.12.5-x86-64-rootfs.tar.gz
+            rootfs: openwrt-25.12.6-x86-64-rootfs.tar.gz
             platform: linux/amd64
-            ext: apk
-          - release: '25.12.5'
-            arch: aarch64
-            target: armsr/armv8
-            rootfs: openwrt-25.12.5-armsr-armv8-rootfs.tar.gz
-            platform: linux/arm64
             ext: apk
 
     steps:
@@ -458,12 +443,8 @@ jobs:
           name: luci-app-fcc-${{ matrix.release }}-${{ matrix.arch }}
           path: dist
 
-      - name: Enable foreign-architecture containers
-        # Registers binfmt handlers, which is what makes the arm64 rootfs's
-        # /sbin/init executable on an x86_64 runner. A no-op for the x86_64
-        # entries.
-        uses: docker/setup-qemu-action@v3
-
+      # No setup-qemu step: it was there for the arm64 rootfs legs, which are
+      # gone. Re-adding an aarch64 entry means bringing it back as well.
       - name: Fetch the release rootfs
         run: |
           set -eu
@@ -471,14 +452,14 @@ jobs:
           echo "fetching $url"
           curl -fsSL --retry 3 --retry-delay 5 -o rootfs.tar.gz "$url"
           ls -l rootfs.tar.gz
-          # --platform matters, and only for the arm64 entries. `docker import`
-          # records the *host's* platform unless told otherwise, so an arm64
-          # rootfs imported on an x86_64 runner is labelled linux/amd64. Asking
-          # to run that as linux/arm64 makes Docker conclude the image is not
-          # here at all and go looking in a registry, where it fails with
-          # "pull access denied for fcc-rootfs" — an error that names neither
-          # the platform nor the import. The x86_64 entries match the host and
-          # would pass either way, which is exactly why this went unnoticed.
+          # --platform is explicit even though it now matches the runner:
+          # `docker import` otherwise records the *host's* platform, so an
+          # arm64 rootfs imported on an x86_64 runner would be labelled
+          # linux/amd64, and running it as linux/arm64 would make Docker look
+          # in a registry and fail with "pull access denied for fcc-rootfs" —
+          # an error that names neither the platform nor the import. Spelling
+          # it out means a re-added aarch64 leg does not depend on remembering
+          # that again.
           docker import --platform "${{ matrix.platform }}" \
             rootfs.tar.gz "fcc-rootfs:${{ matrix.release }}"
 
@@ -542,12 +523,15 @@ jobs:
           pattern: luci-app-fcc-*
 
       - name: Collect the packages
-        # Sections 62 and 93: a release carries this package. Every
-        # architecture builds the same file — section 92's PKGARCH=all makes it
-        # architecture-independent — so all four artifacts arrive holding
-        # copies of the same name. They are compared rather than merged: two
-        # SDKs disagreeing about the same package is a fact worth failing on,
-        # not something to settle by arrival order.
+        # Sections 62 and 93: a release carries this package. Each artifact is
+        # named after its release and architecture, and PKGARCH=all makes the
+        # package itself architecture-independent (section 92), so two
+        # artifacts may arrive holding copies of the same file name. They are
+        # compared rather than merged: two SDKs disagreeing about the same
+        # package is a fact worth failing on, not something to settle by
+        # arrival order. The check stays even though only one architecture is
+        # built now — it costs nothing and is what would notice if a second was
+        # added back and disagreed.
         #
         # The name filter is belt and braces. The build job already collects
         # only our package, but an artifact that somehow carried an upstream

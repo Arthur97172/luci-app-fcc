@@ -149,9 +149,21 @@ start_service() {
 
 stop_service() {
 	logger -t "$LOG_TAG" "stopping $PROG"
-	# procd stops the instance; give the server a moment to release the port so
-	# an immediate restart (and the installer's "no FCC processes" check) works.
-	sleep 1
+	# procd can only stop the process it forked. The agent launchers start a
+	# *second* server — the same fcc-server, detached with --auto-started
+	# (upstream cli/launchers/common.py) — and that one outlives this instance.
+	# It is the process that keeps the port, so procd's next start dies on
+	# EADDRINUSE and is respawned every few seconds while the log fills with
+	# "FCC is already running on port ...". Stop it here, by name, where a stop
+	# is already what was asked for. rc.common calls procd_kill after this
+	# function, so the instance procd does own is stopped either way.
+	if command -v fcc_stop_processes >/dev/null 2>&1; then
+		_st_root="$(fcc_root_dir)"
+		# Scoped to this install: a same-named process running from somewhere
+		# else is not the server that holds this port.
+		fcc_stop_processes 5 "$_st_root" "$PROG" fcc-desktop \
+			|| logger -t "$LOG_TAG" "a detached $PROG process did not stop"
+	fi
 }
 
 reload_service() {

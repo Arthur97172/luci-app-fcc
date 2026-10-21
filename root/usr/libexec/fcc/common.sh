@@ -1906,6 +1906,130 @@ fcc_server_health() {
 }
 
 # ---------------------------------------------------------------------------
+# Process detection and termination
+# ---------------------------------------------------------------------------
+#
+# The upstream installer refuses to start while any of these commands is alive
+# (FCC_COMMANDS in scripts/install.sh):
+#
+#   error: Free Claude Code is still running (fcc-server (PID 17629)).
+#          Stop those processes, then rerun the installer.
+#
+# For this package that check is the hard part of stopping, not starting. The
+# installed fcc-server is also spawned by the agent launchers, which detach it
+# with --auto-started (upstream cli/launchers/common.py), so the process holding
+# the port is nobody's child: procd's own instance exits with EADDRINUSE and is
+# respawned every few seconds, while /etc/init.d/fcc stop — which only knows
+# procd's instance — leaves the detached one running. These helpers find such a
+# process by the rules upstream uses and end it.
+FCC_PROCESS_NAMES="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-aider fcc-doctor fcc-update fcc-init free-claude-code"
+
+fcc_process_ids() {
+	# fcc_process_ids <name> [root] -> one PID per line.
+	#
+	# Both of upstream's probes: a process named <name> (its argv[0]), and a
+	# command line that names it as a word after a path separator — which is
+	# what catches the interpreter running a script called fcc-server.
+	#
+	# <root> narrows the answer to processes whose command line names a path
+	# under that directory. On a router the names are unique, so it changes
+	# nothing; anywhere else there may be a fcc-claude that belongs to someone
+	# else, and a stop must not signal a stranger's process. The launchers and
+	# the detached server all execute from <install root>/bin, so the root is
+	# exactly the right scope. Without it, the scan is the whole box.
+	#
+	# /proc is read directly. pgrep exists in this test image but not in every
+	# OpenWrt image, and the fallback upstream uses (`ps -A -o pid= -o args=`)
+	# is not BusyBox ps, so neither can be relied on.
+	_fpi_name="$1"
+	_fpi_root="${2:-}"
+	case "$_fpi_root" in */) _fpi_root="${_fpi_root%/}" ;; esac
+	[ -n "$_fpi_name" ] || return 0
+	for _fpi_d in /proc/[0-9]*; do
+		_fpi_pid="${_fpi_d#/proc/}"
+		[ "$_fpi_pid" = "$$" ] && continue
+		# The command line is NUL-separated; tr turns the separators into
+		# spaces so the words stay apart. An empty one is a zombie or a
+		# kernel thread, neither of which can be stopped or is running.
+		#
+		# The redirection is inside the braced group because the file can be
+		# gone by the time it is opened — a process exits between the /proc
+		# glob and this line all the time on a busy box — and the shell reports
+		# *that* failure itself. A 2>/dev/null attached to tr would leave the
+		# report on stderr, where callers read it as output.
+		_fpi_cmd="$( { tr '\0' ' ' < "$_fpi_d/cmdline"; } 2>/dev/null )" || continue
+		[ -n "$_fpi_cmd" ] || continue
+		if [ -n "$_fpi_root" ]; then
+			case "$_fpi_cmd" in
+				*"$_fpi_root"/*) : ;;
+				*) continue ;;
+			esac
+		fi
+		_fpi_arg0="${_fpi_cmd%% *}"
+		_fpi_arg0="${_fpi_arg0##*/}"
+		if [ "$_fpi_arg0" = "$_fpi_name" ]; then
+			printf '%s\n' "$_fpi_pid"
+			continue
+		fi
+		if printf '%s' "$_fpi_cmd" | grep -Eq "(^|/)${_fpi_name}([[:space:]]|$)"; then
+			printf '%s\n' "$_fpi_pid"
+		fi
+	done
+	return 0
+}
+
+fcc_stop_processes() {
+	# fcc_stop_processes <seconds> <root> <name>... ->
+	#   0 once none of them is left.
+	#
+	# <root> is the install directory, passed through to fcc_process_ids so
+	# that only this tree's processes are signalled; "" scans the whole box,
+	# which is what a caller that owns every one of the names wants.
+	#
+	# SIGTERM first and SIGKILL only after the timeout: the server closes its
+	# listeners cleanly on TERM, and an agent that ignores it must not keep an
+	# install from running. The names are rescanned rather than trusting the
+	# first list, so a process that exited and was replaced is seen as it is.
+	_fsp_timeout="$1"
+	_fsp_root="$2"
+	shift 2
+	case "$_fsp_timeout" in ''|*[!0-9]*) _fsp_timeout=10 ;; esac
+	[ "$#" -gt 0 ] || return 0
+
+	_fsp_pids=""
+	for _fsp_n in "$@"; do
+		_fsp_one="$(fcc_process_ids "$_fsp_n" "$_fsp_root")"
+		[ -n "$_fsp_one" ] && _fsp_pids="$_fsp_pids $_fsp_one"
+	done
+	[ -n "$_fsp_pids" ] || return 0
+
+	# Unquoted on purpose: the variable holds a space-separated list of PIDs,
+	# each of which kill takes as its own argument.
+	kill -TERM $_fsp_pids 2>/dev/null
+
+	_fsp_left=""
+	_fsp_i=0
+	while [ "$_fsp_i" -lt "$_fsp_timeout" ]; do
+		_fsp_left=""
+		for _fsp_n in "$@"; do
+			_fsp_one="$(fcc_process_ids "$_fsp_n" "$_fsp_root")"
+			[ -n "$_fsp_one" ] && _fsp_left="$_fsp_left $_fsp_one"
+		done
+		[ -z "$_fsp_left" ] && return 0
+		sleep 1
+		_fsp_i=$(( _fsp_i + 1 ))
+	done
+
+	kill -KILL $_fsp_left 2>/dev/null
+	sleep 1
+	for _fsp_n in "$@"; do
+		_fsp_one="$(fcc_process_ids "$_fsp_n" "$_fsp_root")"
+		[ -n "$_fsp_one" ] && return 1
+	done
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Preflight measurements (DESIGN_SPEC.md section 23 steps 3-4)
 # ---------------------------------------------------------------------------
 fcc_disk_free_kb() {

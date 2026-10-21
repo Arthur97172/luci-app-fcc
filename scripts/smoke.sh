@@ -541,18 +541,33 @@ fi
 # The id asked for is the first line's, so the reader matches immediately —
 # which is the case an install actually hits, because claude is first in
 # agents.conf.
-smoke_sh 'i=0
-	while [ $i -lt 3000 ]; do
-		printf "claude|Claude Code|claude|1|300|1024|--version\n"
-		i=$(( i + 1 ))
-	done > /tmp/fcc-big-registry.conf
-	trap "" PIPE
-	cut -d"|" -f1 /tmp/fcc-big-registry.conf | grep -qx claude 2>&1' \
-	> "$SMOKE_TMP/pipe-old" 2>&1 || true
-if grep -q 'Broken pipe' "$SMOKE_TMP/pipe-old"; then
+# Whether cut notices the closed pipe depends on how the two processes
+# interleave once the reader has gone, and that is the scheduler's business, not
+# ours: this check passed on three of the four install-smoke containers in run
+# 39534845513 and failed on the fourth. The property being pinned is that the
+# shape *can* complain, so it is attempted several times before it is called
+# silent — a genuine regression is silent every time.
+_sm_canary=0
+_sm_try=0
+while [ "$_sm_try" -lt 5 ]; do
+	smoke_sh 'i=0
+		while [ $i -lt 3000 ]; do
+			printf "claude|Claude Code|claude|1|300|1024|--version\n"
+			i=$(( i + 1 ))
+		done > /tmp/fcc-big-registry.conf
+		trap "" PIPE
+		cut -d"|" -f1 /tmp/fcc-big-registry.conf | grep -qx claude 2>&1' \
+		> "$SMOKE_TMP/pipe-old" 2>&1 || true
+	if grep -q 'Broken pipe' "$SMOKE_TMP/pipe-old"; then
+		_sm_canary=1
+		break
+	fi
+	_sm_try=$(( _sm_try + 1 ))
+done
+if [ "$_sm_canary" -eq 1 ]; then
 	smoke_ok "the shape this replaced still complains, so the check above can fail"
 else
-	smoke_bad "the old shape stayed silent, so the check above proves nothing"
+	smoke_bad "the old shape stayed silent in $_sm_try attempts, so the check above proves nothing"
 fi
 
 smoke_sh '. /usr/libexec/fcc/common.sh

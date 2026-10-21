@@ -16,8 +16,9 @@
 </script>
 
 <div class="cbi-map fcc-page">
-	<h2 name="content"><%:Web Console%></h2>
-
+	<!-- No <h2 name="content">. LuCI's tab bar already names the page, and
+	     printing the name again directly under it read as a second, smaller
+	     tab rather than as a heading. -->
 	<div class="cbi-map-descr">
 		<%:An interactive terminal running a coding agent on this router. Sessions keep running after you close this page, and reattaching to one restores its screen.%>
 	</div>

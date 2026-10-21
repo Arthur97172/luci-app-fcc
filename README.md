@@ -266,9 +266,10 @@ tag 也是 `0.1.1-r2`。`scripts/version.sh` 是唯一合成它的地方：
 sh scripts/version.sh    # 0.1.1-r2
 ```
 
-不需要手动打 tag。推送到 `main` 会先跑静态检查，再在四个架构上构建并各跑一次
-安装冒烟测试，全部通过才发布；tag 由 workflow 自己创建，取自与构建软件包时
-完全相同的那两个文件。要发下一版，改 `PKG_RELEASE` 就够了。
+不需要手动打 tag。推送到 `main` 会先跑静态检查，再分别用 24.10 和 25.12 的
+x86_64 SDK 各构建一次，并在各自的官方 rootfs 里各跑一次安装冒烟测试，全部通过
+才发布；tag 由 workflow 自己创建，取自与构建软件包时完全相同的那两个文件。
+要发下一版，改 `PKG_RELEASE` 就够了。
 
 发布号是名字的一部分，因为它是软件包的一部分：同一个 `VERSION` 下重新构建的包
 要递增 `PKG_RELEASE`，所以 `0.1.1-r1` 和 `0.1.1-r2` 是两个不同的包，也就必须是
@@ -278,10 +279,12 @@ sh scripts/version.sh    # 0.1.1-r2
 tag——所以同一个版本重跑是幂等的，不会因为 tag 已存在而失败。PR 永远不会触发发布。
 
 资产只有本软件包——`luci-app-fcc_<version>-r<release>_all.ipk`、
-`luci-app-fcc-<version>-r<release>.apk` 和 `SHA256SUMS`。四个架构构建的是同一个
-文件（`PKGARCH:=all`），收到后是逐一比对而不是合并，两个 SDK 对同一个包给出不同
-结果会直接失败。FCC 运行时是按需联网安装的，所以 Release 里没有预构建的运行时
-压缩包。
+`luci-app-fcc-<version>-r<release>.apk` 和 `SHA256SUMS`。每个发行版构建一次：
+软件包是 `PKGARCH:=all`（纯 Lua、JavaScript 和 shell），x86_64 SDK 产出的文件
+在 ARM、MIPS 和 x86 上同样可装，再加一个 aarch64 构建只是把同一条依赖链再编译
+一遍，所以矩阵里每个发行版只有一条。收到多个产物时仍是逐一比对而不是合并——
+若某天把架构加回来，两个 SDK 对同一个包给出不同结果会直接失败。FCC 运行时是按需
+联网安装的，所以 Release 里没有预构建的运行时压缩包。
 
 ---
 

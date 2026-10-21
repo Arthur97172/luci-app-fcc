@@ -11,6 +11,14 @@
 #   views  <%:Some text%>          (same, with %s/%d placeholders)
 #   js     FCC._('Some text')      client-side translate helper
 #   js     FCC._("Some text")
+#   ctrl   _("Some text")          controller string, e.g. a menu or tab name
+#
+# The controller is scanned too, and it is not optional: the tab bar takes its
+# names from entry(..., _("Web Console"), ...) in luasrc/controller/fcc.lua, not
+# from anything the views print. A catalogue built only from the views drops
+# those keys the moment a view stops repeating them, and the tab bar silently
+# falls back to English — the same trap DESIGN_SPEC.md section 62 names for every
+# other translated string.
 #
 # Usage: scripts/gen-po.sh [--check]
 #   --check   exit 1 if po/templates/fcc.pot is out of date (for CI)
@@ -22,6 +30,7 @@ ROOT=$(CDPATH= cd -- "$SELF_DIR/.." && pwd)
 POT="$ROOT/po/templates/fcc.pot"
 VIEWS="$ROOT/luasrc/view/fcc"
 JS="$ROOT/htdocs/luci-static/resources/fcc"
+CTRL="$ROOT/luasrc/controller"
 
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
@@ -44,6 +53,12 @@ trap 'rm -f "$tmp"' EXIT INT TERM
 		[ -f "$f" ] || continue
 		grep -o "FCC\._('[^']*')" "$f" | sed "s/^FCC\._('//; s/')$//"
 		grep -o 'FCC\._("[^"]*")' "$f" | sed 's/^FCC\._("//; s/")$//'
+	done
+	for f in "$CTRL"/*.lua; do
+		[ -f "$f" ] || continue
+		# Controller strings are double-quoted with no embedded quotes, so
+		# this needs no parser.
+		grep -o '_("[^"]*")' "$f" | sed 's/^_("//; s/")$//'
 	done
 } | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | LC_ALL=C sort -u > "$tmp"
 
