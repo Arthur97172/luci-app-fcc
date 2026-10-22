@@ -77,12 +77,12 @@ never into this package.
 
 The agent picker defaults to **All agents**, which means the whole registry: an
 extremely slow download that takes about 8 GB of storage. Choose only the
-agents you need. A single agent is added to the runtime that is already there,
-and the other installed agents are left alone. If a runtime is already
-installed and **All agents** is still selected, the page asks first, then
-removes the runtime and installs every agent again — upstream reconciles the set
-it finds and never reinstalls an existing agent, so removing the runtime is the
-only way to replace a damaged one.
+agents you need. Choosing one agent installs just that agent — plus the runtime
+if it is missing — and leaves the other installed agents alone. If a runtime is
+already installed and **All agents** is still selected, the page asks first,
+then removes the runtime and installs every agent again — upstream reconciles
+the set it finds and never reinstalls an existing agent, so removing the
+runtime is the only way to replace a damaged one.
 
 **Check the free space first: the filesystem holding the install path needs at
 least 2 GB available, and 4 GB is recommended.** When there is less, this
@@ -95,8 +95,8 @@ run can leave its rollback copy on disk — one more agent or a larger release a
 eat into the margin, and guessing low leaves half a runtime on the device. The
 rollback copy goes to the **Backup path**, `/tmp/fcc` by default — `/tmp` is
 tmpfs on OpenWrt, which keeps it off the flash the runtime lives on — and is
-removed when the run ends either way. 4 GB is recommended to leave that margin
-for larger agent sets and later releases.
+removed when the run ends, unless a rollback could not complete. 4 GB is
+recommended to leave that margin for larger agent sets and later releases.
 
 The installer then asks which coding agents to install, and that conversation
 only reads `/dev/tty` — there is no flag or environment variable that skips it.
@@ -323,7 +323,7 @@ Makefile                  explicit Package/ definitions (no luci.mk)
 VERSION                   the upstream version (the release number is PKG_RELEASE)
 luasrc/controller/fcc.lua the LuCI dispatcher and the JSON API
 luasrc/fcc/               util.lua, agents.lua, paths.lua, adminproxy.lua
-luasrc/view/fcc/          the three pages
+luasrc/view/fcc/          the three pages and the popout
 htdocs/luci-static/…/fcc/ browser JavaScript and xterm.js
 root/etc/init.d/fcc       procd service for the FCC server
 root/usr/libexec/fcc/     the shell backend
