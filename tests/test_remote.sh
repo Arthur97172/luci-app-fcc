@@ -23,6 +23,7 @@ MOD="$ROOT/luasrc/fcc/adminproxy.lua"
 
 TMP=""
 BIN=""
+SYSBIN=""
 UCI=""
 SSH_DIR=""
 
@@ -38,9 +39,20 @@ FP_OTHER="SHA256:$(printf '%43s' '' | tr ' ' 'B')"
 make_sandbox() {
 	TMP="$(mktemp -d)"
 	BIN="$TMP/bin"
+	SYSBIN="$TMP/sysbin"
 	UCI="$TMP/uci"
 	SSH_DIR="$TMP/ssh"
-	mkdir -p "$BIN" "$UCI" "$SSH_DIR"
+	mkdir -p "$BIN" "$SYSBIN" "$UCI" "$SSH_DIR"
+
+	# A PATH with the ordinary tools remote.sh needs but without any SSH
+	# binary. The host this suite runs on has a real ssh/ssh-keygen/ssh-keyscan,
+	# which would otherwise be found the moment a fake one is hidden, so the
+	# "package is missing" tests would silently test the host instead.
+	for _tool in awk cat chmod cp cut date dirname expr find grep head id kill \
+		mkdir mktemp mv ps rm sed setsid sh sleep stat tail tr wc; do
+		_toolpath="$(command -v "$_tool" 2>/dev/null)" \
+			&& ln -s "$_toolpath" "$SYSBIN/$_tool"
+	done
 
 	# uci -q get fcc.main.<option>, answered from a file named after the option.
 	cat > "$BIN/uci" <<'EOF'
@@ -63,7 +75,7 @@ EOF
 	cat > "$BIN/ssh" <<'EOF'
 #!/bin/sh
 if [ "${1:-}" = "-V" ]; then
-	printf 'OpenSSH_9.6p1, OpenSSL 3.1\n' >&2
+	printf '%s\n' "${SSH_VERSION:-OpenSSH_9.6p1, OpenSSL 3.1}" >&2
 	exit 0
 fi
 printf 'ARG %s\n' "$@" >> "$SSH_LOG"
@@ -126,10 +138,15 @@ fresh() {
 
 uci_set() { printf '%s' "$2" > "$UCI/$1"; }
 
+# Make one helper unreachable the way a router without the package would be:
+# the binary is moved out of $BIN instead of deleted, so the sandbox still
+# cleans up and a later test can put it back if it needs to.
+hide_tool() { mv "$BIN/$1" "$TMP/$1.off"; }
+
 # Everything remote.sh reads, in one place. FCC_REMOTE_DIR is redirected out of
 # /etc so nothing here can touch the machine the tests run on.
 run_remote() {
-	PATH="$BIN:$PATH" \
+	PATH="$BIN:$SYSBIN" \
 	UCI_DIR="$UCI" \
 	FCC_LIBDIR="$LIBDIR" \
 	FCC_REMOTE_DIR="$SSH_DIR" \
@@ -177,6 +194,99 @@ test_status_reports_an_unconfigured_remote() {
 		"and no pinned host key"
 	assert_contains "$out" '"ssh_available":true' \
 		"the fake client is OpenSSH, so the page would not warn about it"
+	assert_contains "$out" '"ssh_client":"openssh"' \
+		"and the exact client is named for the page's message"
+	assert_contains "$out" '"keygen_available":true' \
+		"ssh-keygen is present"
+	assert_contains "$out" '"scan_available":true' \
+		"and so is ssh-keyscan"
+	drop_sandbox
+}
+
+test_a_dropbear_client_is_named_not_just_refused() {
+	# On OpenWrt, Dropbear answers /usr/bin/ssh through alternatives, so
+	# `command -v ssh` succeeds while none of the options this feature passes
+	# exist. The page has to say Dropbear and point at this router, not at the
+	# remote machine.
+	fresh
+	ready_lan
+	out="$(SSH_VERSION='Dropbear v2022.83' run_remote status)"
+	assert_contains "$out" '"ssh_client":"dropbear"' \
+		"status names the Dropbear client"
+	assert_contains "$out" '"ssh_available":false' \
+		"and marks ssh as unusable"
+	assert_contains "$out" '"ready":false' \
+		"so the buttons stay disabled even with key and host pinned"
+	out="$(SSH_VERSION='Dropbear v2022.83' run_remote control start)"
+	assert_contains "$out" 'Dropbear' \
+		"a control click explains that the client is Dropbear"
+	assert_contains "$out" 'on the router' \
+		"and that the package belongs on this router"
+	assert_contains "$out" 'openssh-client-utils' \
+		"naming the package that provides the whole tool set"
+	drop_sandbox
+}
+
+test_another_ssh_client_is_also_named() {
+	fresh
+	ready_lan
+	out="$(SSH_VERSION='Bitvise SSH Client 8.0' run_remote status)"
+	assert_contains "$out" '"ssh_client":"other"' \
+		"a client that is neither OpenSSH nor Dropbear is reported as other"
+	out="$(SSH_VERSION='Bitvise SSH Client 8.0' run_remote control restart)"
+	assert_contains "$out" 'not OpenSSH' \
+		"and the refusal says it is not OpenSSH"
+	assert_contains "$out" 'on the router' \
+		"naming the side that has to change"
+	drop_sandbox
+}
+
+test_no_ssh_client_at_all_is_reported() {
+	fresh
+	ready_lan
+	hide_tool ssh
+	out="$(run_remote status)"
+	assert_contains "$out" '"ssh_client":"none"' \
+		"without an ssh binary the client is none"
+	assert_contains "$out" '"ssh_available":false' \
+		"and ssh is not available"
+	out="$(run_remote tunnel-ensure)"
+	assert_contains "$out" 'no SSH client' \
+		"opening the admin tunnel says there is no client"
+	assert_contains "$out" 'on the router' \
+		"and where to install it"
+	drop_sandbox
+}
+
+test_a_missing_ssh_keygen_names_its_own_package() {
+	fresh
+	hide_tool ssh-keygen
+	out="$(run_remote status)"
+	assert_contains "$out" '"keygen_available":false' \
+		"status reports the missing generator"
+	out="$(run_remote keygen)"
+	assert_contains "$out" 'ssh-keygen is required on this router' \
+		"generating the key says ssh-keygen is missing here"
+	assert_contains "$out" 'openssh-keygen' \
+		"and names the package that provides it"
+	drop_sandbox
+}
+
+test_a_missing_ssh_keyscan_names_its_own_package() {
+	fresh
+	hide_tool ssh-keyscan
+	uci_set remote_host 192.168.5.20
+	uci_set remote_user fcc
+	printf 'PRIVATE KEY\n' > "$SSH_DIR/id_ed25519"
+	printf 'ssh-ed25519 AAAA fake\n' > "$SSH_DIR/id_ed25519.pub"
+	out="$(run_remote status)"
+	assert_contains "$out" '"scan_available":false' \
+		"status reports the missing scanner"
+	out="$(run_remote test)"
+	assert_contains "$out" 'ssh-keyscan is required on this router' \
+		"testing says the host key cannot be read here"
+	assert_contains "$out" 'openssh-client-utils' \
+		"and names the package that provides it"
 	drop_sandbox
 }
 

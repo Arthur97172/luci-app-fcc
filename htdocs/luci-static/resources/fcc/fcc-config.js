@@ -174,7 +174,7 @@
 		key_ready: false,
 		trusted: false,
 		ready: false,
-		ssh_available: true,
+		ssh_client: 'openssh',
 		keygen_available: true,
 		scan_available: true,
 		tunnel_running: false,
@@ -311,16 +311,35 @@
 		if (gen) { gen.disabled = !remote.keygen_available; }
 	}
 
+	/* The one thing standing between the place the page is in and a working
+	 * connection, in the order the user would hit it. "OpenSSH is required"
+	 * without saying where sent people to install it on the remote machine —
+	 * the one place it cannot help — so every sentence here names the router
+	 * and the package that fixes it. */
+	function remoteBlocker() {
+		if (remote.ssh_client === 'dropbear') {
+			return FCC._('ssh on this router is Dropbear, which cannot use these options. Install the OpenSSH client (package openssh-client-utils) on the router.');
+		}
+		if (remote.ssh_client !== 'openssh') {
+			return FCC._('ssh on this router is not a usable OpenSSH client. Install the OpenSSH client (package openssh-client-utils) on the router; the client on the remote machine is not used.');
+		}
+		if (!remote.keygen_available && !remote.key_ready) {
+			return FCC._('This router needs ssh-keygen to create the key (package openssh-keygen).');
+		}
+		if (!remote.scan_available && !remote.trusted) {
+			return FCC._('This router needs ssh-keyscan to read the remote host key (package openssh-client-utils).');
+		}
+		return '';
+	}
+
 	function renderRemoteState() {
 		var state = FCC.$('#fcc-remote-key-state');
 		if (state) {
+			var blocker = remoteBlocker();
 			state.className = 'fcc-key-state';
-			if (!remote.ssh_available) {
-				/* Without OpenSSH none of the four buttons can work, so this is
-				 * the line that says why rather than letting every click fail
-				 * at the same place. Dropbear's dbclient is not a substitute. */
+			if (blocker) {
 				state.className += ' fail';
-				state.textContent = FCC._('OpenSSH client is required (package openssh-client)');
+				state.textContent = blocker;
 			} else if (remote.key_ready) {
 				state.className += ' on';
 				state.textContent = FCC._('SSH key configured');
@@ -375,7 +394,7 @@
 			remote.key_ready = d.key_ready === true;
 			remote.trusted = d.trusted === true;
 			remote.ready = d.ready === true;
-			remote.ssh_available = d.ssh_available !== false;
+			remote.ssh_client = d.ssh_client || (d.ssh_available === false ? 'none' : 'openssh');
 			remote.keygen_available = d.keygen_available !== false;
 			remote.scan_available = d.scan_available !== false;
 			remote.tunnel_running = d.tunnel_running === true;

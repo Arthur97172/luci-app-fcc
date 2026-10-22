@@ -156,6 +156,43 @@ fcc_remote_openssh() {
 	return 1
 }
 
+fcc_remote_client() {
+	# What `ssh` on *this* router is: openssh, dropbear, other or none.
+	#
+	# The distinction is what the page needs to say, because "OpenSSH is
+	# required" alone sends people to install it on the remote machine — the one
+	# place it does not help. On OpenWrt, dropbear offers /usr/bin/ssh through
+	# the alternatives mechanism, so `command -v ssh` succeeds long before an
+	# OpenSSH client exists.
+	_cl_p="$(command -v ssh 2>/dev/null)" || { printf 'none'; return 0; }
+	_cl_v="$("$_cl_p" -V 2>&1)"
+	case "$_cl_v" in
+		OpenSSH*)      printf 'openssh' ;;
+		*[Dd]ropbear*) printf 'dropbear' ;;
+		*)             printf 'other' ;;
+	esac
+}
+
+fcc_remote_client_error() {
+	# One sentence, naming the side that has to change. openssh-client-utils is
+	# the package that pulls in ssh (openssh-client), ssh-keygen
+	# (openssh-keygen) and ssh-keyscan, which is the whole set this feature uses.
+	case "$(fcc_remote_client)" in
+		dropbear)
+			fcc_remote_error "ssh on this router is Dropbear, which cannot use these options; install the OpenSSH client (package openssh-client-utils) on the router" ;;
+		none)
+			fcc_remote_error "this router has no SSH client; install the OpenSSH client (package openssh-client-utils) on the router" ;;
+		*)
+			fcc_remote_error "ssh on this router is not OpenSSH; install the OpenSSH client (package openssh-client-utils) on the router" ;;
+	esac
+}
+
+fcc_remote_has() {
+	# Is one helper binary present? Used where its absence deserves its own
+	# sentence rather than the generic "could not read the remote host key".
+	command -v "$1" >/dev/null 2>&1
+}
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -260,10 +297,10 @@ fcc_remote_tunnel_ensure() {
 	fi
 	[ -n "$_te_pid" ] && fcc_remote_tunnel_stop
 
+	[ "$(fcc_remote_client)" = "openssh" ] \
+		|| { fcc_remote_client_error; return 1; }
 	_te_ssh="$(command -v ssh 2>/dev/null)" \
-		|| { fcc_remote_error "OpenSSH client is required (package openssh-client)"; return 1; }
-	fcc_remote_openssh "$_te_ssh" \
-		|| { fcc_remote_error "OpenSSH client is required (package openssh-client)"; return 1; }
+		|| { fcc_remote_client_error; return 1; }
 	_te_setsid="$(command -v setsid 2>/dev/null)" \
 		|| { fcc_remote_error "setsid is not available"; return 1; }
 
@@ -346,6 +383,8 @@ fcc_remote_trust() {
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	_tr_host="$(fcc_remote_host)"
 	_tr_sport="$(fcc_remote_sport)"
+	fcc_remote_has ssh-keyscan \
+		|| { fcc_remote_error "ssh-keyscan is required on this router to read the remote host key (package openssh-client-utils)"; return 1; }
 	_tr_dir="$(fcc_remote_tmpdir)" \
 		|| { fcc_remote_error "could not create a temporary directory"; return 1; }
 	_tr_line="$_tr_dir/known_hosts"
@@ -392,7 +431,7 @@ fcc_remote_keygen() {
 	if [ -s "$FCC_REMOTE_KEY" ]; then
 		[ -s "$FCC_REMOTE_KEY.pub" ] || {
 			_kg_keygen="$(command -v ssh-keygen 2>/dev/null)" || {
-				fcc_remote_error "ssh-keygen is not installed"
+				fcc_remote_error "ssh-keygen is required on this router to create the key (package openssh-keygen)"
 				return 1
 			}
 			"$_kg_keygen" -y -f "$FCC_REMOTE_KEY" > "$FCC_REMOTE_KEY.pub" 2>/dev/null \
@@ -405,7 +444,7 @@ fcc_remote_keygen() {
 	fi
 
 	_kg_keygen="$(command -v ssh-keygen 2>/dev/null)" \
-		|| { fcc_remote_error "ssh-keygen is not installed"; return 1; }
+		|| { fcc_remote_error "ssh-keygen is required on this router to create the key (package openssh-keygen)"; return 1; }
 	umask 077
 	_kg_out="$("$_kg_keygen" -q -t ed25519 -N "" -C "luci-app-fcc" \
 		-f "$FCC_REMOTE_KEY" 2>&1)" || {
@@ -441,10 +480,8 @@ fcc_remote_test() {
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \
 		|| { fcc_remote_error "the SSH key has not been generated"; return 1; }
-	_tt_ssh="$(command -v ssh 2>/dev/null)" \
-		|| { fcc_remote_error "OpenSSH client is required (package openssh-client)"; return 1; }
-	fcc_remote_openssh "$_tt_ssh" \
-		|| { fcc_remote_error "OpenSSH client is required (package openssh-client)"; return 1; }
+	[ "$(fcc_remote_client)" = "openssh" ] \
+		|| { fcc_remote_client_error; return 1; }
 
 	_tt_host="$(fcc_remote_host)"
 	_tt_sport="$(fcc_remote_sport)"
@@ -455,6 +492,8 @@ fcc_remote_test() {
 	# host and answers with the fingerprint for the user to confirm; the trust
 	# command then scans again and pins it only if it still matches.
 	if ! fcc_remote_valid_fingerprint "$_tt_fp" || [ ! -s "$FCC_REMOTE_KNOWN" ]; then
+		fcc_remote_has ssh-keyscan \
+			|| { fcc_remote_error "ssh-keyscan is required on this router to read the remote host key (package openssh-client-utils)"; return 1; }
 		_tt_dir="$(fcc_remote_tmpdir)" \
 			|| { fcc_remote_error "could not create a temporary directory"; return 1; }
 		_tt_new="$(fcc_remote_scan_to "$_tt_dir/known_hosts" "$_tt_host" "$_tt_sport")" \
@@ -515,10 +554,8 @@ fcc_remote_control() {
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \
 		|| { fcc_remote_error "the SSH key has not been generated"; return 1; }
-	_cc_ssh="$(command -v ssh 2>/dev/null)" \
-		|| { fcc_remote_error "OpenSSH client is required (package openssh-client)"; return 1; }
-	fcc_remote_openssh "$_cc_ssh" \
-		|| { fcc_remote_error "OpenSSH client is required (package openssh-client)"; return 1; }
+	[ "$(fcc_remote_client)" = "openssh" ] \
+		|| { fcc_remote_client_error; return 1; }
 	_cc_fp="$(fcc_remote_fingerprint)"
 	fcc_remote_valid_fingerprint "$_cc_fp" \
 		|| { fcc_remote_error "trust the remote host key first"; return 1; }
@@ -585,9 +622,9 @@ fcc_remote_status() {
 	# (Dropbear's dbclient does not understand these options) none of the four
 	# buttons can work, so the page disables them and says which package fixes
 	# it rather than letting every click fail at the same place.
+	_st_client="$(fcc_remote_client)"
 	_st_ssh=0
-	_st_sshbin="$(command -v ssh 2>/dev/null)" || _st_sshbin=""
-	if [ -n "$_st_sshbin" ] && fcc_remote_openssh "$_st_sshbin"; then _st_ssh=1; fi
+	[ "$_st_client" = "openssh" ] && _st_ssh=1
 
 	_st_ready=0
 	if [ "$_st_key" = "1" ] && [ "$_st_trusted" = "1" ] \
@@ -601,9 +638,9 @@ fcc_remote_status() {
 	fi
 
 	_st_keygen=0
-	command -v ssh-keygen >/dev/null 2>&1 && _st_keygen=1
+	fcc_remote_has ssh-keygen && _st_keygen=1
 	_st_scan=0
-	command -v ssh-keyscan >/dev/null 2>&1 && _st_scan=1
+	fcc_remote_has ssh-keyscan && _st_scan=1
 
 	printf '{"ok":true,"config":{'
 	printf '"target":%s,"host":%s,"user":%s,"ssh_port":%s,"admin_port":%s,' \
@@ -623,8 +660,9 @@ fcc_remote_status() {
 		"$(fcc_json_bool "$_st_ready")"
 	printf '"tunnel_running":%s,"tunnel_port":%s,' \
 		"$(fcc_json_bool "$_st_tunnel")" "$FCC_REMOTE_TUNNEL_PORT"
-	printf '"ssh_available":%s,"keygen_available":%s,"scan_available":%s}\n' \
+	printf '"ssh_available":%s,"ssh_client":%s,"keygen_available":%s,"scan_available":%s}\n' \
 		"$(fcc_json_bool "$_st_ssh")" \
+		"$(fcc_json_str "$_st_client")" \
 		"$(fcc_json_bool "$_st_keygen")" \
 		"$(fcc_json_bool "$_st_scan")"
 }

@@ -1284,6 +1284,34 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the selected side of the switch is styled"
 	assert_contains "$(cat "$_ts_css")" '.fcc-locked' \
 		"and the Admin link has a not-yet-usable state"
+
+	# The client is checked on the router, and the page says which side is
+	# wrong. OpenWrt's Dropbear answers as /usr/bin/ssh through alternatives, so
+	# "OpenSSH is required" on its own sent people to install it on the remote
+	# machine — the one place where it changes nothing.
+	_ts_remote="$ROOT/root/usr/libexec/fcc/remote.sh"
+	assert_contains "$(cat "$_ts_js")" 'remote.ssh_client = d.ssh_client' \
+		"the page reads which ssh this router has"
+	assert_contains "$(cat "$_ts_js")" "remote.ssh_client === 'dropbear'" \
+		"and has a message for Dropbear specifically"
+	assert_contains "$(cat "$_ts_js")" 'on the router' \
+		"every client message names the router as the place to install it"
+	assert_contains "$(cat "$_ts_js")" 'openssh-client-utils' \
+		"with the package that provides ssh, ssh-keygen and ssh-keyscan"
+	assert_contains "$(cat "$_ts_js")" 'openssh-keygen' \
+		"and the package for the key generator when only that is missing"
+	assert_contains "$(cat "$_ts_js")" 'ssh-keyscan' \
+		"the host-key scanner is called out by name too"
+	assert_contains "$(cat "$_ts_remote")" "printf 'openssh'" \
+		"the backend classifies the client instead of just finding ssh"
+	assert_contains "$(cat "$_ts_remote")" 'ssh on this router is Dropbear' \
+		"and refuses Dropbear in those words"
+	assert_contains "$(cat "$_ts_remote")" 'this router has no SSH client' \
+		"with a separate sentence when there is no client at all"
+	assert_contains "$(cat "$_ts_remote")" '"ssh_client":%s' \
+		"the client name reaches the page in status"
+	assert_not_contains "$(cat "$_ts_remote")" 'package openssh-client)' \
+		"the old package name that exists on the remote machine is not used"
 }
 
 tests_main

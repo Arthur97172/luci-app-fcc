@@ -207,13 +207,24 @@ browser's access still goes through LuCI's own login — a stricter gate than th
 loopback check it stands in for. The tunnel is opened when Admin is first
 reached and closed when LAN mode is left.
 
-The connection needs an OpenSSH client on the router (`openssh-client`).
-Without it the key line says so and the four buttons stay disabled, rather than
-failing on the first click. *Advanced settings* also holds the SSH port, the
-remote platform, the Admin port and the service name, shows the exact command
-each button sends, and shows the pinned fingerprint with a **Forget** button.
-Changing the address or the SSH port forgets the fingerprint on its own — a
-machine at a new address should not inherit the trust given to the old one.
+The connection needs an OpenSSH client **on the router**; the client on the
+remote machine is not used. OpenWrt's default Dropbear also answers as
+`/usr/bin/ssh`, but it does not support the options this feature passes, so when
+`ssh -V` says Dropbear the page says exactly that. The package below brings
+`ssh`, `ssh-keygen` and `ssh-keyscan`:
+
+```sh
+opkg install openssh-client-utils     # 24.10 and earlier
+apk add openssh-client-utils          # 25.12 and later
+```
+
+Whichever helper is missing, the key line names its package; the four buttons
+stay disabled instead of failing on the first click. *Advanced settings* also
+holds the SSH port, the remote platform, the Admin port and the service name,
+shows the exact command each button sends, and shows the pinned fingerprint with
+a **Forget** button. Changing the address or the SSH port forgets the
+fingerprint on its own — a machine at a new address should not inherit the trust
+given to the old one.
 
 ---
 

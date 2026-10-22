@@ -267,9 +267,6 @@ msgstr ""
 msgid "Open in browser"
 msgstr ""
 
-msgid "OpenSSH client is required (package openssh-client)"
-msgstr ""
-
 msgid "PID"
 msgstr ""
 
@@ -450,6 +447,12 @@ msgstr ""
 msgid "This router"
 msgstr ""
 
+msgid "This router needs ssh-keygen to create the key (package openssh-keygen)."
+msgstr ""
+
+msgid "This router needs ssh-keyscan to read the remote host key (package openssh-client-utils)."
+msgstr ""
+
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr ""
 
@@ -529,6 +532,12 @@ msgid "not listening"
 msgstr ""
 
 msgid "running"
+msgstr ""
+
+msgid "ssh on this router is Dropbear, which cannot use these options. Install the OpenSSH client (package openssh-client-utils) on the router."
+msgstr ""
+
+msgid "ssh on this router is not a usable OpenSSH client. Install the OpenSSH client (package openssh-client-utils) on the router; the client on the remote machine is not used."
 msgstr ""
 
 msgid "unhealthy"
