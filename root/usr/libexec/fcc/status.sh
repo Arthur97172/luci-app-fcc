@@ -99,10 +99,36 @@ if [ "$REFRESH_VERSIONS" -eq 1 ] || ! fcc_cache_fresh; then
 		if _vv="$(fcc_detect_version "$FCC_SERVER_EXE" --version 2>/dev/null)"; then
 			fcc_version="$_vv"
 			fcc_cache_set fcc_version "$_vv"
+			fcc_cache_set version_probed_at 0
 		fi
 	fi
 	# Mark the cache fresh even if detection failed, so we do not retry-storm.
 	fcc_cache_set refreshed_at "$(date +%s)"
+elif [ "$fcc_installed" = true ] && [ -z "$fcc_version" ]; then
+	# An installed runtime with no cached version is a cache that was cleared and
+	# then read as though it were an answer. Writing the empty value refreshes
+	# the cache file's mtime, so fcc_cache_fresh() says "fresh" and the branch
+	# above skips the detection that would have filled it — which is how the
+	# Configuration page came to show "—" for a runtime whose install had just
+	# finished: install.sh clears the version when it is stale, and the clear
+	# itself made the cache too fresh to be re-read.
+	#
+	# Detecting here repairs any such cache, whoever emptied it. The probe is
+	# bounded to once per TTL rather than once per request: status is polled
+	# every couple of seconds by pages that are open, and a runtime whose
+	# fcc-server cannot run would otherwise cost one timed-out process per poll.
+	_vp_at="$(fcc_cache_get version_probed_at 2>/dev/null || true)"
+	case "$_vp_at" in ''|*[!0-9]*) _vp_at=0 ;; esac
+	_vp_now="$(date +%s)"
+	if [ $(( _vp_now - _vp_at )) -ge "$FCC_VERSION_CACHE_TTL" ]; then
+		if _vv="$(fcc_detect_version "$FCC_SERVER_EXE" --version 2>/dev/null)"; then
+			fcc_version="$_vv"
+			fcc_cache_set fcc_version "$_vv"
+			fcc_cache_set version_probed_at 0
+		else
+			fcc_cache_set version_probed_at "$_vp_now"
+		fi
+	fi
 fi
 
 server_version="${fcc_version:-}"   # same executable reports both

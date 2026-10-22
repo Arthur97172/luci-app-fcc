@@ -16,6 +16,7 @@ LIBEXEC      = os.getenv("FCC_LIBEXEC")      or "/usr/libexec/fcc"
 AGENTS_CONF  = os.getenv("FCC_AGENTS_CONF")  or "/usr/share/luci-app-fcc/agents.conf"
 VERSION_FILE = os.getenv("FCC_VERSION_FILE") or "/usr/share/luci-app-fcc/VERSION"
 DEFAULT_BASE = "/opt"
+DEFAULT_BACKUP = "/tmp/fcc"
 
 --- LuCI-FCC's own version.
 function luci_version()
@@ -77,7 +78,18 @@ function data_dir()     return fcc_root() .. "/data"     end
 function cache_dir()    return fcc_root() .. "/cache"    end
 function logs_dir()     return fcc_root() .. "/logs"     end
 function sessions_dir() return fcc_root() .. "/sessions" end
-function backup_dir()   return fcc_root() .. "/backup"   end
+
+--- Where an install sets its rollback copy aside. Mirrors fcc_dir_backup() in
+--  common.sh: the configured path when it validates, the default otherwise,
+--  and /tmp/fcc if even that is refused.
+function backup_dir()
+	local c = uci_cursor()
+	local raw = (c and c:get("fcc", "main", "backup_path")) or DEFAULT_BACKUP
+	local ok = util.valid_backup_path(raw)
+	if ok then return ok end
+	ok = util.valid_backup_path(DEFAULT_BACKUP)
+	return ok or "/tmp/fcc"
+end
 
 --- Path of a backend script, e.g. script("status") -> /usr/libexec/fcc/status.sh
 function script(name)

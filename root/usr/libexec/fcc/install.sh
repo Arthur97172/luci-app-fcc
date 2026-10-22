@@ -1465,6 +1465,17 @@ write_runtime_metadata() {
 		EOF
 		printf '\n}\n'
 	} > "$ROOT/runtime.json" 2>/dev/null
+
+	# Seed the version cache with what was just detected. The callers below clear
+	# the cache when a runtime changes, and a cleared entry used to leave the
+	# Configuration page showing "—" until the next cache TTL: writing the empty
+	# value refreshes the cache file's mtime, so status.sh read it as fresh and
+	# skipped the detection that would have filled it in. Status now repairs an
+	# empty entry on its own; writing the right value here means it is never
+	# empty in the first place, and the page shows the version the moment the
+	# install's last poll paints.
+	[ -n "$_wm_ver" ] && fcc_cache_set fcc_version "$_wm_ver"
+	[ -n "$_wm_ver" ] && fcc_cache_set version_probed_at 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1638,14 +1649,20 @@ keep_previous_agent_tools() {
 }
 
 commit_backup() {
-	# The update succeeded, so the moved-aside runtime tree is dead weight.
-	# Section 78 asks for the last successful backup to be kept; the data copy
-	# is what that means here — it is small, and it is the part that cannot be
-	# reinstalled. Keeping the old runtime tree as well would cost a permanent
-	# second copy for no benefit, since a successful update has no use for it.
+	# The update succeeded, so the whole backup is dead weight: the runtime tree
+	# was carried forward by keep_previous_agent_tools() where it was the only
+	# copy of something, the data copy is no longer needed (the run wrote data/
+	# in place and it is what the user is now using), and nothing reads any of it
+	# between runs. It goes, rather than being kept and pruned.
+	#
+	# This is the largest thing an install writes — the copy of data/ measured
+	# 273 MB on the test router on 2026-10-21 — and with the backup path being a
+	# setting of its own (default /tmp/fcc) the user chose where it would go, not
+	# how long it would stay.
 	_cb_dir="$1"
 	[ -n "$_cb_dir" ] && [ -d "$_cb_dir" ] || return 0
-	rm -rf "$_cb_dir/runtime" "$_cb_dir/bin" 2>/dev/null
+	rm -rf "$_cb_dir" 2>/dev/null \
+		&& fcc_log "$LOG" "removed the backup made by this install (${_cb_dir##*/})"
 	prune_backups
 	return 0
 }
@@ -1866,12 +1883,17 @@ rollback_runtime() {
 			rollback_reclaim_added "$_rb_dir/data-before" "$ROOT/data"
 		fi
 		fcc_cache_set fcc_version ""
-		# The backup directory this attempt created is not restored from by
-		# anything below — the reclaim above has already read the one thing in it
-		# that was wanted — so without this it would never be reached by section
-		# 25's retention: a device that keeps failing and keeps being retried
-		# would keep a fresh copy of data/ per attempt, on the very device whose
-		# free space is the reason the install stopped.
+		fcc_cache_set version_probed_at 0
+		# The copy this attempt made has been consumed — the reclaim above has
+		# already read the one thing in it that was wanted — and there is no
+		# previous runtime to put back, so it goes rather than waiting for
+		# section 25's retention: a device that keeps failing and keeps being
+		# retried would otherwise keep a fresh copy of data/ per attempt, on the
+		# very device whose free space is the reason the install stopped.
+		if [ -n "$_rb_dir" ] && [ -d "$_rb_dir" ]; then
+			rm -rf "$_rb_dir" 2>/dev/null && fcc_log "$LOG" \
+				"removed the backup this failed install made (${_rb_dir##*/})"
+		fi
 		prune_backups
 		fcc_log "$LOG" "Install failed. Nothing was installed before, so there was no version to restore."
 		printf 'INSTALL_FAILED\n'
@@ -1901,8 +1923,12 @@ rollback_runtime() {
 	prune_backups
 
 	# Whatever version is on disk now is the truth; drop the cached one so the
-	# status page cannot keep reporting the version that failed to install.
+	# status page cannot keep reporting the version that failed to install. The
+	# probe stamp is reset with it so status.sh re-detects at once instead of
+	# treating the empty entry as an answer — see the version paragraph in
+	# status.sh.
 	fcc_cache_set fcc_version ""
+	fcc_cache_set version_probed_at 0
 
 	[ "$_rb_was" = true ] && /etc/init.d/fcc start >/dev/null 2>&1
 
@@ -2203,9 +2229,11 @@ cmd_runtime() {
 	fi
 
 	write_runtime_metadata
-	# The cached version is now stale; drop it so the status page does not show
-	# the pre-update version for the rest of its TTL.
-	fcc_cache_set fcc_version ""
+	# write_runtime_metadata() has just written the version it detected into the
+	# cache as well, so there is no stale entry left to drop here. Clearing it —
+	# which is what this line used to do — refreshed the cache file's mtime with
+	# an empty value, and the page then showed "—" for the version until the
+	# entry expired.
 
 	# --- sections 23 steps 11-12: start, then check -----------------------
 	_cr_autostart="$(fcc_uci_get main auto_start 1)"
@@ -2281,11 +2309,11 @@ cmd_cleanbackups() {
 	_cc_root="$(fcc_dir_backup)"
 	_cc_count=0
 	if [ -d "$_cc_root" ]; then
-		for _cc_ent in "$_cc_root"/* "$_cc_root"/.[!.]* "$_cc_root"/..?*; do
-			[ -e "$_cc_ent" ] || continue
-			_cc_count=$((_cc_count + 1))
-		done
-		rm -rf "$_cc_root"
+		# Only the directories this package stamped, never the directory itself
+		# and never what else may live in it: the backup path is a setting, so it
+		# can be a directory the user made for other reasons — the install base
+		# is one they are explicitly allowed to pick.
+		_cc_count="$(fcc_backup_clear)"
 	fi
 	fcc_lock_release "$_cc_lock"
 	fcc_log "$LOG" "removed $_cc_count saved backup(s)"
@@ -2307,7 +2335,17 @@ cmd_uninstall() {
 	done
 	rm -f "$ROOT/runtime.json"
 	if [ "$_cu_purge" -eq 1 ]; then
-		rm -rf "$ROOT/data" "$ROOT/backup"
+		rm -rf "$ROOT/data" 2>/dev/null
+		# The backups live where the backup path says, which is not necessarily
+		# under the root any more. Both places are cleared: the configured one
+		# through fcc_backup_clear(), which removes only our own stamped
+		# directories, and <root>/backup, where every version before this one
+		# kept them — that one is inside the root and so is ours whatever is in
+		# it.
+		if [ "$(fcc_dir_backup)" != "$ROOT/backup" ]; then
+			rm -rf "$ROOT/backup" 2>/dev/null
+		fi
+		fcc_backup_clear >/dev/null
 		fcc_log "$LOG" "FCC runtime uninstalled (data purged)"
 	else
 		fcc_log "$LOG" "FCC runtime uninstalled (data preserved)"

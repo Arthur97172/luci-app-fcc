@@ -198,6 +198,99 @@ test_agent_registry_parity() {
 }
 
 # ---------------------------------------------------------------------------
+# Cross-language agreement: the backup path
+#
+# util.valid_backup_path() and fcc_canon_backup_path() are the same rule as each
+# other, and deliberately not the same as the install-path pair: /tmp/* is
+# accepted here because the shipped default is /tmp/fcc, while /tmp itself is
+# refused. A UI that accepted a path the shell refuses would save a setting the
+# backend then quietly ignores — and the reverse would hide a directory the
+# install really would write to.
+# ---------------------------------------------------------------------------
+
+test_backup_path_parity() {
+	if [ -z "$LUA" ]; then
+		skip "no Lua interpreter available"
+		return
+	fi
+
+	_ts_probe="$(mktemp)"
+	cat > "$_ts_probe" <<'LUA'
+local ROOT = assert(os.getenv("FCC_TEST_ROOT"))
+table.insert(package.loaders, 1, function(name)
+	local short = name:match("^luci%.fcc%.([a-z_]+)$")
+	if not short then return nil end
+	local fh = io.open(ROOT .. "/luasrc/fcc/" .. short .. ".lua", "r")
+	if not fh then return nil end
+	local src = fh:read("*a"); fh:close()
+	return assert(loadstring(src, "@" .. short))
+end)
+package.preload["nixio.fs"] = function() return {} end
+local util = require "luci.fcc.util"
+for line in io.lines() do
+	if line ~= "" then
+		io.write((util.valid_backup_path(line) and "accept") or "reject", "\n")
+	end
+end
+LUA
+
+	_ts_paths='/
+/tmp
+/tmp/fcc
+/tmp/fcc/backups
+/tmp/fcc/../etc
+/etc
+/etc/fcc
+/usr
+/usr/lib
+/var
+/var/lib/fcc
+/opt
+/opt/fcc
+/opt/fcc/backup
+/mnt/sda1
+/mnt/sda1/fcc//backup/
+relative/path
+/opt/../etc
+/opt;id
+/opt`id`
+/opt/$(id)
+/opt/*
+/home/user
+'
+
+	_ts_lua="$(printf '%s' "$_ts_paths" | FCC_TEST_ROOT="$ROOT" "$LUA" "$_ts_probe")"
+	rm -f "$_ts_probe"
+
+	_ts_sh="$(printf '%s' "$_ts_paths" | while IFS= read -r _ts_p; do
+		[ -n "$_ts_p" ] || continue
+		if FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
+		   FCC_LIBDIR="$ROOT/root/usr/libexec/fcc" \
+		   sh -c '. "$1/common.sh"; fcc_canon_backup_path "$2" >/dev/null 2>&1' _ \
+		      "$ROOT/root/usr/libexec/fcc" "$_ts_p"; then
+			printf 'accept\n'
+		else
+			printf 'reject\n'
+		fi
+	done)"
+
+	assert_eq "$_ts_sh" "$_ts_lua" "Lua and shell agree on every backup path"
+
+	# And the exception is real in both: /tmp/* passes where the install path
+	# refuses it, which is the whole reason this pair exists.
+	assert_eq "reject" "$(printf '/tmp/fcc\n' | while IFS= read -r _ts_p; do
+		if FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
+		   FCC_LIBDIR="$ROOT/root/usr/libexec/fcc" \
+		   sh -c '. "$1/common.sh"; fcc_canon_base "$2" >/dev/null 2>&1' _ \
+		      "$ROOT/root/usr/libexec/fcc" "$_ts_p"; then
+			printf 'accept\n'
+		else
+			printf 'reject\n'
+		fi
+	done)" "the install path still refuses /tmp/fcc"
+}
+
+# ---------------------------------------------------------------------------
 # Cross-language agreement: job locks
 #
 # util.FCC_LOCK_STALE_SECS / lock_dir() / job_running() are the same rule as

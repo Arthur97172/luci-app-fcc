@@ -15,6 +15,7 @@ if [ ! -f /etc/config/fcc ]; then
 		config fcc 'main'
 			option enabled '1'
 			option install_path '/opt/fcc'
+			option backup_path '/tmp/fcc'
 			option port '8082'
 			option bind '127.0.0.1'
 			option auto_start '1'

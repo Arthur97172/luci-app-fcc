@@ -30,6 +30,14 @@ setup_sandbox() {
 	rm -rf "$SANDBOX"
 	mkdir -p "$SANDBOX"
 	trap 'rm -rf "$SANDBOX"' EXIT INT TERM
+	# The backup path is a setting of its own now, and its shipped default is
+	# /tmp/fcc. Left alone, every test that reaches fcc_ensure_dirs() would
+	# write into the host's /tmp, which is shared with whatever else is running.
+	# Pointed inside the sandbox instead — at the directory the old default
+	# used, so every test written against <root>/backup reads the same tree.
+	# A test that is about the setting itself overrides this.
+	FCC_DEFAULT_BACKUP="$SANDBOX/opt/fcc/backup"
+	export FCC_DEFAULT_BACKUP
 }
 
 # Run a snippet with common.sh sourced and the sandbox in place.
@@ -2138,6 +2146,68 @@ test_backup_renames_the_runtime_and_copies_the_data() {
 	assert_file "$_bk/runtime.json"
 }
 
+# The other end of an install: a run that succeeded does not need what it set
+# aside, so commit_backup() removes the whole directory rather than leaving it
+# for section 25's retention. It held the previous runtime and a copy of data/
+# — 273 MB measured on the test router — and the user chose where it goes, not
+# how long it stays.
+test_a_successful_install_deletes_the_backup_it_made() {
+	setup_sandbox
+	_cb_root="$SANDBOX/opt/fcc"
+	_cb_bk="$_cb_root/backup/20261022T120000Z"
+	mkdir -p "$_cb_bk/runtime" "$_cb_bk/data" "$_cb_root/logs"
+	printf 'previous interpreter\n' > "$_cb_bk/runtime/marker"
+	printf 'previous config\n'      > "$_cb_bk/data/config"
+	: > "$_cb_root/logs/fcc-runtime.log"
+
+	sh_install "commit_backup '$_cb_bk'; echo rc=\$?" >/dev/null
+
+	assert_no "the backup the successful install made is gone" test -d "$_cb_bk"
+	assert_contains "$(cat "$_cb_root/logs/fcc-runtime.log")" \
+		"removed the backup made by this install" \
+		"and the log records it"
+	# Nothing else is touched by it — the live tree is what the run just wrote.
+	assert_dir "$_cb_root/backup" "the backup directory itself stays"
+}
+
+# The backup path is a setting now. fcc_dir_backup() reads it, validates it the
+# way fcc_canon_backup_path() does, and falls back rather than propagating a bad
+# value — the same shape as fcc_root()'s two fallbacks.
+test_the_backup_path_is_configurable_and_validated() {
+	setup_sandbox
+	make_uci_shim
+	_bp_base="$SANDBOX/opt/fcc"
+
+	# Unset: the shipped default, which here is the sandbox's own directory.
+	assert_eq "$_bp_base/backup" "$(sh_install 'fcc_dir_backup')" \
+		"an unset backup path falls back to the compiled default"
+
+	# Set: used as given, with duplicate and trailing slashes collapsed.
+	printf '%s' "$SANDBOX/opt/backups//" > "$SANDBOX/uci/fcc.main.backup_path"
+	assert_eq "$SANDBOX/opt/backups" "$(sh_install 'fcc_dir_backup')" \
+		"the configured path is used, canonicalised"
+
+	# /tmp is the exception this path allows and the install path does not: the
+	# shipped default lives under it, and on OpenWrt it is tmpfs.
+	printf '%s' '/tmp/fcc' > "$SANDBOX/uci/fcc.main.backup_path"
+	assert_eq "/tmp/fcc" "$(sh_install 'fcc_dir_backup')" \
+		"a directory under /tmp is accepted"
+
+	# /tmp itself is not: it is the system's own scratch directory.
+	printf '%s' '/tmp' > "$SANDBOX/uci/fcc.main.backup_path"
+	assert_eq "$_bp_base/backup" "$(sh_install 'fcc_dir_backup')" \
+		"the system scratch directory itself is refused"
+
+	# Neither is anything else in the system tree, a relative path, or a
+	# traversal segment.
+	for _bp_bad in /etc /usr/lib / relative/path "$SANDBOX/opt/../etc"; do
+		printf '%s' "$_bp_bad" > "$SANDBOX/uci/fcc.main.backup_path"
+		assert_eq "$_bp_base/backup" "$(sh_install 'fcc_dir_backup')" \
+			"$_bp_bad is refused and the default used instead"
+	done
+	rm -f "$SANDBOX/uci/fcc.main.backup_path"
+}
+
 test_rollback_restores_the_previous_runtime() {
 	setup_sandbox
 	command -v python3 >/dev/null 2>&1 || { skip "no python3 — cannot run a stand-in server"; return 0; }
@@ -2346,6 +2416,12 @@ test_rollback_treats_a_data_only_backup_as_no_previous_runtime() {
 	assert_ok "the data is still there" test -f "$_rd_root/data/providers/settings.json"
 	assert_eq "provider settings" "$(cat "$_rd_root/data/providers/settings.json")" \
 		"and was not overwritten by the copy in the backup"
+	# A failed install now removes the copy it made once the rollback has used
+	# it: on a box that keeps failing this was a fresh copy of data/ per
+	# attempt, on the very device whose free space is why the install stopped.
+	assert_no "the backup the failed install made is removed" test -d "$_rd_bk"
+	assert_contains "$_log" "removed the backup this failed install made" \
+		"and the log records that it went"
 }
 
 # ---------------------------------------------------------------------------
@@ -3016,12 +3092,57 @@ test_runtime_metadata_records_what_section_81_asks_for() {
 	assert_contains "$_md_json" '"fcc_version": "9.9.9"' \
 		"fcc_version is read from the installed binary"
 
+	# And it is left in the cache for the status page. Clearing that entry on a
+	# successful install was the "-" the Configuration page showed until a
+	# manual reload: writing an empty value refreshed the cache file's mtime,
+	# so fcc_cache_fresh() said the (empty) answer was current and status.sh
+	# never re-detected.
+	assert_eq "9.9.9" "$(sh_install 'fcc_cache_get fcc_version')" \
+		"the detected version is seeded into the cache"
+	assert_eq "0" "$(sh_install 'fcc_cache_get version_probed_at')" \
+		"and the probe stamp is reset so the entry is not treated as an old answer"
+
 	if command -v python3 >/dev/null 2>&1; then
 		assert_ok "the document is valid JSON" \
 			python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$_md_root/runtime.json"
 	else
 		skip "no python3 — runtime.json left unparsed"
 	fi
+}
+
+# The version the Configuration page showed as "-" until a manual reload.
+#
+# install.sh cleared the cached version after a successful install — the right
+# intent, since a stale entry must not survive — but fcc_cache_set writes the
+# file, and the empty value therefore arrived with a fresh mtime. status.sh
+# saw a fresh cache and skipped detection, and the page rendered no version
+# until the entry expired and the next poll re-detected. The clear is gone from
+# the success path (the detected version is seeded instead), and status.sh
+# repairs any cache that is empty anyway, so a value cleared by an older
+# install, or by hand, heals on the next poll instead of waiting out the TTL.
+test_status_repairs_a_cached_version_that_was_cleared() {
+	setup_sandbox
+	_pv_root="$SANDBOX/opt/fcc"
+	mkdir -p "$_pv_root/bin" "$_pv_root/cache" "$_pv_root/logs"
+	printf '#!/bin/sh\necho "fcc-server 7.7.7"\n' > "$_pv_root/bin/fcc-server"
+	chmod +x "$_pv_root/bin/fcc-server"
+	make_uci_shim
+
+	# The state that was left behind: an empty entry, written just now, so the
+	# cache file is as fresh as it gets.
+	printf 'fcc_version\t\nversion_probed_at\t0\n' > "$_pv_root/cache/versions.cache"
+	_pv_json="$(sh_script status.sh)"
+	assert_contains "$_pv_json" '"version": "7.7.7"' \
+		"an installed runtime with an empty cached version is re-detected"
+	assert_eq "7.7.7" "$(sh_install 'fcc_cache_get fcc_version')" \
+		"and the answer is written back to the cache"
+
+	# The cache still does its job: a fresh, filled entry is used as it stands,
+	# without running the binary again.
+	printf 'fcc_version\t1.2.3\nversion_probed_at\t0\n' > "$_pv_root/cache/versions.cache"
+	_pv_json="$(sh_script status.sh)"
+	assert_contains "$_pv_json" '"version": "1.2.3"' \
+		"a fresh cached version is reported without re-probing"
 }
 
 # Section 54 names the message, and the numbers are the point of it: "not
@@ -5404,27 +5525,41 @@ rc=1" "$_tr_calls" "a removal that fails stops the reinstall"
 # ---------------------------------------------------------------------------
 #
 # backup/ is the rollback source; it is kept and pruned (section 25) but it is
-# not the runtime, and the page needs a way to reclaim it without the purge
-# that takes the configuration and the data along with it. So what this pins is
-# both halves: the directory goes, and everything beside it stays.
-test_delete_backups_removes_the_backups_and_nothing_else() {
+# not the runtime, and a shell needs a way to reclaim it without the purge that
+# takes the configuration and the data along with it. What this pins is both
+# halves: the stamped directories go, the directory itself and everything else
+# in it stay — the backup path is a user setting now, so it can be a directory
+# that holds things this package did not write.
+test_cleanbackups_removes_the_backups_and_nothing_else() {
 	setup_sandbox
 	_fc_root="$SANDBOX/opt/fcc"
+	# The sandbox is shared by every test in this file, and an earlier one has
+	# left backups of its own here. What this test counts is the directories it
+	# made, so it starts from an empty one.
+	rm -rf "$_fc_root/backup"
 	mkdir -p "$_fc_root/backup/20261001T000000Z/data" \
 	         "$_fc_root/backup/20261002T000000Z/runtime" \
+	         "$_fc_root/backup/user-notes" \
 	         "$_fc_root/data/providers" "$_fc_root/runtime" "$_fc_root/logs"
 	printf 'credentials\n' > "$_fc_root/data/providers/key"
 	printf '#!/bin/sh\n' > "$_fc_root/runtime/fcc-server"
 	printf 'previous\n' > "$_fc_root/logs/fcc-runtime.log"
+	printf 'mine\n' > "$_fc_root/backup/user-notes/todo"
 
 	_fc_out="$(sh_install 'cmd_cleanbackups; echo "rc=$?"')"
 	assert_contains "$_fc_out" 'rc=0' "deleting the backups succeeds"
 	assert_contains "$_fc_out" 'OK' "and reports the same OK an uninstall does"
 
-	assert_no "the backup directory is gone" test -d "$_fc_root/backup"
+	assert_no "the oldest backup is gone" test -d "$_fc_root/backup/20261001T000000Z"
+	assert_no "and the newest"           test -d "$_fc_root/backup/20261002T000000Z"
+	# The directory itself is a setting the user may share with their own files,
+	# so it is left in place — deleting it would delete what else is in it.
+	assert_dir "$_fc_root/backup" "the backup directory itself stays"
+	assert_file "$_fc_root/backup/user-notes/todo" \
+		"and something this package did not write is untouched"
 	assert_file "$_fc_root/data/providers/key" "the configuration and data survive"
 	assert_file "$_fc_root/runtime/fcc-server" \
-		"and so does the runtime the button promises not to touch"
+		"and so does the runtime the command promises not to touch"
 	assert_contains "$(cat "$_fc_root/logs/fcc-runtime.log")" \
 		'removed 2 saved backup(s)' "the log says how many went"
 
@@ -5440,7 +5575,8 @@ test_delete_backups_removes_the_backups_and_nothing_else() {
 	assert_contains "$_fc_out" 'rc=1' "a running install blocks the delete"
 	assert_contains "$_fc_out" 'another install or update is running' \
 		"and the reason is the one the page already shows for this case"
-	assert_dir "$_fc_root/backup" "the backup it would have needed is still there"
+	assert_dir "$_fc_root/backup/20261003T000000Z" \
+		"the backup it would have needed is still there"
 	rm -rf "$_fc_ld/fcc-install.lock"
 }
 

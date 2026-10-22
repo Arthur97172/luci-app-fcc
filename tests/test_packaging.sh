@@ -416,55 +416,118 @@ test_the_config_page_installs_every_agent() {
 }
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Delete backups
+# Backup path
 #
-# backup/ is what rollback_runtime() restores from and the newest few are kept
-# on purpose (section 25). It is also the one part of the install path nothing
-# uses between runs, so it gets its own button rather than being reachable only
-# through a purge that also takes the configuration and the data. The button
-# has to reach a verb of its own: sending uninstall with a flag would delete
-# the runtime, which is the opposite of what the button says.
+# The rollback copy an install makes used to be written under <install_path>/
+# backup, which put it on the same flash the runtime was already tight in. It
+# now has a setting of its own — beside the install path, because that is the
+# other place the install writes — defaulting to /tmp/fcc, which on OpenWrt is
+# tmpfs. The path is validated twice, as install_path is: once in the UI so bad
+# input never reaches UCI, once in the shell that actually writes there.
 # ---------------------------------------------------------------------------
 
-test_the_config_page_can_delete_the_backups() {
+test_the_config_page_sets_the_backup_path() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+	_ts_fc="$ROOT/root/etc/config/fcc"
+	_ts_seed="$ROOT/root/etc/uci-defaults/99-fcc"
+
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-backup-path"' \
+		"the Configuration page has a Backup path field"
+	assert_contains "$(cat "$_ts_view")" '<%:Backup path%>' \
+		"and it is labelled by a translatable string"
+
+	# Above Bind address, as the settings area is ordered: the two paths sit
+	# together, before the server's own address and port.
+	_ts_ip="$(grep -n 'id="fcc-install-path"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_bp="$(grep -n 'id="fcc-backup-path"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_bind="$(grep -n 'id="fcc-bind"' "$_ts_view" | head -1 | cut -d: -f1)"
+	if [ -n "$_ts_ip" ] && [ -n "$_ts_bp" ] && [ -n "$_ts_bind" ] \
+		&& [ "$_ts_ip" -lt "$_ts_bp" ] && [ "$_ts_bp" -lt "$_ts_bind" ]; then
+		pass
+	else
+		fail "Backup path does not sit between Install path and Bind address"
+	fi
+
+	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-backup-path').value = c.backup_path" \
+		"the page loads the saved backup path"
+	assert_contains "$(cat "$_ts_js")" "backup_path: FCC.\$('#fcc-backup-path').value" \
+		"and saves it with the rest of the settings"
+
+	assert_contains "$(cat "$_ts_ctrl")" "paths.backup_dir()" \
+		"the controller reports the effective backup path"
+	assert_contains "$(cat "$_ts_ctrl")" "util.valid_backup_path" \
+		"and validates it before storing it"
+
+	assert_contains "$(cat "$_ts_fc")" "option backup_path '/tmp/fcc'" \
+		"the shipped configuration defaults the backup path to /tmp/fcc"
+	assert_contains "$(cat "$_ts_seed")" "option backup_path '/tmp/fcc'" \
+		"and the first-install seed writes the same default"
+}
+
+# ---------------------------------------------------------------------------
+# Web Console toolbar
+#
+# "Clean up finished sessions" is gone: a session that has ended is already
+# gone from the tab strip, and the action it called only swept tmux state the
+# page no longer shows. "End all sessions" moved behind "Open in browser" —
+# the destructive one last, out of the way of the two buttons pressed often.
+# ---------------------------------------------------------------------------
+
+test_the_console_toolbar_is_ordered_and_has_no_cleanup_button() {
+	_ts_view="$ROOT/luasrc/view/fcc/console.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-terminal.js"
+
+	assert_not_contains "$(cat "$_ts_view")" 'fcc-term-cleanup' \
+		"the Web Console has no Clean up finished sessions button"
+	assert_not_contains "$(cat "$_ts_view")" 'Clean up finished sessions' \
+		"and nothing left of its label"
+	assert_not_contains "$(cat "$_ts_js")" 'fcc-term-cleanup' \
+		"the script has no handler wired for it"
+
+	_ts_new="$(grep -n 'id="fcc-term-create"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_pop="$(grep -n 'id="fcc-term-popout"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_end="$(grep -n 'id="fcc-term-close-all"' "$_ts_view" | head -1 | cut -d: -f1)"
+	if [ -n "$_ts_new" ] && [ -n "$_ts_pop" ] && [ -n "$_ts_end" ] \
+		&& [ "$_ts_new" -lt "$_ts_pop" ] && [ "$_ts_pop" -lt "$_ts_end" ]; then
+		pass
+	else
+		fail "the toolbar is not New session, Open in browser, End all sessions"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Delete backups — removed
+#
+# The button existed because backup/ was the one part of the install path
+# nothing used between runs. An install now deletes the copy it made when it
+# ends either way — on success it is not needed, on failure it has just been
+# rolled back — so the only copy left for a person to clear is the one a
+# rollback that could not complete left behind. That one is evidence, and the
+# page should not offer to throw it away. `install.sh cleanbackups` remains for
+# a shell.
+# ---------------------------------------------------------------------------
+
+test_the_config_page_no_longer_offers_to_delete_the_backups() {
 	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 	_ts_install="$ROOT/root/usr/libexec/fcc/install.sh"
 
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-cleanbackups"' \
-		"the Configuration page has a Delete backups button"
-	assert_contains "$(cat "$_ts_view")" '<%:Delete backups%>' \
-		"and it is labelled by a translatable string"
+	assert_not_contains "$(cat "$_ts_view")" 'fcc-runtime-cleanbackups' \
+		"the Configuration page has no Delete backups button"
+	assert_not_contains "$(cat "$_ts_view")" 'Delete backups' \
+		"and no explanatory paragraph about it"
+	assert_not_contains "$(cat "$_ts_js")" 'delete_backups' \
+		"the page's script does not call a delete_backups action"
+	assert_not_contains "$(cat "$_ts_ctrl")" 'act_delete_backups' \
+		"the controller no longer routes or implements it"
 
-	# The order is the point of the button: between the uninstall that keeps
-	# the backups and the purge that takes them along with everything else.
-	_ts_un="$(grep -n 'id="fcc-runtime-uninstall"' "$_ts_view" | head -1 | cut -d: -f1)"
-	_ts_cb="$(grep -n 'id="fcc-runtime-cleanbackups"' "$_ts_view" | head -1 | cut -d: -f1)"
-	_ts_purge="$(grep -n 'id="fcc-runtime-purge"' "$_ts_view" | head -1 | cut -d: -f1)"
-	assert_ne "" "$_ts_cb" "the button is in the toolbar"
-	if [ -n "$_ts_un" ] && [ -n "$_ts_cb" ] && [ -n "$_ts_purge" ] \
-		&& [ "$_ts_un" -lt "$_ts_cb" ] && [ "$_ts_cb" -lt "$_ts_purge" ]; then
-		pass
-	else
-		fail "Delete backups does not sit between Uninstall and Uninstall and remove all data"
-	fi
-
-	assert_contains "$(cat "$_ts_js")" "runJobAction('delete_backups', {}," \
-		"the button calls the delete_backups action"
-	assert_contains "$(cat "$_ts_js")" "Delete the saved backups?" \
-		"and asks before deleting them"
-
-	assert_contains "$(cat "$_ts_ctrl")" 'delete_backups = "act_delete_backups"' \
-		"the action is routed in the controller"
-	assert_contains "$(cat "$_ts_ctrl")" '"install", "cleanbackups"' \
-		"and asks install.sh for the verb that only deletes backups"
-
-	# The verb exists, and it is not uninstall with an argument: the two delete
-	# different things.
+	# The verb itself stays: Uninstall and remove all data uses the same
+	# clearing code, and a shell is still a way to clear a stuck rollback.
 	assert_contains "$(cat "$_ts_install")" 'cleanbackups)' \
-		"install.sh dispatches the cleanbackups verb"
+		"install.sh still dispatches the cleanbackups verb for a shell"
 	assert_contains "$(cat "$_ts_install")" 'cmd_cleanbackups()' \
 		"and implements it"
 }

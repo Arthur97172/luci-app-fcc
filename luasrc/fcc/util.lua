@@ -495,6 +495,41 @@ function valid_install_path(p)
 	return p
 end
 
+--- Backup path. Mirrors fcc_canon_backup_path() in common.sh: the same rule as
+--  the install path with one deliberate exception — /tmp/* is allowed.
+--
+--  The backup default is /tmp/fcc, because on OpenWrt /tmp is tmpfs and a copy
+--  that is deleted as soon as the install ends has no reason to occupy the
+--  flash the runtime is already tight in. The install path still refuses /tmp,
+--  and for the opposite reason: the runtime has to survive a reboot. /tmp
+--  itself is refused here as well; the exception is for directories under it,
+--  not for the system's own scratch directory.
+function valid_backup_path(p)
+	if type(p) ~= "string" then return nil end
+	p = p:gsub("%s+", "")
+	if p == "" or #p > 255 then return nil end
+	if not p:match("^/") then return nil end
+	if p:match("[%s'\"`%$;&|<>%(%){}%*!%?~]") then return nil end
+	p = p:gsub("//+", "/"):gsub("/$", "")
+	if p == "" then return nil end
+	if p:match("%.%./") or p:match("%.%.$") or p:match("^%.%.") then return nil end
+	local system = {
+		["/"] = true, ["/proc"] = true, ["/sys"] = true, ["/dev"] = true,
+		["/tmp"] = true, ["/var"] = true, ["/etc"] = true, ["/usr"] = true,
+		["/bin"] = true, ["/sbin"] = true, ["/lib"] = true, ["/lib64"] = true,
+		["/rom"] = true, ["/overlay"] = true, ["/root"] = true,
+	}
+	if system[p] then return nil end
+	for dir in pairs(system) do
+		-- /tmp is the exception: the default backup path lives under it, and
+		-- the table above already refuses the directory itself. Every other
+		-- system directory takes its whole subtree with it.
+		if dir ~= "/" and dir ~= "/tmp"
+			and p:match("^" .. dir:gsub("%-", "%%-") .. "/") then return nil end
+	end
+	return p
+end
+
 --- Bind address: IPv4/IPv6 literal only. Never a hostname, so a typo cannot
 --  silently expose the port on a name that resolves to a WAN address.
 function valid_bind(b)

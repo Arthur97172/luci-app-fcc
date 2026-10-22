@@ -39,6 +39,9 @@ msgstr ""
 msgid "All unsaved terminal state will be lost."
 msgstr ""
 
+msgid "An install deletes the rollback copy it made as soon as it ends: on success it is no longer needed, and on failure it has just been used to put the previous runtime back. Only a rollback that could not complete leaves a copy behind, under the backup path."
+msgstr ""
+
 msgid "An interactive terminal running a coding agent on this router. Sessions keep running after you close this page, and reattaching to one restores its screen."
 msgstr ""
 
@@ -49,6 +52,9 @@ msgid "Are you sure you want to close this session?"
 msgstr ""
 
 msgid "Are you sure you want to end all sessions?"
+msgstr ""
+
+msgid "Backup path"
 msgstr ""
 
 msgid "Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation."
@@ -72,9 +78,6 @@ msgstr ""
 msgid "Choose a single agent to install just that one. The upstream installer stops at the first agent it cannot install and rolls the whole run back, so this is how the agents that work on this device are installed when one of them does not."
 msgstr ""
 
-msgid "Clean up finished sessions"
-msgstr ""
-
 msgid "Clear log"
 msgstr ""
 
@@ -93,19 +96,13 @@ msgstr ""
 msgid "Could not attach to the session:"
 msgstr ""
 
-msgid "Delete backups"
-msgstr ""
-
-msgid "Delete backups removes the copies an install sets aside — the previous runtime, and your data as it was before the install — and nothing else. They are what a failed install is rolled back to, so the button is refused while an install or update is running."
-msgstr ""
-
-msgid "Delete the saved backups? The runtime, the agents and your configuration are kept; every backup is removed. It cannot be undone."
-msgstr ""
-
 msgid "Detecting versions…"
 msgstr ""
 
 msgid "Diagnostics"
+msgstr ""
+
+msgid "Directory where an install sets its rollback copy aside — the previous runtime, and your data as it was before the install. It needs room for a full copy of the FCC data directory, so it is /tmp/fcc by default: /tmp is memory on OpenWrt, which keeps the copy off the flash the runtime lives on. The copy is removed as soon as the install ends either way. Set this to the install path if you would rather keep it beside the runtime."
 msgstr ""
 
 msgid "Done."

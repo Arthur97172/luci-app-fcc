@@ -55,6 +55,16 @@
 			</div>
 
 			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-backup-path"><%:Backup path%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-backup-path" class="cbi-input-text" spellcheck="false">
+					<div class="cbi-value-description">
+						<%:Directory where an install sets its rollback copy aside — the previous runtime, and your data as it was before the install. It needs room for a full copy of the FCC data directory, so it is /tmp/fcc by default: /tmp is memory on OpenWrt, which keeps the copy off the flash the runtime lives on. The copy is removed as soon as the install ends either way. Set this to the install path if you would rather keep it beside the runtime.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
 				<label class="cbi-value-title" for="fcc-bind"><%:Bind address%></label>
 				<div class="cbi-value-field">
 					<input type="text" id="fcc-bind" class="cbi-input-text" spellcheck="false">
@@ -159,7 +169,6 @@
 				<button id="fcc-runtime-reinstall" class="cbi-button"><%:Reinstall%></button>
 				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
 				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
-				<button id="fcc-runtime-cleanbackups" class="cbi-button cbi-button-remove"><%:Delete backups%></button>
 				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall and remove all data%></button>
 			</div>
 
@@ -181,7 +190,7 @@
 				</p>
 
 				<p class="fcc-muted">
-					<%:Delete backups removes the copies an install sets aside — the previous runtime, and your data as it was before the install — and nothing else. They are what a failed install is rolled back to, so the button is refused while an install or update is running.%>
+					<%:An install deletes the rollback copy it made as soon as it ends: on success it is no longer needed, and on failure it has just been used to put the previous runtime back. Only a rollback that could not complete leaves a copy behind, under the backup path.%>
 				</p>
 			</div>
 

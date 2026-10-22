@@ -51,7 +51,6 @@ mutating_actions() {
 	cat <<'EOF'
 act_agent_versions
 act_config_set
-act_delete_backups
 act_install_runtime
 act_reinstall_runtime
 act_server

@@ -30,6 +30,7 @@
 			FCC.$('#fcc-enabled').checked = (c.enabled === '1');
 			FCC.$('#fcc-auto-start').checked = (c.auto_start === '1');
 			FCC.$('#fcc-install-path').value = c.install_path || '/opt';
+			FCC.$('#fcc-backup-path').value = c.backup_path || '/tmp/fcc';
 			FCC.$('#fcc-bind').value = c.bind || '127.0.0.1';
 			FCC.$('#fcc-port').value = c.port || 8082;
 			FCC.$('#fcc-log-level').value = c.log_level || 'info';
@@ -42,6 +43,7 @@
 			enabled: FCC.$('#fcc-enabled').checked ? '1' : '0',
 			auto_start: FCC.$('#fcc-auto-start').checked ? '1' : '0',
 			install_path: FCC.$('#fcc-install-path').value,
+			backup_path: FCC.$('#fcc-backup-path').value,
 			bind: FCC.$('#fcc-bind').value,
 			port: FCC.$('#fcc-port').value,
 			log_level: FCC.$('#fcc-log-level').value
@@ -251,6 +253,12 @@
 								FCC._('Installation is blocked until the failed checks pass.'));
 						}
 						refreshAll();
+						/* The diagnostics describe the device an install just
+						 * wrote to, so the report drawn before it ran is
+						 * stale the moment the job ends — whether it
+						 * succeeded or failed, and a failure is exactly when
+						 * it is least worth reading an old report. */
+						runDoctor();
 					}
 				})
 				.catch(function () { /* keep polling; a blip is not a failure */ });
@@ -405,16 +413,10 @@
 			}
 			runJobAction('uninstall_runtime', {}, 'install', 'fcc-runtime.log');
 		});
-		/* The only one of these that leaves the runtime alone, so the dialog says
-		 * what survives as well as what goes: a reader deciding whether to press
-		 * it is weighing space against an undo they lose, not against the runtime
-		 * they are about to delete. */
-		FCC.$('#fcc-runtime-cleanbackups').addEventListener('click', function () {
-			if (!window.confirm(FCC._('Delete the saved backups? The runtime, the agents and your configuration are kept; every backup is removed. It cannot be undone.'))) {
-				return;
-			}
-			runJobAction('delete_backups', {}, 'install', 'fcc-runtime.log');
-		});
+		/* There is deliberately no button for the backups: an install removes the
+		 * copy it made as soon as it ends, so what used to be a button here is
+		 * now nothing to clear except the copy a rollback that could not
+		 * complete left behind — and that one is evidence, not clutter. */
 		FCC.$('#fcc-runtime-purge').addEventListener('click', function () {
 			if (!window.confirm(FCC._('Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone.'))) {
 				return;

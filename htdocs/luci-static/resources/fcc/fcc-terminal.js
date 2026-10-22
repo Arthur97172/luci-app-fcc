@@ -435,12 +435,6 @@
 		});
 	}
 
-	function cleanupSessions() {
-		FCC.api('session_cleanup', {}, { method: 'POST' }).then(function () {
-			loadSessions();
-		});
-	}
-
 	/**
 	 * End every session at once.
 	 *
@@ -523,9 +517,6 @@
 		// Wrapped, not passed directly: addEventListener hands the handler a
 		// MouseEvent, which createSession() would take for an agent id.
 		if (createBtn) { createBtn.addEventListener('click', function () { createSession(); }); }
-
-		var cleanupBtn = FCC.$('#fcc-term-cleanup');
-		if (cleanupBtn) { cleanupBtn.addEventListener('click', cleanupSessions); }
 
 		var closeAllBtn = FCC.$('#fcc-term-close-all');
 		if (closeAllBtn) { closeAllBtn.addEventListener('click', endAllSessions); }

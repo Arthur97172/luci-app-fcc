@@ -26,6 +26,21 @@
 FCC_AGENTS_CONF="${FCC_AGENTS_CONF:-/usr/share/luci-app-fcc/agents.conf}"
 FCC_VERSION_FILE="${FCC_VERSION_FILE:-/usr/share/luci-app-fcc/VERSION}"
 FCC_DEFAULT_BASE="${FCC_DEFAULT_BASE:-/opt}"
+# Where an install sets its rollback copies aside (UCI fcc.main.backup_path).
+#
+# This used to be <root>/backup, on the same filesystem as the runtime — which
+# is what made moving the previous runtime aside an instant rename. It is a
+# setting of its own now, because the copy is the largest thing an install
+# writes (a data/ copy measured 273 MB on the test router) and the install path
+# is often the small flash the runtime itself barely fits on.
+#
+# /tmp is the default, and therefore the one path fcc_canon_backup_path()
+# accepts that fcc_canon_base() refuses: on OpenWrt it is tmpfs, so a copy that
+# is never read again disappears at the next reboot instead of occupying flash.
+# The copy is deleted as soon as the run ends either way — on success it is not
+# needed, on failure it has just been rolled back — so what normally lives here
+# between runs is nothing at all.
+FCC_DEFAULT_BACKUP="${FCC_DEFAULT_BACKUP:-/tmp/fcc}"
 FCC_HZ="${FCC_HZ:-100}"                 # clock ticks per second (OpenWrt default)
 FCC_VERSION_CACHE_TTL="${FCC_VERSION_CACHE_TTL:-60}"
 FCC_SESSION_PREFIX="fcc-"
@@ -199,6 +214,51 @@ fcc_root() {
 	esac
 }
 
+# ---------------------------------------------------------------------------
+# Backup path
+#
+# The same canonicalisation as fcc_canon_base(), with one deliberate exception:
+# /tmp is allowed. The shipped default is /tmp/fcc, and on OpenWrt /tmp is
+# tmpfs — a rollback copy that is deleted as soon as the run ends does not need
+# to survive a reboot, and putting it in RAM keeps several hundred megabytes off
+# the flash the runtime is already tight in.
+#
+# The install path still refuses /tmp, and for the opposite reason: the runtime
+# has to survive a reboot.
+# ---------------------------------------------------------------------------
+fcc_canon_backup_path() {
+	# fcc_canon_backup_path <raw> -> canonical path on stdout, or fail.
+	_bpb_raw="$1"
+	_bpb_raw="$(printf '%s' "$_bpb_raw" | tr -d ' \t\r\n')"
+	[ -n "$_bpb_raw" ] || return 1
+
+	case "$_bpb_raw" in
+		*[\ \'\"\`\$\;\&\|\<\>\(\)\{\}\*\!\?\~]*) return 1 ;;
+	esac
+	case "$_bpb_raw" in
+		/*) : ;;
+		*) return 1 ;;
+	esac
+	_bpb_raw="$(printf '%s' "$_bpb_raw" | sed -e 's#//*#/#g' -e 's#/$##')"
+	[ -n "$_bpb_raw" ] || return 1
+
+	# System directories. /tmp itself is on the list and /tmp/* is not: the
+	# default lives under it, while the directory the whole system keeps its
+	# scratch files in is not a place to drop backups.
+	case "$_bpb_raw" in
+		/|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/tmp|/var|/var/*|\
+		/etc|/etc/*|/usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|\
+		/lib64|/lib64/*|/rom|/rom/*|/overlay|/overlay/*|/root|/root/*)
+			return 1 ;;
+	esac
+	case "$_bpb_raw" in
+		*/../*|*/..|../*|..) return 1 ;;
+	esac
+
+	printf '%s' "$_bpb_raw"
+	return 0
+}
+
 # Convenience accessors for the standard subdirectories.
 fcc_dir_runtime() { printf '%s/runtime' "$(fcc_root)"; }
 fcc_dir_bin()     { printf '%s/bin'     "$(fcc_root)"; }
@@ -206,7 +266,51 @@ fcc_dir_data()    { printf '%s/data'    "$(fcc_root)"; }
 fcc_dir_cache()   { printf '%s/cache'   "$(fcc_root)"; }
 fcc_dir_logs()    { printf '%s/logs'    "$(fcc_root)"; }
 fcc_dir_sessions(){ printf '%s/sessions' "$(fcc_root)"; }
-fcc_dir_backup()  { printf '%s/backup'  "$(fcc_root)"; }
+
+fcc_dir_backup()  {
+	# The configured backup path, validated. Two fallbacks for the same reason
+	# fcc_root() has two: a rejected setting must not fall through to a default
+	# that is rejected just as firmly.
+	_bd_raw="$(fcc_uci_get main backup_path "$FCC_DEFAULT_BACKUP")"
+	_bd_p="$(fcc_canon_backup_path "$_bd_raw")" \
+		|| _bd_p="$(fcc_canon_backup_path "$FCC_DEFAULT_BACKUP")" \
+		|| _bd_p=/tmp/fcc
+	printf '%s' "$_bd_p"
+}
+
+# The backup directories this package wrote, one per line.
+#
+# Only names matching backup_runtime()'s own stamp are listed. The path is a
+# user setting now, so it can be a directory that holds more than our copies —
+# and guessing wrong about a directory here destroys the only copy of a user's
+# data. Everything else in it is somebody else's and is never touched.
+fcc_backup_entries() {
+	_be_dir="$(fcc_dir_backup)"
+	[ -d "$_be_dir" ] || return 0
+	for _be_e in "$_be_dir"/*; do
+		[ -d "$_be_e" ] || continue
+		case "${_be_e##*/}" in
+			[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z)
+				printf '%s\n' "$_be_e" ;;
+		esac
+	done
+}
+
+fcc_backup_clear() {
+	# Remove every backup this package made, and nothing else. Prints how many.
+	#
+	# The directory itself is deliberately left in place: the path is a setting,
+	# and it may be a directory the user made for other reasons (the install
+	# base is one they are allowed to pick). Deleting the directory would delete
+	# whatever else they keep there.
+	_bc_n=0
+	_bc_list="$(fcc_backup_entries)"
+	[ -n "$_bc_list" ] || { printf '0'; return 0; }
+	for _bc_d in $_bc_list; do
+		rm -rf "$_bc_d" 2>/dev/null && _bc_n=$((_bc_n + 1))
+	done
+	printf '%s' "$_bc_n"
+}
 
 fcc_ensure_dirs() {
 	for _ed_d in "$(fcc_dir_runtime)" "$(fcc_dir_bin)" "$(fcc_dir_data)" \

@@ -61,7 +61,6 @@ function index()
 		install_runtime = "act_install_runtime",
 		reinstall_runtime = "act_reinstall_runtime",
 		uninstall_runtime = "act_uninstall_runtime",
-		delete_backups = "act_delete_backups",
 		job = "act_job",
 		doctor = "act_doctor",
 		update_check = "act_update_check",
@@ -446,16 +445,6 @@ function act_uninstall_runtime()
 	start_job(argv, "fcc-runtime.log", "install")
 end
 
---- Delete the saved backups, and nothing else.
---
--- A job rather than a direct call for the same reason as Uninstall: the backend
--- takes the install lock, so "something else is already running" has a place to
--- be said, and the outcome lands in the log the pane is already showing.
-function act_delete_backups()
-	if not require_post() then return end
-	start_job({ "install", "cleanbackups" }, "fcc-runtime.log", "install")
-end
-
 function act_update_runtime()
 	if not require_post() then return end
 	-- Section 47's lock, not the install one: the update holds fcc-update.lock
@@ -669,6 +658,10 @@ function act_config_get()
 	local cfg = {
 		enabled       = g("enabled", "1"),
 		install_path  = g("install_path", "/opt"),
+		-- The effective path, not the raw setting: an install falls back to the
+		-- next candidate when this one does not validate, and the form should
+		-- show the directory the copies would actually be written to.
+		backup_path   = paths.backup_dir(),
 		port          = tonumber(g("port", "8082")) or 8082,
 		bind          = g("bind", "127.0.0.1"),
 		auto_start    = g("auto_start", "1"),
@@ -693,6 +686,18 @@ function act_config_set()
 	local newpath = util.valid_install_path(http.formvalue("install_path") or "")
 	if not newpath then return fail("invalid install path") end
 
+	-- Where an install sets its rollback copy aside. Unlike the install path it
+	-- may live under /tmp: the copy is deleted as soon as the install ends, and
+	-- on OpenWrt /tmp is tmpfs, which keeps it off the flash. Left alone when the
+	-- field is absent, so a page cached from before this setting existed can
+	-- still save the settings it does show.
+	local bp_raw = http.formvalue("backup_path")
+	local newbackup
+	if bp_raw ~= nil then
+		newbackup = util.valid_backup_path(bp_raw)
+		if not newbackup then return fail("invalid backup path") end
+	end
+
 	local port = util.valid_int(http.formvalue("port") or "8082", 1, 65535)
 	if not port then return fail("invalid port") end
 
@@ -711,6 +716,7 @@ function act_config_set()
 	local path_changed = (oldpath ~= newpath)
 
 	c:set("fcc", "main", "install_path", newpath)
+	if newbackup then c:set("fcc", "main", "backup_path", newbackup) end
 	c:set("fcc", "main", "port", tostring(port))
 	c:set("fcc", "main", "bind", bind)
 	c:set("fcc", "main", "log_level", level)

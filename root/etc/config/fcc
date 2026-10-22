@@ -1,16 +1,27 @@
 config fcc 'main'
 	option enabled '1'
 	option install_path '/opt/fcc'
+	# Where an install sets its rollback copies aside — the previous runtime and
+	# your data as it was before the install. Separate from install_path because
+	# the copy is large and the flash the runtime lives on is often the smallest
+	# place on the device. /tmp is tmpfs on OpenWrt, so a copy left by a rollback
+	# that could not complete disappears at the next reboot.
+	#
+	# The copy is removed as soon as the install ends either way — kept only when
+	# a rollback could not complete — so this directory normally holds nothing.
+	option backup_path '/tmp/fcc'
 	option port '8082'
 	option bind '127.0.0.1'
 	option auto_start '1'
 	option session_backend 'tmux'
 	option agent_backend 'python'
 	option log_level 'info'
-	# How many timestamped runtime backups to keep under <install_path>/backup
+	# How many timestamped runtime backups to keep under backup_path
 	# (DESIGN_SPEC.md section 25). Each holds a copy of the FCC data directory,
 	# which cannot be reinstalled, so this is the one thing an update must not
-	# throw away — but it must not grow without bound on a router either.
+	# throw away — but it must not grow without bound on a router either. An
+	# install now removes its own backup when it ends, so these are only the few
+	# a failed rollback leaves behind.
 	option backup_keep '3'
 
 # NOTE: API keys / provider credentials are NEVER stored here.
