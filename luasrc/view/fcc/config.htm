@@ -146,15 +146,21 @@
 				     install take the whole registry. That is still what the
 				     Install button does with nothing chosen here — the backend
 				     is sent the flag, not a list, so the registry stays the only
-				     place the set is written down — but it is no longer the only
-				     useful thing to do with the button.
+				     place the set is written down.
 
-				     Upstream stops at the first agent it cannot install and
-				     rolls the whole run back (section 79), so on a device where
-				     one agent cannot be installed, the other nine are otherwise
-				     unreachable: every install ends in the same rollback. One
-				     agent id, read when Install is pressed, is what makes them
-				     reachable one at a time.
+				     Install and Reinstall are one button. With the dropdown on
+				     "All agents" and a runtime already installed, the click
+				     performs what the separate Reinstall button used to: remove
+				     the runtime and install everything again, after a
+				     confirmation. Upstream reconciles the agent set and never
+				     reinstalls an agent that is already present (section 79), so
+				     this is the only way to replace a damaged agent; a second
+				     button for it was one more control than the toolbar needed.
+
+				     A chosen agent is different: it is added to whatever runtime
+				     is there, without removing anything. That is what keeps the
+				     remaining agents reachable on a device where one of them
+				     cannot be installed.
 
 				     Deliberately not the table that was removed: no tick boxes,
 				     no recommended set, no per-row buttons, nothing to
@@ -167,10 +173,9 @@
 					<% end %>
 				</select>
 				<button id="fcc-runtime-install" class="cbi-button cbi-button-apply"><%:Install%></button>
-				<button id="fcc-runtime-reinstall" class="cbi-button"><%:Reinstall%></button>
 				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
 				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
-				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall and remove all data%></button>
+				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall completely%></button>
 			</div>
 
 			<div class="fcc-help">

@@ -365,24 +365,45 @@
 			}
 		);
 
-		/* Install takes the whole registry unless the agent dropdown narrows it,
-		 * and the backend builds that set: with nothing chosen the button sends
-		 * no agent list at all. It used to send the ticked boxes (section
-		 * 3.6.5), which is why the page carried a selection — and an empty
-		 * selection meant "install none", so a press before the table had been
-		 * drawn had to be special-cased. Nothing to special-case now: the
-		 * dropdown's empty value is the whole registry, which is what the page
-		 * did before the dropdown existed.
+		/* One button covers Install and Reinstall, and the two jobs it can start
+		 * are not the same operation.
 		 *
-		 * One agent id, not a set. The upstream installer stops at the first
-		 * agent it cannot install and rolls the whole run back (§79), so a
-		 * device that cannot install one agent cannot install any of them
-		 * unless they can be asked for one at a time. */
+		 * With an agent chosen, it adds that agent to whatever runtime is there.
+		 * That is the dropdown's whole purpose: the upstream installer stops at
+		 * the first agent it cannot install and rolls the run back (§79), so on
+		 * a device where one agent fails the others are only reachable one at a
+		 * time.
+		 *
+		 * With "All agents" and no runtime, it is a plain install of the whole
+		 * registry. With "All agents" and a runtime already present, it is the
+		 * old Reinstall: remove the runtime, then install everything again. The
+		 * upstream installer reconciles the agent set and never reinstalls an
+		 * agent that is already there (section 104.25), so this is the only way
+		 * to replace a damaged one — and because it removes the runtime first,
+		 * it asks before it starts.
+		 *
+		 * Status is read at click time rather than taken from the last paint:
+		 * the page may have been left open across an install, and the question
+		 * in the dialog has to describe the job that is actually about to run. */
 		FCC.$('#fcc-runtime-install').addEventListener('click', function () {
 			var picker = FCC.$('#fcc-runtime-agent');
 			var agent = picker ? picker.value : '';
-			runJobAction('install_runtime', agent ? { agent: agent } : {},
-				'install', 'fcc-runtime.log');
+			if (agent) {
+				runJobAction('install_runtime', { agent: agent }, 'install', 'fcc-runtime.log');
+				return;
+			}
+			FCC.api('status', {}, { method: 'GET' }).then(function (d) {
+				if (!(d.fcc && d.fcc.installed)) {
+					runJobAction('install_runtime', {}, 'install', 'fcc-runtime.log');
+					return;
+				}
+				if (!window.confirm(FCC._('Remove the FCC runtime and install it again with every agent? Your configuration and data under the install path are kept.'))) {
+					return;
+				}
+				runJobAction('reinstall_runtime', {}, 'install', 'fcc-runtime.log');
+			}).catch(function (err) {
+				FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
+			});
 		});
 		/* The dropdown decides which set the report is about, so changing it
 		 * re-runs the report: a panel still describing the whole registry would
@@ -391,15 +412,6 @@
 		 * install to an agent that does not need the failing thing, and is told
 		 * their install is blocked. */
 		if (agentPicker) { agentPicker.addEventListener('change', runDoctor); }
-		/* Reinstall is its own operation, not a flavour of Install: it removes
-		 * the runtime first, because the upstream installer reconciles the agent
-		 * set rather than reinstalling what is already there (section 104.25). */
-		FCC.$('#fcc-runtime-reinstall').addEventListener('click', function () {
-			if (!window.confirm(FCC._('Remove the FCC runtime and install it again with every agent? Your configuration and data under the install path are kept.'))) {
-				return;
-			}
-			runJobAction('reinstall_runtime', {}, 'install', 'fcc-runtime.log');
-		});
 		FCC.$('#fcc-runtime-update').addEventListener('click', function () {
 			runJobAction('update_runtime', {}, 'install', 'fcc-update.log');
 		});

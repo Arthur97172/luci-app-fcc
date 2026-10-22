@@ -142,7 +142,8 @@ msgid ""
 "extremely slow and takes about 8 GB of storage. Choose only the agents you "
 "need."
 msgstr ""
-"安装时请勿选注册表中的全部智能体，否则会导致下载极其缓慢并占用约 8GB 存储空间。建议仅选需要的智能体进行安装。"
+"安装时请勿选注册表中的全部智能体，否则会导致下载极其缓慢并占用约 8GB 存储空"
+"间。建议仅选需要的智能体进行安装。"
 
 msgid "Done."
 msgstr "完成。"
@@ -268,9 +269,6 @@ msgstr "重新连接"
 
 msgid "Refresh"
 msgstr "刷新"
-
-msgid "Reinstall"
-msgstr "重新安装"
 
 msgid ""
 "Remove the FCC runtime and all of its data? This deletes the runtime, the "
@@ -406,8 +404,8 @@ msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
 msgid "Uninstall"
 msgstr "卸载"
 
-msgid "Uninstall and remove all data"
-msgstr "卸载并清除所有数据"
+msgid "Uninstall completely"
+msgstr "彻底卸载"
 
 msgid "Update"
 msgstr "更新"
@@ -489,6 +487,12 @@ msgstr "有可用更新"
 
 msgid "uptime"
 msgstr "运行时间"
+
+#~ msgid "Reinstall"
+#~ msgstr "重新安装"
+
+#~ msgid "Uninstall and remove all data"
+#~ msgstr "卸载并清除所有数据"
 
 #~ msgid ""
 #~ "An install deletes the rollback copy it made as soon as it ends: on "

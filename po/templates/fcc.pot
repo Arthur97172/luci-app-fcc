@@ -225,9 +225,6 @@ msgstr ""
 msgid "Refresh"
 msgstr ""
 
-msgid "Reinstall"
-msgstr ""
-
 msgid "Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone."
 msgstr ""
 
@@ -342,7 +339,7 @@ msgstr ""
 msgid "Uninstall"
 msgstr ""
 
-msgid "Uninstall and remove all data"
+msgid "Uninstall completely"
 msgstr ""
 
 msgid "Update"

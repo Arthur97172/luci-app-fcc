@@ -345,15 +345,17 @@ test_the_config_page_has_no_agent_table() {
 		assert_not_contains "$(cat "$_ts_js")" "$_ts_dead" "the table's $_ts_dead is gone"
 	done
 
-	# The two buttons. What is asserted here is only that they are there and
-	# that Reinstall is its own operation: the agent dropdown that now sits
-	# before Install is a single value rather than a set, and what it does is
-	# pinned by test_the_config_page_can_install_one_agent below. The tick-box
-	# machinery stays dead either way — that is what this test is about.
+	# One button, not two. Install covers both jobs: with a runtime already
+	# present and the dropdown on "All agents" it offers the remove-then-install
+	# the old Reinstall button performed, behind a confirmation; a chosen agent
+	# is still added without removing anything, which is what keeps the
+	# remaining agents reachable one at a time. The tick-box machinery stays
+	# dead either way — that is what this test is about.
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' "the view has an Install button"
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' "the view has a Reinstall button"
+	assert_not_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' \
+		"and no separate Reinstall button"
 	assert_contains "$(cat "$_ts_js")" "runJobAction('reinstall_runtime', {}," \
-		"and Reinstall is its own operation, not a flag on Install"
+		"the merged button still reaches the remove-then-install verb"
 }
 
 # ---------------------------------------------------------------------------
@@ -379,22 +381,24 @@ test_the_config_page_installs_every_agent() {
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 
-	# The view offers the two buttons, and they are the only way the page starts
-	# an install — the dropdown beside Install chooses between one agent and all
-	# of them, and the tick boxes that used to choose a subset are asserted gone
+	# One button starts both jobs, and it is the only way the page starts an
+	# install — the dropdown beside it chooses between one agent and all of
+	# them, and the tick boxes that used to choose a subset are asserted gone
 	# by test_the_config_page_has_no_agent_table.
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' \
 		"the Configuration page has an Install button"
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' \
-		"and a Reinstall button beside it"
+	assert_not_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' \
+		"with no separate Reinstall button beside it"
 
-	# Each button reaches its own action. Install's payload is conditional now:
-	# an empty object is what says "no selection", and the only value that can
-	# replace it is the one id the dropdown holds.
-	assert_contains "$(cat "$_ts_js")" "agent ? { agent: agent } : {}" \
-		"Install calls the install action with no agent list unless one is chosen"
+	# Install's payload depends on the dropdown: the one id it holds goes to the
+	# install action, and the empty value (the whole registry) reads the status
+	# first so that a runtime already present gets the remove-then-install verb.
+	assert_contains "$(cat "$_ts_js")" "'install_runtime', { agent: agent }" \
+		"a chosen agent is installed as that one id"
+	assert_contains "$(cat "$_ts_js")" "d.fcc && d.fcc.installed" \
+		"the whole-registry click checks whether a runtime is already installed"
 	assert_contains "$(cat "$_ts_js")" "runJobAction('reinstall_runtime', {}," \
-		"Reinstall calls the reinstall action with no agent list"
+		"and an installed runtime gets the reinstall action"
 
 	# The action is the flag, spelled once, and it is a flag rather than a list
 	# of ids for the reason above: a list here would be a second place the agent
@@ -413,6 +417,80 @@ test_the_config_page_installs_every_agent() {
 	# that is already present is the one that is broken.
 	assert_contains "$(cat "$_ts_ctrl")" '"install", "reinstall"' \
 		"the reinstall action asks for the verb that removes first"
+}
+
+# ---------------------------------------------------------------------------
+# One Install button, two jobs
+#
+# The toolbar used to carry Install and Reinstall side by side. They are one
+# control now, and the difference between the jobs did not disappear with the
+# second button: a chosen agent is added to the runtime that is there, while
+# "All agents" on a device that already has a runtime removes that runtime and
+# installs everything again. The removal is what makes a damaged agent
+# reinstallable at all (upstream reconciles rather than reinstalls), so the
+# confirmation in front of it is not decoration.
+# ---------------------------------------------------------------------------
+
+test_one_install_button_does_both_jobs() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+	_ts_install="$ROOT/root/usr/libexec/fcc/install.sh"
+
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' \
+		"the runtime toolbar has one Install button"
+	assert_not_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' \
+		"and no Reinstall button beside it"
+
+	# A chosen agent takes the plain install path. It must not reach the
+	# remove-then-install verb: removing the runtime to add one agent is the
+	# opposite of what the dropdown is for.
+	assert_contains "$(cat "$_ts_js")" 'if (agent) {' \
+		"Install branches on the dropdown value"
+	assert_contains "$(cat "$_ts_js")" "'install_runtime', { agent: agent }" \
+		"a chosen agent is installed on its own"
+	assert_not_contains "$(cat "$_ts_js")" "'reinstall_runtime', { agent:" \
+		"and never through the reinstall action"
+
+	# The whole-registry path reads the current status first, then either
+	# installs or — when a runtime is already there — asks before removing it.
+	assert_contains "$(cat "$_ts_js")" "FCC.api('status'" \
+		"the whole-registry click reads the current status"
+	assert_contains "$(cat "$_ts_js")" 'if (!(d.fcc && d.fcc.installed)) {' \
+		"it installs when no runtime is present"
+	assert_contains "$(cat "$_ts_js")" "window.confirm(FCC._('Remove the FCC runtime" \
+		"and asks before removing an installed one"
+	assert_contains "$(cat "$_ts_js")" "runJobAction('reinstall_runtime', {}, 'install', 'fcc-runtime.log')" \
+		"before running the remove-then-install job"
+
+	# Both verbs still exist below the page: the controller routes the reinstall
+	# action and install.sh implements it. The merge is a UI change, not a
+	# backend one.
+	assert_contains "$(cat "$_ts_ctrl")" 'act_reinstall_runtime' \
+		"the controller still implements the reinstall action"
+	assert_contains "$(cat "$_ts_install")" 'cmd_reinstall()' \
+		"and install.sh still implements remove-then-install"
+}
+
+# ---------------------------------------------------------------------------
+# The destructive button's name
+#
+# "Uninstall and remove all data" said what it does but read as a paragraph in
+# a toolbar. "Uninstall completely" is a button name; the dialog still spells
+# out what is deleted, which is the only place that can change the user's mind.
+# ---------------------------------------------------------------------------
+
+test_the_purge_button_is_named_plainly() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+
+	assert_contains "$(cat "$_ts_view")" '<%:Uninstall completely%>' \
+		"the destructive button is called Uninstall completely"
+	assert_not_contains "$(cat "$_ts_view")" 'Uninstall and remove all data' \
+		"and the old label is gone"
+	assert_contains "$(cat "$_ts_js")" \
+		'This deletes the runtime, the agents, your configuration and every backup.' \
+		"while its confirmation still names everything that is lost"
 }
 
 # ---------------------------------------------------------------------------
@@ -521,9 +599,24 @@ test_the_runtime_help_is_one_warning() {
 	assert_contains "$(cat "$_ts_view")" '8 GB' "and names the storage cost"
 
 	_ts_css_text="$(cat "$_ts_css")"
-	assert_contains "$_ts_css_text" 'color: #b45309' "the warning text is deep amber"
-	assert_contains "$_ts_css_text" 'background: #fffbeb' "on pale yellow"
-	assert_contains "$_ts_css_text" 'border: 1px solid #fde68a' "with a pale yellow border"
+	assert_contains "$_ts_css_text" 'var(--fcc-warn-color, #b45309)' "the warning text is deep amber"
+	assert_contains "$_ts_css_text" 'var(--fcc-warn-bg, #fffbeb)' "on pale yellow"
+	assert_contains "$_ts_css_text" 'var(--fcc-warn-border, #fde68a)' "with a pale yellow border"
+
+	# Dark themes. The light shades are unreadable there, so the same amber
+	# ramp is used in its dark-half values. The selectors follow each theme's
+	# own dark-mode signal, and the media query is limited to Argon's default
+	# mode: Material has no dark mode, and a bare prefers-color-scheme rule
+	# would paint a dark block on its light page.
+	assert_contains "$_ts_css_text" ':root[data-darkmode="true"]' \
+		"the dark palette follows Bootstrap's data-darkmode"
+	assert_contains "$_ts_css_text" ':root[data-argon-mode="dark"]' \
+		"and Argon's explicit dark mode"
+	assert_contains "$_ts_css_text" ':root[data-argon-mode="normal"]' \
+		"with Argon's OS-driven mode under the media query"
+	assert_contains "$_ts_css_text" '--fcc-warn-color: #fcd34d' "the dark text is amber-300"
+	assert_contains "$_ts_css_text" '--fcc-warn-bg: #451a03' "on amber-950"
+	assert_contains "$_ts_css_text" '--fcc-warn-border: #92400e' "with an amber-800 border"
 }
 
 test_every_page_asset_is_cache_stamped() {
@@ -631,11 +724,13 @@ test_the_config_page_can_install_one_agent() {
 	assert_contains "$(cat "$_ts_view")" '<option value=""><%:All agents%></option>' \
 		"the first option is every agent, so the default install is unchanged"
 
-	# The script sends the value, and only the value.
+	# The script sends the value, and only the value. A chosen agent goes to the
+	# install action on its own; the empty value falls through to the
+	# whole-registry path, which checks whether a runtime is already present.
 	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-runtime-agent')" \
 		"Install reads the dropdown when it is pressed"
-	assert_contains "$(cat "$_ts_js")" "agent ? { agent: agent } : {}" \
-		"and sends the chosen id, or nothing at all"
+	assert_contains "$(cat "$_ts_js")" "'install_runtime', { agent: agent }" \
+		"and sends the chosen id on its own"
 
 	# The controller turns that one id into the backend's flag. A list would be
 	# a second place the agent set lives; one id cannot drift from the registry

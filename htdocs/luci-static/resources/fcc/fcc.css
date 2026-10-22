@@ -62,14 +62,36 @@
  * it is a warning rather than a description: choosing the whole registry is
  * what the toolbar offers by default and costs several gigabytes. Deep amber
  * on pale yellow, with the exact shades from the design brief rather than the
- * theme's variables, so it reads the same under Argon as under any other
- * theme. */
+ * theme's variables, so it reads the same under every theme.
+ *
+ * Dark themes need their own shades — the light amber ramp disappears against
+ * a dark page. The same ramp is followed instead: amber-300 on amber-950 with
+ * an amber-800 border. The dark selectors follow each theme's own signal
+ * rather than a bare prefers-color-scheme query: the Bootstrap themes set
+ * data-darkmode on <html>, Argon sets data-argon-mode and, in its default
+ * mode, follows the OS preference. Material has no dark mode at all, so a
+ * bare media query would paint a dark block on its light page. */
 .fcc-warn {
-	color: #b45309;
-	background: #fffbeb;
-	border: 1px solid #fde68a;
+	color: var(--fcc-warn-color, #b45309);
+	background: var(--fcc-warn-bg, #fffbeb);
+	border: 1px solid var(--fcc-warn-border, #fde68a);
 	border-radius: 4px;
 	padding: .5em .75em;
+}
+
+:root[data-darkmode="true"],
+:root[data-argon-mode="dark"] {
+	--fcc-warn-color: #fcd34d;
+	--fcc-warn-bg: #451a03;
+	--fcc-warn-border: #92400e;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root[data-argon-mode="normal"] {
+		--fcc-warn-color: #fcd34d;
+		--fcc-warn-bg: #451a03;
+		--fcc-warn-border: #92400e;
+	}
 }
 
 /* The notes under the runtime toolbar. Each is a <p>, and the theme gives every
