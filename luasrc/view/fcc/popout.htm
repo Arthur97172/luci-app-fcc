@@ -22,11 +22,12 @@
 <!DOCTYPE html>
 <html lang="<%= (luci.i18n and luci.i18n.context and luci.i18n.context.lang) or "en" %>">
 <head>
+<% local v = require("luci.fcc.paths").asset_version() %>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FCC — <%=session%></title>
-<link rel="stylesheet" href="<%=resource%>/fcc/xterm.min.css">
-<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+<link rel="stylesheet" href="<%=resource%>/fcc/xterm.min.css?v=<%=v%>">
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css?v=<%=v%>">
 <style>
 	html, body {
 		height: 100%;
@@ -85,9 +86,9 @@
 		attach: '<%:Could not attach to the session:%>'
 	};
 </script>
-<script src="<%=resource%>/fcc/fcc-common.js"></script>
-<script src="<%=resource%>/fcc/xterm.min.js"></script>
-<script src="<%=resource%>/fcc/addon-fit.min.js"></script>
-<script src="<%=resource%>/fcc/fcc-popout.js"></script>
+<script src="<%=resource%>/fcc/fcc-common.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/xterm.min.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/addon-fit.min.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/fcc-popout.js?v=<%=v%>"></script>
 </body>
 </html>

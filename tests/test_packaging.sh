@@ -497,6 +497,27 @@ test_the_console_toolbar_is_ordered_and_has_no_cleanup_button() {
 	fi
 }
 
+test_every_page_asset_is_cache_stamped() {
+	# The pages and the scripts ship in the same package, but a browser caches
+	# them separately: the page is rendered per request while a /luci-static/
+	# file with no Cache-Control may sit in its cache far longer. An upgrade
+	# that removes a DOM node then leaves an old script reaching for it — which
+	# is how r9's Configuration page came up with every setting empty: the r8
+	# fcc-config.js in the browser threw on the deleted Delete backups button
+	# before loadConfig() ran. The stamp makes each upgrade a new URL.
+	local _ts_view
+	for _ts_view in "$ROOT"/luasrc/view/fcc/*.htm; do
+		assert_contains "$(cat "$_ts_view")" 'asset_version()' \
+			"$(basename "$_ts_view") takes the stamp from luci.fcc.paths"
+	done
+
+	_ts_all="$(grep -rhoE '(src|href)="[^"]*/fcc/[^"]*"' "$ROOT"/luasrc/view/fcc/*.htm | wc -l)"
+	_ts_stamped="$(grep -rhoE '(src|href)="[^"]*/fcc/[^"]*\?v=<%=v%>"' "$ROOT"/luasrc/view/fcc/*.htm | wc -l)"
+	assert_ok "the views reference the package's assets" test "$_ts_all" -ge 15
+	assert_eq "$_ts_stamped" "$_ts_all" \
+		"every fcc asset a page requests carries the install stamp"
+}
+
 # ---------------------------------------------------------------------------
 # Delete backups — removed
 #

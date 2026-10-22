@@ -6,10 +6,11 @@
  to it. See htdocs/.../fcc-terminal.js for the transport.
 -%>
 
+<% local v = require("luci.fcc.paths").asset_version() %>
 <%+header%>
 
-<link rel="stylesheet" href="<%=resource%>/fcc/xterm.min.css">
-<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+<link rel="stylesheet" href="<%=resource%>/fcc/xterm.min.css?v=<%=v%>">
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css?v=<%=v%>">
 
 <script>
 	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
@@ -59,9 +60,9 @@
 	</div>
 </div>
 
-<script src="<%=resource%>/fcc/fcc-common.js"></script>
-<script src="<%=resource%>/fcc/xterm.min.js"></script>
-<script src="<%=resource%>/fcc/addon-fit.min.js"></script>
-<script src="<%=resource%>/fcc/fcc-terminal.js"></script>
+<script src="<%=resource%>/fcc/fcc-common.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/xterm.min.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/addon-fit.min.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/fcc-terminal.js?v=<%=v%>"></script>
 
 <%+footer%>

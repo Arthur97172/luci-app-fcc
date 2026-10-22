@@ -17,6 +17,27 @@ AGENTS_CONF  = os.getenv("FCC_AGENTS_CONF")  or "/usr/share/luci-app-fcc/agents.
 VERSION_FILE = os.getenv("FCC_VERSION_FILE") or "/usr/share/luci-app-fcc/VERSION"
 DEFAULT_BASE = "/opt"
 DEFAULT_BACKUP = "/tmp/fcc"
+ASSET_DIR    = os.getenv("FCC_ASSET_DIR")    or "/www/luci-static/resources/fcc"
+
+--- Cache-busting stamp for the static assets this package serves.
+--
+-- LuCI renders the page markup on every request, but a /luci-static/ file is
+-- served with no Cache-Control, so a browser may reuse it under a heuristic
+-- freshness lifetime. After an upgrade that pairs the new page with a script
+-- from the previous package, and the pairing can break hard: r9 removed the
+-- Delete backups button, and an r8 fcc-config.js still held in a browser
+-- cache called addEventListener() on it, threw before loadConfig(), and left
+-- every setting on the Configuration page empty while the page itself looked
+-- healthy. The views append ?v=<stamp> to each asset, so an upgrade asks for
+-- a URL the browser has never seen.
+--
+-- VERSION is written by the package's install rule, so its mtime moves on
+-- every upgrade even when the version string does not. fcc.css is the
+-- fallback for a dev tree where the version file is absent.
+function asset_version()
+	local t = util.mtime(VERSION_FILE) or util.mtime(ASSET_DIR .. "/fcc.css")
+	return tostring(t or 0)
+end
 
 --- LuCI-FCC's own version.
 function luci_version()

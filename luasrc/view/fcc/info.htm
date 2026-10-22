@@ -5,9 +5,10 @@
  Everything on this page is read-only and comes from one batched status call.
 -%>
 
+<% local v = require("luci.fcc.paths").asset_version() %>
 <%+header%>
 
-<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css?v=<%=v%>">
 
 <script>
 	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
@@ -99,7 +100,7 @@
 	</div>
 </div>
 
-<script src="<%=resource%>/fcc/fcc-common.js"></script>
-<script src="<%=resource%>/fcc/fcc-info.js"></script>
+<script src="<%=resource%>/fcc/fcc-common.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/fcc-info.js?v=<%=v%>"></script>
 
 <%+footer%>

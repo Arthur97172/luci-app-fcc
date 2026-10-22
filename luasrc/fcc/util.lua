@@ -234,6 +234,13 @@ function file_exists(path)
 	return path ~= nil and fs.access(path) ~= nil
 end
 
+--- Modification time of a path in seconds, or nil when it cannot be read.
+function mtime(path)
+	local st = fs.stat(path, "mtime")
+	if type(st) ~= "number" then return nil end
+	return st
+end
+
 --- Seconds since a path was last modified, or nil when it is not there.
 --
 -- A job lock is a directory, and a directory's mtime is what says how long it has

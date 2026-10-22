@@ -19,9 +19,10 @@
  of them without a way to ask for them one at a time.
 -%>
 
+<% local v = require("luci.fcc.paths").asset_version() %>
 <%+header%>
 
-<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css">
+<link rel="stylesheet" href="<%=resource%>/fcc/fcc.css?v=<%=v%>">
 
 <script>
 	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
@@ -217,7 +218,7 @@
 	</div>
 </div>
 
-<script src="<%=resource%>/fcc/fcc-common.js"></script>
-<script src="<%=resource%>/fcc/fcc-config.js"></script>
+<script src="<%=resource%>/fcc/fcc-common.js?v=<%=v%>"></script>
+<script src="<%=resource%>/fcc/fcc-config.js?v=<%=v%>"></script>
 
 <%+footer%>

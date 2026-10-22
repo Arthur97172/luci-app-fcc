@@ -291,6 +291,62 @@ relative/path
 }
 
 # ---------------------------------------------------------------------------
+# The asset stamp the views put in ?v=
+#
+# LuCI renders the page on every request, but the files it points at are plain
+# /luci-static/ URLs with no Cache-Control, so a browser may hold one from the
+# previous package. r9 showed what that costs: a cached r8 fcc-config.js
+# dereferenced a button r9 had removed, threw before loadConfig(), and left the
+# Configuration page's fields empty. The stamp has to be something that moves
+# on every package install, and the version file's mtime is exactly that.
+test_the_asset_stamp_follows_the_installed_version_file() {
+	if [ -z "$LUA" ]; then
+		skip "no Lua interpreter available"
+		return
+	fi
+
+	_ts_vf="$(mktemp)"
+	printf '1.0.2\n' > "$_ts_vf"
+
+	_ts_probe="$(mktemp)"
+	cat > "$_ts_probe" <<'LUA'
+local ROOT = assert(os.getenv("FCC_TEST_ROOT"))
+table.insert(package.loaders, 1, function(name)
+	local short = name:match("^luci%.fcc%.([a-z_]+)$")
+	if not short then return nil end
+	local fh = io.open(ROOT .. "/luasrc/fcc/" .. short .. ".lua", "r")
+	if not fh then return nil end
+	local src = fh:read("*a"); fh:close()
+	return assert(loadstring(src, "@" .. short))
+end)
+local mtime = tonumber(os.getenv("FCC_TEST_MTIME"))
+package.preload["nixio.fs"] = function()
+	return {
+		access = function() return true end,
+		stat = function(path, what)
+			if what == "mtime" and path == os.getenv("FCC_VERSION_FILE") then
+				return mtime
+			end
+			return nil
+		end
+	}
+end
+io.write(require("luci.fcc.paths").asset_version(), "\n")
+LUA
+
+	_ts_first="$(FCC_TEST_ROOT="$ROOT" FCC_TEST_MTIME=1700000000 \
+		FCC_VERSION_FILE="$_ts_vf" "$LUA" "$_ts_probe")"
+	_ts_second="$(FCC_TEST_ROOT="$ROOT" FCC_TEST_MTIME=1700000123 \
+		FCC_VERSION_FILE="$_ts_vf" "$LUA" "$_ts_probe")"
+	rm -f "$_ts_probe" "$_ts_vf"
+
+	assert_eq "1700000000" "$_ts_first" \
+		"the asset stamp is the installed version file's mtime"
+	assert_ne "$_ts_first" "$_ts_second" \
+		"and a reinstall asks the browser for a different URL"
+}
+
+# ---------------------------------------------------------------------------
 # Cross-language agreement: job locks
 #
 # util.FCC_LOCK_STALE_SECS / lock_dir() / job_running() are the same rule as
