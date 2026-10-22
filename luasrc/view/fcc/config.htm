@@ -174,24 +174,16 @@
 			</div>
 
 			<div class="fcc-help">
-				<p class="fcc-muted">
-					<%:Install downloads the FCC runtime and the agents you choose — every agent in the registry by default. This can take several minutes on a router; progress is shown below.%>
-				</p>
-
-				<p class="fcc-muted">
-					<%:Choose a single agent to install just that one. The upstream installer stops at the first agent it cannot install and rolls the whole run back, so this is how the agents that work on this device are installed when one of them does not.%>
-				</p>
-
-				<p class="fcc-muted">
-					<%:Reinstall removes the runtime and installs it again with every agent, keeping your configuration and data. Use it when an install is incomplete or an agent is broken: the upstream installer does not reinstall an agent that is already present, so nothing short of this will.%>
-				</p>
-
-				<p class="fcc-muted">
-					<%:Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo.%>
-				</p>
-
-				<p class="fcc-muted">
-					<%:An install deletes the rollback copy it made as soon as it ends: on success it is no longer needed, and on failure it has just been used to put the previous runtime back. Only a rollback that could not complete leaves a copy behind, under the backup path.%>
+				<!-- The one thing to know before pressing Install. The five notes
+				     that used to be here — what Install, Reinstall, Uninstall,
+				     purge and the backup path each do — are gone: the toolbar
+				     names the actions and the dialogs state what each one
+				     costs. What is left is the trap the buttons do not show,
+				     because it looks like the default rather than a choice:
+				     the whole registry is several gigabytes and a slow
+				     download on a router. -->
+				<p class="fcc-warn">
+					<%:Do not choose every agent in the registry when installing: the download is extremely slow and takes about 8 GB of storage. Choose only the agents you need.%>
 				</p>
 			</div>
 

@@ -39,9 +39,6 @@ msgstr ""
 msgid "All unsaved terminal state will be lost."
 msgstr ""
 
-msgid "An install deletes the rollback copy it made as soon as it ends: on success it is no longer needed, and on failure it has just been used to put the previous runtime back. Only a rollback that could not complete leaves a copy behind, under the backup path."
-msgstr ""
-
 msgid "An interactive terminal running a coding agent on this router. Sessions keep running after you close this page, and reattaching to one restores its screen."
 msgstr ""
 
@@ -75,9 +72,6 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
-msgid "Choose a single agent to install just that one. The upstream installer stops at the first agent it cannot install and rolls the whole run back, so this is how the agents that work on this device are installed when one of them does not."
-msgstr ""
-
 msgid "Clear log"
 msgstr ""
 
@@ -103,6 +97,9 @@ msgid "Diagnostics"
 msgstr ""
 
 msgid "Directory where an install sets its rollback copy aside — the previous runtime, and your data as it was before the install. It needs room for a full copy of the FCC data directory, so it is /tmp/fcc by default: /tmp is memory on OpenWrt, which keeps the copy off the flash the runtime lives on. The copy is removed as soon as the install ends either way. Set this to the install path if you would rather keep it beside the runtime."
+msgstr ""
+
+msgid "Do not choose every agent in the registry when installing: the download is extremely slow and takes about 8 GB of storage. Choose only the agents you need."
 msgstr ""
 
 msgid "Done."
@@ -142,9 +139,6 @@ msgid "Install"
 msgstr ""
 
 msgid "Install an agent first (Configuration → Agents)."
-msgstr ""
-
-msgid "Install downloads the FCC runtime and the agents you choose — every agent in the registry by default. This can take several minutes on a router; progress is shown below."
 msgstr ""
 
 msgid "Install path"
@@ -232,9 +226,6 @@ msgid "Refresh"
 msgstr ""
 
 msgid "Reinstall"
-msgstr ""
-
-msgid "Reinstall removes the runtime and installs it again with every agent, keeping your configuration and data. Use it when an install is incomplete or an agent is broken: the upstream installer does not reinstall an agent that is already present, so nothing short of this will."
 msgstr ""
 
 msgid "Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone."
@@ -352,9 +343,6 @@ msgid "Uninstall"
 msgstr ""
 
 msgid "Uninstall and remove all data"
-msgstr ""
-
-msgid "Uninstall removes the runtime and the agents but keeps your configuration under the install path, so a later install finds it again. Uninstall and remove all data also deletes that configuration and every saved backup; there is no undo."
 msgstr ""
 
 msgid "Update"

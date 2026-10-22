@@ -58,13 +58,26 @@
 
 .fcc-muted { color: var(--fcc-text-dim); }
 
-/* The three notes under the runtime toolbar. Each is a <p>, and the theme
- * gives every <p> a full line of margin above and below — right for prose that
- * stands on its own, wrong for three notes stacked under one toolbar, where
- * they read as three separate notices instead of one block of help and push
- * the progress bar off the screen. The margins are tightened here rather than
- * on .fcc-muted, which is used in other pages where the theme's spacing is
- * what is wanted. */
+/* The warning over the runtime toolbar. It is the only note left there, and
+ * it is a warning rather than a description: choosing the whole registry is
+ * what the toolbar offers by default and costs several gigabytes. Deep amber
+ * on pale yellow, with the exact shades from the design brief rather than the
+ * theme's variables, so it reads the same under Argon as under any other
+ * theme. */
+.fcc-warn {
+	color: #b45309;
+	background: #fffbeb;
+	border: 1px solid #fde68a;
+	border-radius: 4px;
+	padding: .5em .75em;
+}
+
+/* The notes under the runtime toolbar. Each is a <p>, and the theme gives every
+ * <p> a full line of margin above and below — right for prose that stands on
+ * its own, wrong for notes stacked under one toolbar, where they read as
+ * separate notices instead of one block of help and push the progress bar off
+ * the screen. The margins are tightened here rather than on .fcc-muted, which
+ * is used in other pages where the theme's spacing is what is wanted. */
 .fcc-help > p { margin: .45em 0; }
 .fcc-help > p:first-child { margin-top: 0; }
 .fcc-help > p:last-child { margin-bottom: .6em; }

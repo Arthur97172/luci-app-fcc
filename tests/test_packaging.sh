@@ -497,6 +497,35 @@ test_the_console_toolbar_is_ordered_and_has_no_cleanup_button() {
 	fi
 }
 
+test_the_runtime_help_is_one_warning() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
+
+	# The five notes that explained each toolbar action are gone — the buttons
+	# and their dialogs say that much. What is left is the one thing they do
+	# not: the whole registry is the default, and it costs GBs and minutes.
+	for _ts_old in \
+		'Install downloads the FCC runtime' \
+		'Choose a single agent to install' \
+		'Reinstall removes the runtime' \
+		'Uninstall removes the runtime' \
+		'An install deletes the rollback copy'; do
+		assert_not_contains "$(cat "$_ts_view")" "$_ts_old" \
+			"the runtime help no longer says '$_ts_old'"
+	done
+
+	assert_contains "$(cat "$_ts_view")" 'class="fcc-warn"' \
+		"the replacement is a warning block"
+	assert_contains "$(cat "$_ts_view")" 'Do not choose every agent in the registry' \
+		"it warns against choosing the whole registry"
+	assert_contains "$(cat "$_ts_view")" '8 GB' "and names the storage cost"
+
+	_ts_css_text="$(cat "$_ts_css")"
+	assert_contains "$_ts_css_text" 'color: #b45309' "the warning text is deep amber"
+	assert_contains "$_ts_css_text" 'background: #fffbeb' "on pale yellow"
+	assert_contains "$_ts_css_text" 'border: 1px solid #fde68a' "with a pale yellow border"
+}
+
 test_every_page_asset_is_cache_stamped() {
 	# The pages and the scripts ship in the same package, but a browser caches
 	# them separately: the page is rendered per request while a /luci-static/
