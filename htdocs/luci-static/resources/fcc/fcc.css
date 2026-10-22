@@ -410,3 +410,142 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
  * explaining it, are both gone with the note. The link was the only control
  * ever dimmed and the note the only one ever un-hidden; the link now points at
  * the LuCI reverse proxy and is always live (section 104.22). */
+
+/* ------------------------------------------------- FCC Server: local / LAN */
+/* The section acts on one machine, and this is the switch that says which.
+ * Two buttons rather than a dropdown: there are two states, both are worth
+ * naming on screen, and a select would hide one of them behind a click. */
+.fcc-mode {
+	display: inline-flex;
+	border: 1px solid var(--fcc-border);
+	border-radius: 4px;
+	overflow: hidden;
+	margin: .5em 0 .75em;
+}
+
+.fcc-mode-btn {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	padding: .35em .9em;
+	cursor: pointer;
+}
+
+.fcc-mode-btn + .fcc-mode-btn {
+	border-left: 1px solid var(--fcc-border);
+}
+
+.fcc-mode-btn.on {
+	background: var(--fcc-accent);
+	color: #fff;
+	font-weight: 600;
+}
+
+/* The two panels wrap what used to sit directly in the section body, so the
+ * inset the theme gives those blocks has to move with them. The wrappers take
+ * none of it themselves — their .cbi-value rows already carry the theme's own
+ * inset, and applying it to the wrapper as well would double the indent of
+ * every row in the LAN panel. */
+.fcc-page .cbi-section-node > #fcc-local-controls,
+.fcc-page .cbi-section-node > #fcc-remote-controls {
+	padding-left: 0;
+	padding-right: 0;
+}
+
+.fcc-page #fcc-local-controls > :not(.cbi-value),
+.fcc-page #fcc-remote-controls > :not(.cbi-value) {
+	padding-left: var(--section-inset, 1.25rem);
+	padding-right: var(--section-inset, 1.25rem);
+}
+
+/* A field and the button that acts on it, on the same line. The Username row
+ * is the one place in the panel where a button belongs beside an input rather
+ * than under it. */
+.fcc-remote-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5em;
+	align-items: center;
+}
+
+.fcc-remote-row input[type="text"] { flex: 1 1 12em; }
+
+/* The key status line: a dot and one sentence, then the one button that
+ * changes it. It is the same line whether the key exists or not, because the
+ * question "is there a key?" is asked at a glance either way. */
+.fcc-remote-key {
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5em;
+	align-items: center;
+	margin: .25em 0 .75em;
+}
+
+.fcc-key-state {
+	display: inline-flex;
+	align-items: center;
+	gap: .4em;
+}
+
+.fcc-key-state::before {
+	content: "\25CF";
+	font-size: .8em;
+	line-height: 1;
+}
+
+.fcc-key-state.on::before  { color: var(--fcc-ok); }
+.fcc-key-state.off::before { color: var(--fcc-text-dim); }
+.fcc-key-state.off         { color: var(--fcc-text-dim); }
+.fcc-key-state.fail        { color: var(--fcc-fail); }
+.fcc-key-state.fail::before { color: var(--fcc-fail); }
+
+.fcc-key-panel,
+.fcc-trust {
+	border: 1px solid var(--fcc-border);
+	border-radius: 4px;
+	padding: .6em .8em;
+	margin: .5em 0 .75em;
+	background: var(--fcc-bg-soft);
+}
+
+/* The public key and the command preview. Both are text the user copies or
+ * reads, so they wrap rather than scroll sideways on a phone. */
+.fcc-key-text {
+	margin: .4em 0 0;
+	padding: .5em .6em;
+	background: var(--fcc-bg-soft);
+	border: 1px solid var(--fcc-border);
+	border-radius: 3px;
+	font-family: monospace;
+	font-size: .85em;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+/* The advanced rows are the same .cbi-value rows as the two above them; the
+ * summary is the only new thing to style. */
+.fcc-advanced {
+	margin: .5em 0 .75em;
+}
+
+.fcc-advanced > summary {
+	cursor: pointer;
+	color: var(--fcc-text-dim);
+	padding: .25em 0;
+}
+
+.fcc-advanced[open] > summary {
+	color: inherit;
+	margin-bottom: .25em;
+}
+
+/* A control that is not usable yet. It is a link, so it cannot be disabled;
+ * it is made inert instead, and it keeps its place so the toolbar does not
+ * reflow when the key is configured. */
+.fcc-locked {
+	opacity: .45;
+	pointer-events: none;
+}

@@ -152,6 +152,361 @@
 		});
 	}
 
+	/* ------------------------------------------------- FCC Server: LAN target */
+
+	/* The FCC Server section controls one machine at a time: this router, or
+	 * one other machine on the LAN over SSH. Everything below is a copy of what
+	 * remote.sh reports — a click never assumes its own success, because the
+	 * answer comes from the machine that was asked. Nothing here holds a
+	 * password: the router has an Ed25519 key under /etc/fcc/ssh and UCI stores
+	 * only the address, the account and the pinned host fingerprint. */
+
+	var remote = {
+		target: 'local',
+		host: '',
+		user: '',
+		ssh_port: '22',
+		admin_port: '8082',
+		platform: 'linux',
+		service: 'fcc',
+		fingerprint: '',
+		public_key: '',
+		key_ready: false,
+		trusted: false,
+		ready: false,
+		ssh_available: true,
+		keygen_available: true,
+		scan_available: true,
+		tunnel_running: false,
+		pending_fingerprint: ''
+	};
+
+	function remoteStatus() { return FCC.$('#fcc-remote-status'); }
+
+	/* Which panel is on screen. Both exist all the time: hiding the one not in
+	 * use keeps every value and every pending fingerprint where it was when the
+	 * mode is switched back. */
+	function showRemoteMode(mode) {
+		var local = FCC.$('#fcc-local-controls');
+		var lan = FCC.$('#fcc-remote-controls');
+		if (local) { local.hidden = (mode === 'lan'); }
+		if (lan) { lan.hidden = (mode !== 'lan'); }
+		Array.prototype.forEach.call(
+			document.querySelectorAll('.fcc-mode-btn'),
+			function (b) {
+				var on = b.getAttribute('data-mode') === mode;
+				b.setAttribute('aria-pressed', on ? 'true' : 'false');
+				b.className = 'fcc-mode-btn' + (on ? ' on' : '');
+			}
+		);
+	}
+
+	function remoteFields() {
+		return {
+			host: FCC.$('#fcc-remote-host').value,
+			user: FCC.$('#fcc-remote-user').value,
+			ssh_port: FCC.$('#fcc-remote-ssh-port').value || '22',
+			admin_port: FCC.$('#fcc-remote-admin-port').value || '8082',
+			platform: FCC.$('#fcc-remote-platform').value,
+			service: FCC.$('#fcc-remote-service').value || 'fcc'
+		};
+	}
+
+	/* The three remote commands remote.sh would run for this configuration.
+	 * The presets are duplicated here on purpose: the preview is the one place
+	 * the user can read what a button sends without opening the script, and a
+	 * preview built by asking the script would be a fourth round trip for a
+	 * string the page can already spell. */
+	var REMOTE_VERBS = {
+		start: { linux: 'start', openwrt: 'start', windows: 'Start-Service' },
+		stop: { linux: 'stop', openwrt: 'stop', windows: 'Stop-Service' },
+		restart: { linux: 'restart', openwrt: 'restart', windows: 'Restart-Service' }
+	};
+
+	function previewCommands() {
+		var box = FCC.$('#fcc-remote-preview');
+		if (!box) { return; }
+		var v = remoteFields();
+		var service = v.service || 'fcc';
+		var lines = Object.keys(REMOTE_VERBS).map(function (op) {
+			var verb = REMOTE_VERBS[op][v.platform] || REMOTE_VERBS[op].linux;
+			if (v.platform === 'openwrt') { return '/etc/init.d/' + service + ' ' + verb; }
+			if (v.platform === 'windows') {
+				return 'powershell.exe -NoProfile -NonInteractive -Command "' +
+					verb + " -Name '" + service + "'\"";
+			}
+			return 'systemctl ' + verb + ' ' + service;
+		});
+		box.textContent = lines.join('\n');
+	}
+
+	function showTrustPanel(fingerprint) {
+		remote.pending_fingerprint = fingerprint || '';
+		var panel = FCC.$('#fcc-remote-trust-panel');
+		var shown = FCC.$('#fcc-remote-trust-fingerprint');
+		if (shown) { shown.textContent = remote.pending_fingerprint; }
+		if (panel) { panel.hidden = false; }
+	}
+
+	function hideTrustPanel() {
+		remote.pending_fingerprint = '';
+		var panel = FCC.$('#fcc-remote-trust-panel');
+		if (panel) { panel.hidden = true; }
+	}
+
+	function updateRemoteControls() {
+		var can = remote.ready === true;
+		Array.prototype.forEach.call(
+			document.querySelectorAll('[data-remote-op]'),
+			function (b) { b.disabled = !can; }
+		);
+
+		/* The Admin link is a link, so it cannot be disabled; it is made inert
+		 * instead. A click that did nothing would be worse than a link that
+		 * looks unavailable, and the proxy would answer 502 anyway. */
+		var link = FCC.$('#fcc-remote-admin-link');
+		if (link) {
+			if (can) {
+				link.classList.remove('fcc-locked');
+				link.removeAttribute('aria-disabled');
+			} else {
+				link.classList.add('fcc-locked');
+				link.setAttribute('aria-disabled', 'true');
+			}
+		}
+
+		var test = FCC.$('#fcc-remote-test');
+		if (test) { test.disabled = !(remote.host && remote.user); }
+
+		var gen = FCC.$('#fcc-remote-keygen');
+		if (gen) { gen.disabled = !remote.keygen_available; }
+	}
+
+	function renderRemoteState() {
+		var state = FCC.$('#fcc-remote-key-state');
+		if (state) {
+			state.className = 'fcc-key-state';
+			if (!remote.ssh_available) {
+				/* Without OpenSSH none of the four buttons can work, so this is
+				 * the line that says why rather than letting every click fail
+				 * at the same place. Dropbear's dbclient is not a substitute. */
+				state.className += ' fail';
+				state.textContent = FCC._('OpenSSH client is required (package openssh-client)');
+			} else if (remote.key_ready) {
+				state.className += ' on';
+				state.textContent = FCC._('SSH key configured');
+			} else {
+				state.className += ' off';
+				state.textContent = FCC._('SSH key not configured');
+			}
+		}
+
+		var gen = FCC.$('#fcc-remote-keygen');
+		if (gen) { gen.hidden = remote.key_ready; }
+		var show = FCC.$('#fcc-remote-showkey');
+		if (show) { show.hidden = !remote.key_ready; }
+
+		var fp = FCC.$('#fcc-remote-fingerprint');
+		if (fp && document.activeElement !== fp) { fp.value = remote.fingerprint || ''; }
+
+		previewCommands();
+		updateRemoteControls();
+	}
+
+	function fillRemoteFields() {
+		var map = {
+			'#fcc-remote-host': remote.host,
+			'#fcc-remote-user': remote.user,
+			'#fcc-remote-ssh-port': remote.ssh_port,
+			'#fcc-remote-admin-port': remote.admin_port,
+			'#fcc-remote-platform': remote.platform,
+			'#fcc-remote-service': remote.service
+		};
+		Object.keys(map).forEach(function (sel) {
+			var el = FCC.$(sel);
+			/* Not into the field being typed in: a refresh that arrives while
+			 * the address is half-written would undo the edit. */
+			if (el && el !== document.activeElement) { el.value = map[sel]; }
+		});
+	}
+
+	function loadRemote() {
+		return FCC.api('remote_get', {}, { method: 'GET' }).then(function (d) {
+			var c = d.config || {};
+			remote.target = c.target === 'lan' ? 'lan' : 'local';
+			remote.host = c.host || '';
+			remote.user = c.user || '';
+			remote.ssh_port = c.ssh_port || '22';
+			remote.admin_port = c.admin_port || '8082';
+			remote.platform = c.platform || 'linux';
+			remote.service = c.service || 'fcc';
+			remote.fingerprint = c.fingerprint || '';
+			remote.public_key = d.public_key || '';
+			remote.key_ready = d.key_ready === true;
+			remote.trusted = d.trusted === true;
+			remote.ready = d.ready === true;
+			remote.ssh_available = d.ssh_available !== false;
+			remote.keygen_available = d.keygen_available !== false;
+			remote.scan_available = d.scan_available !== false;
+			remote.tunnel_running = d.tunnel_running === true;
+
+			fillRemoteFields();
+			renderRemoteState();
+			showRemoteMode(remote.target);
+			return d;
+		});
+	}
+
+	function setRemoteMode(mode) {
+		showRemoteMode(mode);
+		if (mode === remote.target) { return Promise.resolve(); }
+		FCC.notice(remoteStatus(), '', '');
+		return FCC.api('remote_mode', { mode: mode }, { method: 'POST' })
+			.then(function () {
+				remote.target = mode;
+				return loadRemote();
+			})
+			.catch(function (err) {
+				/* The stored mode is the truth, so put the switch back where it
+				 * was rather than leaving the page describing a mode that was
+				 * never saved. */
+				showRemoteMode(remote.target);
+				FCC.notice(remoteStatus(), 'fail', err.message);
+			});
+	}
+
+	function saveRemoteConfig() {
+		return FCC.api('remote_set', remoteFields(), { method: 'POST' })
+			.then(function (r) {
+				/* A changed address or SSH port is a different host, and the
+				 * controller has already discarded the pinned key. Saying so is
+				 * the difference between "the buttons went grey for no reason"
+				 * and the one action that brings them back. */
+				if (r.trust_reset) {
+					hideTrustPanel();
+					FCC.notice(remoteStatus(), 'warn',
+						FCC._('The address or SSH port changed — the pinned host key was forgotten.'));
+				}
+				return loadRemote().then(function () { return r; });
+			})
+			.catch(function (err) {
+				FCC.notice(remoteStatus(), 'fail', err.message);
+				return null;
+			});
+	}
+
+	function remoteTest() {
+		FCC.notice(remoteStatus(), '', '');
+		saveRemoteConfig().then(function (saved) {
+			if (!saved) { return; }
+			return FCC.api('remote_test', {}, { method: 'POST' }).then(function (d) {
+				if (d.needs_trust) {
+					showTrustPanel(d.fingerprint);
+					FCC.notice(remoteStatus(), 'warn',
+						FCC._('The remote host key is not trusted yet. Confirm the fingerprint below.'));
+					return;
+				}
+				if (d.fingerprint_changed) {
+					/* A changed key is not a typo and retrying will not fix it.
+					 * The trust panel is hidden rather than filled in: pinning
+					 * the new key with one click is exactly what a machine that
+					 * changed identity should not get. */
+					hideTrustPanel();
+					FCC.notice(remoteStatus(), 'fail',
+						FCC._('The remote host key has changed. If you did not expect that, stop and check the machine.') +
+						' ' + FCC._('Expected') + ': ' + (d.expected || '—') +
+						' — ' + FCC._('Now') + ': ' + (d.fingerprint || '—'));
+					return loadRemote();
+				}
+				if (d.ok) {
+					hideTrustPanel();
+					FCC.notice(remoteStatus(), 'ok', FCC._('Connection works.'));
+				} else {
+					FCC.notice(remoteStatus(), 'fail',
+						d.error || d.output || FCC._('The connection failed.'));
+				}
+				return loadRemote();
+			});
+		}).catch(function (err) {
+			FCC.notice(remoteStatus(), 'fail', err.message);
+		});
+	}
+
+	function remoteTrust() {
+		if (!remote.pending_fingerprint) { return; }
+		FCC.notice(remoteStatus(), '', '');
+		FCC.api('remote_trust', { fingerprint: remote.pending_fingerprint }, { method: 'POST' })
+			.then(function (d) {
+				if (d.ok) {
+					hideTrustPanel();
+					FCC.notice(remoteStatus(), 'ok', FCC._('The remote host key is now trusted.'));
+				} else {
+					FCC.notice(remoteStatus(), 'fail', d.error || FCC._('The host key could not be trusted.'));
+				}
+				return loadRemote();
+			})
+			.catch(function (err) {
+				FCC.notice(remoteStatus(), 'fail', err.message);
+			});
+	}
+
+	function remoteForget() {
+		if (!window.confirm(FCC._('Forget the pinned host key? The remote host will have to be trusted again before the buttons work.'))) {
+			return;
+		}
+		FCC.notice(remoteStatus(), '', '');
+		FCC.api('remote_forget', {}, { method: 'POST' }).then(function () {
+			hideTrustPanel();
+			FCC.notice(remoteStatus(), 'ok', FCC._('The pinned host key was forgotten.'));
+			return loadRemote();
+		}).catch(function (err) {
+			FCC.notice(remoteStatus(), 'fail', err.message);
+		});
+	}
+
+	function remoteKeygen() {
+		FCC.notice(remoteStatus(), '', '');
+		FCC.api('remote_keygen', {}, { method: 'POST' }).then(function (d) {
+			if (!d.ok) {
+				FCC.notice(remoteStatus(), 'fail', d.error || FCC._('The SSH key could not be created.'));
+				return;
+			}
+			remote.public_key = d.public_key || '';
+			var panel = FCC.$('#fcc-remote-key-panel');
+			var text = FCC.$('#fcc-remote-pubkey');
+			if (text) { text.textContent = remote.public_key; }
+			if (panel) { panel.hidden = false; }
+			FCC.notice(remoteStatus(), 'ok', d.existing
+				? FCC._('The existing key is shown below.')
+				: FCC._('A new SSH key was generated.'));
+			return loadRemote();
+		}).catch(function (err) {
+			FCC.notice(remoteStatus(), 'fail', err.message);
+		});
+	}
+
+	function remoteControl(op) {
+		/* The same warning as the local controls: stopping or restarting the
+		 * server does not touch the agent sessions, which keep running cut off
+		 * from the server they were talking to. The router cannot count the
+		 * sessions on another machine, so the count is left out. */
+		if ((op === 'stop' || op === 'restart') &&
+			!window.confirm(FCC._('Stopping FCC Server may affect active Coding Agent sessions.'))) {
+			return;
+		}
+		FCC.notice(remoteStatus(), '', '');
+		FCC.api('remote_control', { op: op }, { method: 'POST' }).then(function (d) {
+			if (d.ok) {
+				FCC.notice(remoteStatus(), 'ok', FCC._('Done.'));
+			} else {
+				FCC.notice(remoteStatus(), 'fail',
+					d.error || d.output || FCC._('The operation failed.'));
+			}
+		}).catch(function (err) {
+			FCC.notice(remoteStatus(), 'fail', err.message);
+		});
+	}
+
 	/* -------------------------------------------------------- runtime + jobs */
 
 	function renderRuntime(d) {
@@ -358,12 +713,68 @@
 		FCC.$('#fcc-save').addEventListener('click', saveConfig);
 		var agentPicker = FCC.$('#fcc-runtime-agent');
 
+		/* Scoped to the local panel: the LAN panel has its own buttons with
+		 * their own handler, and an unscoped [data-op] query would bind the
+		 * local operation to a remote click the day the two toolbars share a
+		 * data attribute by accident. */
 		Array.prototype.forEach.call(
-			document.querySelectorAll('[data-op]'),
+			document.querySelectorAll('#fcc-local-controls [data-op]'),
 			function (b) {
 				b.addEventListener('click', function () { serverOp(b.getAttribute('data-op')); });
 			}
 		);
+
+		Array.prototype.forEach.call(
+			document.querySelectorAll('.fcc-mode-btn'),
+			function (b) {
+				b.addEventListener('click', function () {
+					setRemoteMode(b.getAttribute('data-mode'));
+				});
+			}
+		);
+
+		Array.prototype.forEach.call(
+			document.querySelectorAll('[data-remote-op]'),
+			function (b) {
+				b.addEventListener('click', function () {
+					remoteControl(b.getAttribute('data-remote-op'));
+				});
+			}
+		);
+
+		FCC.$('#fcc-remote-test').addEventListener('click', remoteTest);
+		FCC.$('#fcc-remote-keygen').addEventListener('click', remoteKeygen);
+		FCC.$('#fcc-remote-showkey').addEventListener('click', function () {
+			var panel = FCC.$('#fcc-remote-key-panel');
+			if (!panel) { return; }
+			panel.hidden = !panel.hidden;
+			if (!panel.hidden) {
+				var text = FCC.$('#fcc-remote-pubkey');
+				if (text) { text.textContent = remote.public_key; }
+			}
+		});
+		FCC.$('#fcc-remote-trust').addEventListener('click', remoteTrust);
+		FCC.$('#fcc-remote-trust-cancel').addEventListener('click', hideTrustPanel);
+		FCC.$('#fcc-remote-forget').addEventListener('click', remoteForget);
+
+		/* Every remote field is saved when it changes rather than behind a Save
+		 * button: the panel is one switch away from a control that acts on a
+		 * machine, and a half-edited address that looks applied is the sort of
+		 * thing that sends a stop to the wrong host. The preview follows the
+		 * service and platform as they are typed, before the save. */
+		['#fcc-remote-host', '#fcc-remote-user', '#fcc-remote-ssh-port',
+			'#fcc-remote-admin-port', '#fcc-remote-service',
+			'#fcc-remote-platform'].forEach(function (sel) {
+			var field = FCC.$(sel);
+			if (!field) { return; }
+			field.addEventListener('change', function () {
+				previewCommands();
+				saveRemoteConfig();
+			});
+			if (sel === '#fcc-remote-service' || sel === '#fcc-remote-platform') {
+				field.addEventListener('input', previewCommands);
+			}
+		});
 
 		/* One button covers Install and Reinstall, and the two jobs it can start
 		 * are not the same operation.
@@ -448,6 +859,12 @@
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 		refreshAll().catch(function (err) {
+			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
+		});
+		/* A second, independent call: the local status does not carry the mode
+		 * or anything about the remote host, and the LAN panel still has to be
+		 * drawn — disabled — on a device where nothing remote is configured. */
+		loadRemote().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 	}

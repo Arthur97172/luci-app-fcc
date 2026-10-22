@@ -200,6 +200,71 @@ check("valid_bind/rejects_injection",util.valid_bind("127.0.0.1;id") == nil)
 check("valid_bind/rejects_nil",      util.valid_bind(nil) == nil)
 
 -- ---------------------------------------------------------------------------
+-- valid_remote_host — a private IPv4 literal, nothing else
+--
+-- The address becomes an ssh argument and a known_hosts entry, so the set is
+-- deliberately narrow: a hostname could resolve to a WAN address, and
+-- loopback names this router rather than the remote machine.
+-- ---------------------------------------------------------------------------
+check("valid_remote_host/192",       util.valid_remote_host("192.168.5.20") == "192.168.5.20")
+check("valid_remote_host/10",        util.valid_remote_host("10.0.0.1") == "10.0.0.1")
+check("valid_remote_host/172_low",   util.valid_remote_host("172.16.0.1") == "172.16.0.1")
+check("valid_remote_host/172_high",  util.valid_remote_host("172.31.255.255") == "172.31.255.255")
+check("valid_remote_host/linklocal", util.valid_remote_host("169.254.1.1") == "169.254.1.1")
+check("valid_remote_host/trim",      util.valid_remote_host("  192.168.5.20  ") == "192.168.5.20")
+check("valid_remote_host/rejects_public",    util.valid_remote_host("8.8.8.8") == nil)
+check("valid_remote_host/rejects_loopback",  util.valid_remote_host("127.0.0.1") == nil)
+check("valid_remote_host/rejects_any",       util.valid_remote_host("0.0.0.0") == nil)
+check("valid_remote_host/rejects_172_32",    util.valid_remote_host("172.32.0.1") == nil)
+check("valid_remote_host/rejects_octal",     util.valid_remote_host("192.168.05.1") == nil)
+check("valid_remote_host/rejects_300",       util.valid_remote_host("192.168.300.1") == nil)
+check("valid_remote_host/rejects_hostname",  util.valid_remote_host("nas.lan") == nil)
+check("valid_remote_host/rejects_port",      util.valid_remote_host("192.168.5.20:22") == nil)
+check("valid_remote_host/rejects_injection", util.valid_remote_host("192.168.5.20;id") == nil)
+check("valid_remote_host/rejects_empty",     util.valid_remote_host("") == nil)
+check("valid_remote_host/rejects_nil",       util.valid_remote_host(nil) == nil)
+
+-- ---------------------------------------------------------------------------
+-- valid_remote_user / valid_remote_service — one word, no leading dash
+-- ---------------------------------------------------------------------------
+check("valid_remote_user/plain",   util.valid_remote_user("fcc") == "fcc")
+check("valid_remote_user/dotted",  util.valid_remote_user("john.doe") == "john.doe")
+check("valid_remote_user/at",      util.valid_remote_user("user@host") == "user@host")
+check("valid_remote_user/rejects_dash",      util.valid_remote_user("-oProxyCommand") == nil)
+check("valid_remote_user/rejects_space",     util.valid_remote_user("john doe") == nil)
+check("valid_remote_user/rejects_injection", util.valid_remote_user("root;id") == nil)
+check("valid_remote_user/rejects_long",      util.valid_remote_user(string.rep("a", 65)) == nil)
+check("valid_remote_user/rejects_empty",     util.valid_remote_user("") == nil)
+check("valid_remote_user/rejects_nil",       util.valid_remote_user(nil) == nil)
+check("valid_remote_service/systemd",  util.valid_remote_service("fcc.service") == "fcc.service")
+check("valid_remote_service/at",       util.valid_remote_service("fcc@1") == "fcc@1")
+check("valid_remote_service/rejects_dash", util.valid_remote_service("-rf") == nil)
+check("valid_remote_service/rejects_shell",util.valid_remote_service("fcc;reboot") == nil)
+
+-- ---------------------------------------------------------------------------
+-- valid_remote_platform — the three presets remote.sh knows
+-- ---------------------------------------------------------------------------
+check("valid_remote_platform/linux",   util.valid_remote_platform("linux") == "linux")
+check("valid_remote_platform/openwrt", util.valid_remote_platform("openwrt") == "openwrt")
+check("valid_remote_platform/windows", util.valid_remote_platform("windows") == "windows")
+check("valid_remote_platform/rejects_bsd",   util.valid_remote_platform("bsd") == nil)
+check("valid_remote_platform/rejects_empty", util.valid_remote_platform("") == nil)
+check("valid_remote_platform/rejects_nil",   util.valid_remote_platform(nil) == nil)
+
+-- ---------------------------------------------------------------------------
+-- valid_fingerprint — one SHA256: base64 key fingerprint
+-- ---------------------------------------------------------------------------
+local _fp43 = "SHA256:" .. string.rep("A", 43)
+check("valid_fingerprint/accepts",   util.valid_fingerprint(_fp43) == _fp43)
+check("valid_fingerprint/padding",   util.valid_fingerprint("SHA256:" .. string.rep("A", 42) .. "=") ~= nil)
+check("valid_fingerprint/rejects_md5",       util.valid_fingerprint("MD5:" .. string.rep("a", 47)) == nil)
+check("valid_fingerprint/rejects_short",     util.valid_fingerprint("SHA256:" .. string.rep("A", 10)) == nil)
+check("valid_fingerprint/rejects_nocolon",   util.valid_fingerprint("SHA256" .. string.rep("A", 43)) == nil)
+check("valid_fingerprint/rejects_injection", util.valid_fingerprint("SHA256:" .. string.rep("A", 43) .. ";id") == nil)
+check("valid_fingerprint/rejects_empty",     util.valid_fingerprint("") == nil)
+check("valid_fingerprint/rejects_nil",       util.valid_fingerprint(nil) == nil)
+
+-- ---------------------------------------------------------------------------
 -- json_escape / json_encode
 -- ---------------------------------------------------------------------------
 eq("json_escape/quote",  util.json_escape('a"b'), 'a\\"b')

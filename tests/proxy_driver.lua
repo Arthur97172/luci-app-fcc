@@ -53,6 +53,35 @@ package.preload["nixio.fs"] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- luci.model.uci — the three values the proxy reads
+--
+-- port(), target() and remote_admin_port() all go through
+-- luci.fcc.paths.uci_cursor(). A table-backed cursor lets a check switch the
+-- control target the same way the Configuration page does, without a UCI
+-- database on the test machine.
+-- ---------------------------------------------------------------------------
+local UCI = {
+	port = "8082",
+	control_target = "local",
+	remote_admin_port = "8082",
+	remote_host = "",
+	remote_user = "",
+}
+
+package.preload["luci.model.uci"] = function()
+	return {
+		cursor = function()
+			return {
+				get = function(_, config, section, option)
+					if config ~= "fcc" or section ~= "main" then return nil end
+					return UCI[option]
+				end,
+			}
+		end,
+	}
+end
+
+-- ---------------------------------------------------------------------------
 -- luci.http
 -- ---------------------------------------------------------------------------
 local ENV = {}
@@ -266,6 +295,33 @@ eq("serve/trailing_slash_dropped", sent.uri, "http://127.0.0.1:8082/admin")
 sent = serve_ok({ REQUEST_URI = "/admin/services/fcc/adminproxy/admin/x.js" },
 	{ headers = { ["Content-Type"] = "application/javascript" }, chunks = { "x" } })
 eq("serve/root_mounted_luci", sent.uri, "http://127.0.0.1:8082/admin/admin/x.js")
+
+-- ---------------------------------------------------------------------------
+-- LAN mode: the same proxy, one hop further away
+--
+-- A remote FCC server refuses a non-loopback peer exactly as a local one does,
+-- so LAN mode cannot point the proxy at 192.168.5.20:8082 either. remote.sh
+-- opens an ssh -L 127.0.0.1:18082:127.0.0.1:<admin-port>, and the proxy talks to
+-- the local end of it; the remote server then sees its own loopback.
+-- ---------------------------------------------------------------------------
+
+UCI.control_target = "lan"
+
+eq("lan/upstream_is_the_tunnel", proxy.upstream(), "http://127.0.0.1:18082")
+
+-- With no tunnel and no way to start one, the request is refused — and it is
+-- refused *instead of* falling back to the local port. Serving the router's own
+-- Admin UI under a page that says LAN would be worse than an error, because the
+-- buttons would then act on the wrong machine.
+reset({})
+ANSWER = { headers = { ["Content-Type"] = "text/html" }, chunks = { "<html></html>" } }
+proxy.serve()
+eq("lan/no_tunnel_is_502", STATUS and STATUS.code, 502)
+contains("lan/failure_names_the_tunnel", written(), "SSH tunnel")
+absent("lan/failure_does_not_name_the_local_port", written(), "127.0.0.1:8082")
+check("lan/no_fallback_to_the_local_server", SENT == nil)
+
+UCI.control_target = "local"
 
 -- ---------------------------------------------------------------------------
 -- What comes back

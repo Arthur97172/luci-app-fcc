@@ -1188,4 +1188,90 @@ test_the_version_script_composes_the_package_version() {
 		sh "$ROOT/scripts/version.sh" --tag
 }
 
+# ---------------------------------------------------------------------------
+# The FCC Server section controls one machine at a time
+#
+# [This router] [LAN] switches which, and the local panel keeps exactly the
+# controls it had. The LAN panel has the same four buttons, its two fields, a
+# key line and one collapsed block of advanced settings — the last of those is
+# what keeps a feature with eight stored values from turning the section into a
+# form.
+# ---------------------------------------------------------------------------
+
+test_the_server_section_switches_between_this_router_and_the_lan() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
+
+	assert_contains "$(cat "$_ts_view")" 'data-mode="local"' \
+		"the switch offers this router"
+	assert_contains "$(cat "$_ts_view")" 'data-mode="lan"' \
+		"and the LAN"
+	assert_contains "$(cat "$_ts_view")" '<%:This router%>' \
+		"the local side is named in words rather than as a mode flag"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-local-controls"' \
+		"the local panel is a block of its own"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-controls" hidden' \
+		"and the LAN panel starts hidden"
+
+	# The four buttons exist on both sides. The local ones keep data-op; the LAN
+	# ones are data-remote-op, so the two handlers cannot bind to each other's
+	# buttons.
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+		'data-remote-op="start"' "LAN mode has Start"
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+		'data-remote-op="stop"' "LAN mode has Stop"
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+		'data-remote-op="restart"' "LAN mode has Restart"
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+		'id="fcc-remote-admin-link"' "LAN mode has Open FCC Admin"
+	assert_contains "$(cat "$_ts_js")" \
+		"document.querySelectorAll('#fcc-local-controls [data-op]')" \
+		"the local handler is scoped to the local panel"
+
+	# The two fields and the button that acts on them.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-host"' "the address field exists"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-user"' "the account field exists"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-test"' "and the connection test"
+
+	# The key line, and the panels that hold the public key and the fingerprint
+	# to confirm. They are elements the script fills, so they must be present
+	# even before anything is configured.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-key-state"' "the key status line exists"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-keygen"' "with the first-use button"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-pubkey"' "and somewhere to show the key"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-trust-fingerprint"' \
+		"the fingerprint to confirm has its own element"
+
+	# Advanced settings are collapsed: the section is meant to stay small, and
+	# everything that is only touched once belongs behind the summary.
+	assert_contains "$(cat "$_ts_view")" '<details class="fcc-advanced" id="fcc-remote-advanced">' \
+		"the advanced settings are a collapsed details block"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-ssh-port"' "SSH port is in it"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-platform"' "so is the remote platform"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-admin-port"' "and the Admin port"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-preview"' "and the command preview"
+
+	# The preview is the same three presets remote.sh runs, so a reader can see
+	# what a click sends without opening the script.
+	assert_contains "$(cat "$_ts_js")" "REMOTE_VERBS" \
+		"the preview is built from the platform's verbs"
+	assert_contains "$(cat "$_ts_js")" "'systemctl ' + verb + ' ' + service" \
+		"Linux is systemctl"
+	assert_contains "$(cat "$_ts_js")" "'/etc/init.d/' + service + ' ' + verb" \
+		"OpenWrt is its init script"
+	assert_contains "$(cat "$_ts_js")" "'Start-Service'" "Windows is PowerShell"
+
+	# The buttons are disabled until the key, the trust and the OpenSSH client
+	# are all in place — the same `ready` flag the backend computes.
+	assert_contains "$(cat "$_ts_js")" 'b.disabled = !can' \
+		"the LAN buttons follow the readiness flag"
+	assert_contains "$(cat "$_ts_js")" 'remote.ready = d.ready === true' \
+		"which is read from the backend rather than inferred"
+	assert_contains "$(cat "$_ts_css")" '.fcc-mode-btn.on' \
+		"the selected side of the switch is styled"
+	assert_contains "$(cat "$_ts_css")" '.fcc-locked' \
+		"and the Admin link has a not-yet-usable state"
+}
+
 tests_main

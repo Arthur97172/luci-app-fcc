@@ -547,6 +547,79 @@ function valid_bind(b)
 end
 
 -- ---------------------------------------------------------------------------
+-- Remote control
+--
+-- The same rules are implemented again in remote.sh, which is what actually
+-- builds the ssh command line; these copies exist so a value is refused before
+-- it is stored in UCI, not only when it is used.
+-- ---------------------------------------------------------------------------
+
+--- The remote host: a private/LAN IPv4 literal and nothing else.
+--
+-- A hostname is refused on purpose. "The computer on my desk" is what the
+-- setting means, and a name can resolve to a WAN address; loopback names this
+-- router rather than the remote. The ranges are the link-local/private ones
+-- (RFC 1918 plus 169.254/16), which is exactly what a LAN control target is.
+function valid_remote_host(h)
+	if type(h) ~= "string" then return nil end
+	h = h:gsub("^%s+", ""):gsub("%s+$", "")
+	if #h < 7 or #h > 15 then return nil end
+	local a, b, c, d = h:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+	if not a then return nil end
+	local parts = { a, b, c, d }
+	for _, o in ipairs(parts) do
+		-- Leading zeroes are octal to some parsers and decimal to others.
+		if #o > 1 and o:sub(1, 1) == "0" then return nil end
+		if tonumber(o) > 255 then return nil end
+	end
+	a, b = tonumber(a), tonumber(b)
+	if a == 10 then return h end
+	if a == 192 and b == 168 then return h end
+	if a == 172 and b >= 16 and b <= 31 then return h end
+	if a == 169 and b == 254 then return h end
+	return nil
+end
+
+--- An account name (or a service name) that can be passed as one argv word.
+--  A leading dash would become an option to ssh, so it is refused.
+local function valid_remote_word(v)
+	if type(v) ~= "string" then return nil end
+	v = v:gsub("^%s+", ""):gsub("%s+$", "")
+	if #v < 1 or #v > 64 then return nil end
+	if v:match("^%-") then return nil end
+	if not v:match("^[A-Za-z0-9_.@%-]+$") then return nil end
+	return v
+end
+
+function valid_remote_user(u)
+	return valid_remote_word(u)
+end
+
+function valid_remote_service(s)
+	return valid_remote_word(s)
+end
+
+--- The three command presets remote.sh knows how to run.
+local REMOTE_PLATFORMS = { linux = true, openwrt = true, windows = true }
+
+function valid_remote_platform(p)
+	if type(p) ~= "string" then return nil end
+	if not REMOTE_PLATFORMS[p] then return nil end
+	return p
+end
+
+--- An ssh-keygen SHA256 fingerprint, e.g. SHA256:47DEQpj8HBSa+/TImW+5JCeu...
+function valid_fingerprint(f)
+	if type(f) ~= "string" then return nil end
+	local rest = f:match("^SHA256:([A-Za-z0-9+/=]+)$")
+	if not rest then return nil end
+	if #rest < 40 or #rest > 44 then return nil end
+	-- Padding may only be at the end.
+	if rest:find("=", 1, true) and not rest:match("^[A-Za-z0-9+/]+=*$") then return nil end
+	return f
+end
+
+-- ---------------------------------------------------------------------------
 -- JSON
 -- ---------------------------------------------------------------------------
 

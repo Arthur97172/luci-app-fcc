@@ -22,6 +22,15 @@ if [ ! -f /etc/config/fcc ]; then
 			option session_backend 'tmux'
 			option agent_backend 'python'
 			option log_level 'info'
+			option backup_keep '3'
+			option control_target 'local'
+			option remote_host ''
+			option remote_user ''
+			option remote_ssh_port '22'
+			option remote_admin_port '8082'
+			option remote_platform 'linux'
+			option remote_service 'fcc'
+			option remote_fingerprint ''
 	EOF
 fi
 

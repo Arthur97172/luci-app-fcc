@@ -73,6 +73,7 @@ local http       = require "luci.http"
 local httpclient = require "luci.httpclient"
 local ltn12      = require "luci.ltn12"
 local paths      = require "luci.fcc.paths"
+local util       = require "luci.fcc.util"
 
 --- The path this proxy is mounted at, as it appears after SCRIPT_NAME. It is a
 --  constant because the controller registers the same route.
@@ -82,6 +83,14 @@ ROUTE = "/admin/services/fcc/adminproxy"
 FCC_ROOT = "/admin"
 
 DEFAULT_PORT = 8082
+
+--- The local end of the SSH tunnel used when the control target is a LAN host.
+--
+-- Fixed, like the port remote.sh forwards from: the two files must agree, and a
+-- test pins that they do. It is above the registered range's busy end and below
+-- the ephemeral one, and it only ever listens on loopback.
+TUNNEL_PORT = 18082
+TUNNEL_PID  = "/tmp/fcc-remote-tunnel.pid"
 
 --- The largest request body the proxy will forward.
 --
@@ -151,6 +160,90 @@ function port()
 	return p
 end
 
+--- Where the FCC Server section points its controls: this router or the LAN.
+function target()
+	local c = paths.uci_cursor()
+	local t = c and c:get("fcc", "main", "control_target")
+	if t == "lan" then return "lan" end
+	return "local"
+end
+
+--- The remote FCC server's Admin port, from UCI.
+function remote_admin_port()
+	local c = paths.uci_cursor()
+	local p = c and tonumber(c:get("fcc", "main", "remote_admin_port"))
+	if not p or p < 1 or p > 65535 then return DEFAULT_PORT end
+	return p
+end
+
+-- ---------------------------------------------------------------------------
+-- The Admin tunnel (LAN mode)
+--
+-- A direct connection to the remote FCC port cannot work: the server refuses
+-- every admin route unless the TCP peer is loopback. remote.sh therefore opens
+-- an ssh -L 127.0.0.1:18082:127.0.0.1:<admin-port>, and this proxy talks to the
+-- local end of it. The remote server then sees a loopback peer, exactly as it
+-- does for a local installation.
+-- ---------------------------------------------------------------------------
+
+--- The tunnel's pid, but only when /proc says it is still our ssh process.
+--
+-- The pid file alone is not evidence: the number can have been reused by an
+-- unrelated process. Both markers are required — -N and the exact forward —
+-- because "an ssh process" is not the same thing as this package's tunnel.
+local function tunnel_pid()
+	local said = util.read_file(TUNNEL_PID)
+	if not said then return nil end
+	local pid = said:match("^%s*(%d+)%s*$")
+	if not pid then return nil end
+	local cmd = util.read_file("/proc/" .. pid .. "/cmdline")
+	if not cmd then return nil end
+	cmd = " " .. cmd:gsub("%z", " ") .. " "
+	if not cmd:find(" -N ", 1, true) then return nil end
+	if not cmd:find(" -L 127.0.0.1:" .. TUNNEL_PORT .. ":127.0.0.1:", 1, true) then
+		return nil
+	end
+	return pid
+end
+
+--- Is the local end of the tunnel accepting connections?
+--
+-- /proc/net/tcp is the portable check on OpenWrt. 127.0.0.1 is 0100007F in
+-- this table, and 0A is LISTEN.
+local function tunnel_listening()
+	local fh = io.open("/proc/net/tcp", "r")
+	if not fh then return false end
+	local want = string.format("0100007F:%04X", TUNNEL_PORT)
+	local found = false
+	for line in fh:lines() do
+		local addr, state = line:match("^%s*%d+:%s+(%x+:%x+)%s+%x+:%x+%s+(%x+)")
+		if addr == want and state == "0A" then found = true break end
+	end
+	fh:close()
+	return found
+end
+
+--- Make sure the tunnel is up, starting it when it is not.
+--
+-- This runs on every proxied request in LAN mode, so the common case is two
+-- small reads of /proc and no process at all. The script is exec'd only when
+-- the tunnel is genuinely absent — a dead tunnel is restarted here rather than
+-- left to surface as a 502 on the next click.
+local function ensure_tunnel()
+	if tunnel_pid() and tunnel_listening() then return true end
+	local script = paths.script("remote")
+	if not script or not util.file_exists(script) then
+		return false, "the remote control script is missing"
+	end
+	local out = util.exec_argv(script, { "tunnel-ensure" })
+	if tunnel_pid() and tunnel_listening() then return true end
+	local d = util.json_decode((out or ""):match("^[^\n]*") or "")
+	if type(d) == "table" and type(d.error) == "string" then
+		return false, d.error
+	end
+	return false, "the SSH tunnel could not be started"
+end
+
 --- The upstream this proxy talks to.
 --
 -- Always loopback, and that is the whole point: it is what makes the forwarded
@@ -158,8 +251,26 @@ end
 -- has to be listening on loopback, which is why a bind to one LAN address is
 -- treated as loopback by the init script (section 104.23) — such a server is
 -- one this proxy cannot reach.
+--
+-- In LAN mode it is the local end of the SSH tunnel instead: the remote
+-- server's own loopback is what the far end of the forward reaches.
 function upstream()
+	if target() == "lan" then
+		return "http://127.0.0.1:" .. TUNNEL_PORT
+	end
 	return "http://127.0.0.1:" .. port()
+end
+
+--- The authority the upstream expects in the Host header.
+--
+-- A local request names the router's FCC port; a tunnelled one names the
+-- remote server's Admin port, because that is the authority the remote server
+-- considers itself to be.
+local function host_header()
+	if target() == "lan" then
+		return "127.0.0.1:" .. remote_admin_port()
+	end
+	return "127.0.0.1:" .. port()
 end
 
 -- ---------------------------------------------------------------------------
@@ -440,6 +551,15 @@ end
 -- about are the ones the templates and the controller ask for. The rest of the
 -- API answers in the same shape, so a page that reads it is not a new idea.
 local function gateway_error(detail)
+	-- In LAN mode the address the proxy dials is the tunnel's own end, which
+	-- would read to the user as a local port that has nothing to do with their
+	-- remote machine. Name the remote server instead.
+	local where
+	if target() == "lan" then
+		where = "the remote FCC server through the SSH tunnel"
+	else
+		where = "the FCC server on <code>" .. upstream() .. "</code>"
+	end
 	http.status(502, "Bad Gateway")
 	http.header("Content-Type", "text/html; charset=utf-8")
 	http.write([[
@@ -448,7 +568,7 @@ local function gateway_error(detail)
 <style>body{font:14px/1.5 system-ui,sans-serif;margin:2rem;max-width:44rem}
 code{background:#f2f2f2;padding:.1rem .3rem;border-radius:3px}</style></head>
 <body><h1>FCC Admin is not reachable</h1>
-<p>LuCI could not reach the FCC server on <code>]] .. upstream() .. [[</code>.</p>
+<p>LuCI could not reach ]] .. where .. [[.</p>
 <p>]] .. detail .. [[</p>
 <p>Start it from the <strong>Configuration</strong> page, or check
 <strong>Basic Information</strong> for the server state and its log.</p>
@@ -474,6 +594,20 @@ function serve()
 		end
 	end
 
+	-- LAN mode reaches the remote server through the SSH tunnel, so the tunnel
+	-- has to exist before the first byte is forwarded. A failure here is an
+	-- answer to the request, not a reason to try the local port instead: the
+	-- local server may well be running, and showing its Admin UI while the
+	-- page says "LAN" would be worse than an error.
+	if target() == "lan" then
+		local up, why = ensure_tunnel()
+		if not up then
+			return gateway_error(
+				"The SSH tunnel to the remote FCC server could not be opened: " ..
+				tostring(why) .. ".")
+		end
+	end
+
 	local uri = upstream() .. FCC_ROOT .. rest
 	local query = env("QUERY_STRING")
 	if query ~= "" then uri = uri .. "?" .. query end
@@ -491,7 +625,7 @@ function serve()
 	-- first undoing a content coding. Connection: close is what tells the
 	-- upstream to end a response that carries no length of its own.
 	local headers = {
-		Host = "127.0.0.1:" .. port(),
+		Host = host_header(),
 		["Accept-Encoding"] = "identity",
 		Connection = "close",
 	}

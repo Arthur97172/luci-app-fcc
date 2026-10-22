@@ -53,6 +53,13 @@ act_agent_versions
 act_config_set
 act_install_runtime
 act_reinstall_runtime
+act_remote_control
+act_remote_forget
+act_remote_keygen
+act_remote_mode
+act_remote_set
+act_remote_test
+act_remote_trust
 act_server
 act_session_cleanup
 act_session_close

@@ -19,6 +19,19 @@ msgstr ""
 msgid "%d agent session(s) are running and will be left as they are."
 msgstr "%d 个智能体会话正在运行，将保持原状。"
 
+msgid "A new SSH key was generated."
+msgstr "已生成新的 SSH 密钥。"
+
+msgid ""
+"A private IPv4 address. Hostnames are not accepted: a name can resolve to a "
+"WAN address."
+msgstr "私有 IPv4 地址。不接受主机名：主机名可能解析为 WAN 地址。"
+
+msgid ""
+"Add this key to the remote account's ~/.ssh/authorized_keys, then test the "
+"connection again."
+msgstr "将此密钥添加到远程账号的 ~/.ssh/authorized_keys，然后重新测试连接。"
+
 msgid ""
 "Address the FCC server listens on. The FCC Admin page is served through "
 "LuCI, which reaches the server on 127.0.0.1, so keep that unless another "
@@ -32,6 +45,12 @@ msgstr ""
 "会把服务器暴露到局域网，并会添加一条仅限局域网的防火墙规则；该端口绝不会对 "
 "WAN 开放。其他任何地址都会被收窄为 127.0.0.1，因为无法通过这类地址打开 Admin "
 "页面。"
+
+msgid "Admin port"
+msgstr "Admin 端口"
+
+msgid "Advanced settings"
+msgstr "高级设置"
 
 msgid "Agent"
 msgstr "智能体"
@@ -94,6 +113,9 @@ msgstr "绑定地址"
 msgid "CPU Info"
 msgstr "处理器信息"
 
+msgid "Cancel"
+msgstr "取消"
+
 msgid "Check for updates"
 msgstr "检查更新"
 
@@ -109,11 +131,20 @@ msgstr "关闭会话"
 msgid "Closing this window ends the session."
 msgstr "关闭此窗口将结束该会话。"
 
+msgid "Command preview"
+msgstr "命令预览"
+
 msgid "Component"
 msgstr "组件"
 
 msgid "Configuration"
 msgstr "配置管理"
+
+msgid "Connection works."
+msgstr "连接正常。"
+
+msgid "Control target"
+msgstr "控制目标"
 
 msgid "Could not attach to the session:"
 msgstr "无法连接到会话："
@@ -165,6 +196,9 @@ msgstr "所有正在运行的智能体都将被终止，未保存的终端状态
 msgid "Exit code: %d"
 msgstr "退出码：%d"
 
+msgid "Expected"
+msgstr "应为"
+
 msgid "FCC"
 msgstr "FCC智能体"
 
@@ -174,11 +208,28 @@ msgstr "FCC 运行时"
 msgid "FCC Server"
 msgstr "FCC Server"
 
+msgid "Forget"
+msgstr "忘记"
+
+msgid ""
+"Forget the pinned host key? The remote host will have to be trusted again "
+"before the buttons work."
+msgstr "忘记已固定的主机密钥？按钮恢复可用前需要重新信任该远程主机。"
+
+msgid "Generate and configure key"
+msgstr "生成并配置密钥"
+
 msgid "Health"
 msgstr "健康状态"
 
 msgid "Hide"
 msgstr "隐藏"
+
+msgid "Host fingerprint"
+msgstr "主机指纹"
+
+msgid "IP address"
+msgstr "IP 地址"
 
 msgid "Install"
 msgstr "安装"
@@ -194,6 +245,9 @@ msgstr "在未通过的检查项通过之前，安装已被阻止。"
 
 msgid "Installed"
 msgstr "已安装"
+
+msgid "LAN"
+msgstr "局域网"
 
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr "已在防火墙中开放局域网访问。WAN 不受影响。"
@@ -246,11 +300,17 @@ msgstr "暂无记录。"
 msgid "Not installed"
 msgstr "未安装"
 
+msgid "Now"
+msgstr "当前"
+
 msgid "Open FCC Admin"
 msgstr "打开 FCC Admin"
 
 msgid "Open in browser"
 msgstr "在浏览器中打开"
+
+msgid "OpenSSH client is required (package openssh-client)"
+msgstr "需要 OpenSSH 客户端（软件包 openssh-client）"
 
 msgid "PID"
 msgstr "进程 ID"
@@ -269,6 +329,9 @@ msgstr "重新连接"
 
 msgid "Refresh"
 msgstr "刷新"
+
+msgid "Remote platform"
+msgstr "远程平台"
 
 msgid ""
 "Remove the FCC runtime and all of its data? This deletes the runtime, the "
@@ -304,8 +367,20 @@ msgstr "运行中"
 msgid "Running checks…"
 msgstr "正在运行检查…"
 
+msgid "SSH key configured"
+msgstr "SSH 密钥已配置"
+
+msgid "SSH key not configured"
+msgstr "SSH 密钥未配置"
+
+msgid "SSH port"
+msgstr "SSH 端口"
+
 msgid "Save &amp; Apply"
 msgstr "保存并应用"
+
+msgid "Service name"
+msgstr "服务名"
 
 msgid "Session has exited."
 msgstr "会话已退出。"
@@ -325,6 +400,9 @@ msgstr "设置"
 
 msgid "Settings saved."
 msgstr "设置已保存。"
+
+msgid "Show public key"
+msgstr "显示公钥"
 
 msgid "Start"
 msgstr "启动"
@@ -368,6 +446,9 @@ msgstr "终端连接已断开。"
 msgid "Terminal connection lost. Reconnecting…"
 msgstr "终端连接已断开，正在重新连接…"
 
+msgid "Test connection"
+msgstr "测试连接"
+
 msgid ""
 "The LAN access rule was removed; the port is no longer opened by this app."
 msgstr "局域网访问规则已移除；本应用不再开放该端口。"
@@ -377,13 +458,28 @@ msgid ""
 "version source."
 msgstr "无法检查 LuCI 应用版本 —— 路由器无法访问版本源。"
 
+msgid "The SSH key could not be created."
+msgstr "无法创建 SSH 密钥。"
+
+msgid "The address or SSH port changed — the pinned host key was forgotten."
+msgstr "地址或 SSH 端口已更改——已忘记固定的主机密钥。"
+
 msgid "The browser blocked the new window."
 msgstr "浏览器阻止了新窗口。"
+
+msgid "The connection failed."
+msgstr "连接失败。"
+
+msgid "The existing key is shown below."
+msgstr "现有密钥显示在下方。"
 
 msgid ""
 "The firewall rule could not be added — the server is bound to every "
 "interface without one."
 msgstr "无法添加防火墙规则——服务器已绑定到所有网络接口，但没有相应规则。"
+
+msgid "The host key could not be trusted."
+msgstr "无法信任该主机密钥。"
 
 msgid ""
 "The install path changed — install the runtime at the new location to use it."
@@ -395,11 +491,36 @@ msgstr "安装程序会先自动安装缺失的依赖包："
 msgid "The operation failed."
 msgstr "操作失败。"
 
+msgid "The pinned host key was forgotten."
+msgstr "已忘记固定的主机密钥。"
+
+msgid ""
+"The remote host key has changed. If you did not expect that, stop and check "
+"the machine."
+msgstr "远程主机密钥已更改。如果这不是你预期的，请先停下并检查该机器。"
+
+msgid ""
+"The remote host key is not trusted yet. Compare this fingerprint with the "
+"remote machine before trusting it."
+msgstr "尚未信任远程主机密钥。信任前请先与远程机器上的指纹进行比对。"
+
+msgid "The remote host key is not trusted yet. Confirm the fingerprint below."
+msgstr "尚未信任远程主机密钥。请在下方确认指纹。"
+
+msgid "The remote host key is now trusted."
+msgstr "现在已信任远程主机密钥。"
+
 msgid "This log is empty."
 msgstr "此日志为空。"
 
+msgid "This router"
+msgstr "本机"
+
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
+
+msgid "Trust this host"
+msgstr "信任此主机"
 
 msgid "Uninstall"
 msgstr "卸载"
@@ -430,6 +551,9 @@ msgstr ""
 
 msgid "Uptime"
 msgstr "运行时间"
+
+msgid "Username"
+msgstr "用户名"
 
 msgid "Version"
 msgstr "版本"

@@ -21,7 +21,22 @@ msgstr ""
 msgid "%d agent session(s) are running and will be left as they are."
 msgstr ""
 
+msgid "A new SSH key was generated."
+msgstr ""
+
+msgid "A private IPv4 address. Hostnames are not accepted: a name can resolve to a WAN address."
+msgstr ""
+
+msgid "Add this key to the remote account's ~/.ssh/authorized_keys, then test the connection again."
+msgstr ""
+
 msgid "Address the FCC server listens on. The FCC Admin page is served through LuCI, which reaches the server on 127.0.0.1, so keep that unless another device must reach the FCC API directly. Only 0.0.0.0 exposes the server to the LAN, and it adds a LAN-only firewall rule; the port is never opened to the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page cannot be reached through one."
+msgstr ""
+
+msgid "Admin port"
+msgstr ""
+
+msgid "Advanced settings"
 msgstr ""
 
 msgid "Agent"
@@ -66,6 +81,9 @@ msgstr ""
 msgid "CPU Info"
 msgstr ""
 
+msgid "Cancel"
+msgstr ""
+
 msgid "Check for updates"
 msgstr ""
 
@@ -81,10 +99,19 @@ msgstr ""
 msgid "Closing this window ends the session."
 msgstr ""
 
+msgid "Command preview"
+msgstr ""
+
 msgid "Component"
 msgstr ""
 
 msgid "Configuration"
+msgstr ""
+
+msgid "Connection works."
+msgstr ""
+
+msgid "Control target"
 msgstr ""
 
 msgid "Could not attach to the session:"
@@ -120,6 +147,9 @@ msgstr ""
 msgid "Exit code: %d"
 msgstr ""
 
+msgid "Expected"
+msgstr ""
+
 msgid "FCC"
 msgstr ""
 
@@ -129,10 +159,25 @@ msgstr ""
 msgid "FCC Server"
 msgstr ""
 
+msgid "Forget"
+msgstr ""
+
+msgid "Forget the pinned host key? The remote host will have to be trusted again before the buttons work."
+msgstr ""
+
+msgid "Generate and configure key"
+msgstr ""
+
 msgid "Health"
 msgstr ""
 
 msgid "Hide"
+msgstr ""
+
+msgid "Host fingerprint"
+msgstr ""
+
+msgid "IP address"
 msgstr ""
 
 msgid "Install"
@@ -148,6 +193,9 @@ msgid "Installation is blocked until the failed checks pass."
 msgstr ""
 
 msgid "Installed"
+msgstr ""
+
+msgid "LAN"
 msgstr ""
 
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
@@ -201,10 +249,16 @@ msgstr ""
 msgid "Not installed"
 msgstr ""
 
+msgid "Now"
+msgstr ""
+
 msgid "Open FCC Admin"
 msgstr ""
 
 msgid "Open in browser"
+msgstr ""
+
+msgid "OpenSSH client is required (package openssh-client)"
 msgstr ""
 
 msgid "PID"
@@ -223,6 +277,9 @@ msgid "Reconnect"
 msgstr ""
 
 msgid "Refresh"
+msgstr ""
+
+msgid "Remote platform"
 msgstr ""
 
 msgid "Remove the FCC runtime and all of its data? This deletes the runtime, the agents, your configuration and every backup. It cannot be undone."
@@ -249,7 +306,19 @@ msgstr ""
 msgid "Running checks…"
 msgstr ""
 
+msgid "SSH key configured"
+msgstr ""
+
+msgid "SSH key not configured"
+msgstr ""
+
+msgid "SSH port"
+msgstr ""
+
 msgid "Save &amp; Apply"
+msgstr ""
+
+msgid "Service name"
 msgstr ""
 
 msgid "Session has exited."
@@ -265,6 +334,9 @@ msgid "Settings"
 msgstr ""
 
 msgid "Settings saved."
+msgstr ""
+
+msgid "Show public key"
 msgstr ""
 
 msgid "Start"
@@ -309,16 +381,34 @@ msgstr ""
 msgid "Terminal connection lost. Reconnecting…"
 msgstr ""
 
+msgid "Test connection"
+msgstr ""
+
 msgid "The LAN access rule was removed; the port is no longer opened by this app."
 msgstr ""
 
 msgid "The LuCI app version could not be checked — the router could not reach the version source."
 msgstr ""
 
+msgid "The SSH key could not be created."
+msgstr ""
+
+msgid "The address or SSH port changed — the pinned host key was forgotten."
+msgstr ""
+
 msgid "The browser blocked the new window."
 msgstr ""
 
+msgid "The connection failed."
+msgstr ""
+
+msgid "The existing key is shown below."
+msgstr ""
+
 msgid "The firewall rule could not be added — the server is bound to every interface without one."
+msgstr ""
+
+msgid "The host key could not be trusted."
 msgstr ""
 
 msgid "The install path changed — install the runtime at the new location to use it."
@@ -330,10 +420,31 @@ msgstr ""
 msgid "The operation failed."
 msgstr ""
 
+msgid "The pinned host key was forgotten."
+msgstr ""
+
+msgid "The remote host key has changed. If you did not expect that, stop and check the machine."
+msgstr ""
+
+msgid "The remote host key is not trusted yet. Compare this fingerprint with the remote machine before trusting it."
+msgstr ""
+
+msgid "The remote host key is not trusted yet. Confirm the fingerprint below."
+msgstr ""
+
+msgid "The remote host key is now trusted."
+msgstr ""
+
 msgid "This log is empty."
 msgstr ""
 
+msgid "This router"
+msgstr ""
+
 msgid "To upgrade luci-app-fcc itself, run on the router:"
+msgstr ""
+
+msgid "Trust this host"
 msgstr ""
 
 msgid "Uninstall"
@@ -358,6 +469,9 @@ msgid "Updating reinstalls the FCC runtime from upstream. If a step fails, the p
 msgstr ""
 
 msgid "Uptime"
+msgstr ""
+
+msgid "Username"
 msgstr ""
 
 msgid "Version"

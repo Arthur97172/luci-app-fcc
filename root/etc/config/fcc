@@ -24,6 +24,21 @@ config fcc 'main'
 	# a failed rollback leaves behind.
 	option backup_keep '3'
 
+	# Which machine the FCC Server controls act on. "local" is this router and
+	# the four buttons in the Configuration page's FCC Server section. "lan"
+	# starts and stops the server on one other machine over SSH, using the key
+	# under /etc/fcc/ssh — never a password. The private key is the only
+	# credential this package creates, it is never stored in UCI, and
+	# remote_fingerprint pins the remote host key the same way known_hosts does.
+	option control_target 'local'
+	option remote_host ''
+	option remote_user ''
+	option remote_ssh_port '22'
+	option remote_admin_port '8082'
+	option remote_platform 'linux'
+	option remote_service 'fcc'
+	option remote_fingerprint ''
+
 # NOTE: API keys / provider credentials are NEVER stored here.
 # They live in the FCC Admin UI (FCC's own configuration) and are managed by
 # FCC itself. luci-app-fcc only links to /admin. See DESIGN_SPEC.md section 29.

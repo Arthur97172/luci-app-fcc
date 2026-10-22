@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.0.2))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -114,6 +114,10 @@ define Package/luci-app-fcc/install
 	$(INSTALL_BIN) ./root/usr/libexec/fcc/doctor.sh $(1)/usr/libexec/fcc/doctor.sh
 	# Section 50: the LAN-only firewall rule for the FCC Admin port.
 	$(INSTALL_BIN) ./root/usr/libexec/fcc/firewall.sh $(1)/usr/libexec/fcc/firewall.sh
+	# One other machine on the LAN: SSH key, pinned host key, fixed command
+	# presets and the Admin tunnel. Openssh-client is detected at runtime, not
+	# depended on, so a router that only controls itself still installs.
+	$(INSTALL_BIN) ./root/usr/libexec/fcc/remote.sh $(1)/usr/libexec/fcc/remote.sh
 	$(INSTALL_BIN) ./root/usr/libexec/fcc/ldd-shim $(1)/usr/libexec/fcc/ldd-shim
 	# Section 39: procd cannot write a service's output to a file, so the
 	# server is started through this wrapper, which redirects and execs.

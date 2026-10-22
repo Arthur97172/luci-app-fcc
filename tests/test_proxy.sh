@@ -126,6 +126,28 @@ test_the_link_and_the_proxy_agree_on_the_route() {
 		"and that is the route the module declares"
 }
 
+test_lan_mode_goes_through_the_tunnel() {
+	# The FCC server refuses every admin route to a non-loopback peer, and that
+	# is true of the remote server as much as the local one. LAN mode therefore
+	# has to reach it through the ssh -L forward remote.sh opened, not by
+	# dialling the remote address. Two things make that work and both are cheap
+	# to get wrong: the upstream (the tunnel's local end) and the Host header
+	# (the remote server's own Admin port, which is what it compares).
+	assert_contains "$(cat "$MOD")" 'return "http://127.0.0.1:" .. TUNNEL_PORT' \
+		"LAN mode dials the local end of the SSH forward"
+	assert_contains "$(cat "$MOD")" 'Host = host_header(),' \
+		"and sets the Host header rather than forwarding the browser's"
+	assert_contains "$(sed -n '/^local function host_header/,/^end/p' "$MOD")" \
+		'remote_admin_port()' \
+		"the LAN Host names the remote server's Admin port"
+	assert_contains "$(cat "$MOD")" 'ensure_tunnel()' \
+		"the tunnel is ensured before the request is forwarded"
+	assert_contains "$(cat "$MOD")" 'TUNNEL_PID  = "/tmp/fcc-remote-tunnel.pid"' \
+		"from the pid file remote.sh writes"
+	assert_not_contains "$(cat "$MOD")" 'main", "remote_host"' \
+		"the proxy never dials the stored LAN address directly"
+}
+
 test_the_shim_survives_a_double_application() {
 	# The shim's url() maps a leading /admin to the base and passes anything else
 	# through. That is what makes it safe to patch fetch, EventSource, pushState

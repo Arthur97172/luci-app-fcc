@@ -662,10 +662,14 @@ test_the_controller_never_reads_a_bare_uci() {
 	# and displayed them as though they were the saved configuration.
 	#
 	# The cursor has one source now, luci.fcc.paths.uci_cursor(), and this is
-	# the guard against a third handler copying the old line. The driver's
+	# the guard against a later handler copying the old line. The driver's
 	# checks above prove the cursor behaves; this one proves the controller
 	# asks for it, which the driver cannot see because it never loads the
 	# controller (that needs the whole request environment).
+	#
+	# One occurrence, not one per handler: cfg_cursor() is the single place
+	# that calls it, and every handler goes through cfg_cursor() — a handler
+	# that reached past it would raise this count, which is the point.
 	_ts_c="$ROOT/luasrc/controller/fcc.lua"
 
 	# A bare read is `uci` not preceded by a word character or a dot (so
@@ -676,8 +680,8 @@ test_the_controller_never_reads_a_bare_uci() {
 		| grep -vE '^[0-9]+:[[:space:]]*--' || true)"
 	assert_eq "" "$_ts_bare" "no line of the controller reads a bare \`uci\`"
 
-	assert_eq "2" "$(grep -c 'paths\.uci_cursor()' "$_ts_c")" \
-		"both configuration handlers take the cursor from luci.fcc.paths"
+	assert_eq "1" "$(grep -c 'paths\.uci_cursor()' "$_ts_c")" \
+		"every handler takes the cursor from luci.fcc.paths through cfg_cursor()"
 
 	# And the module they take it from exports it: a private helper would leave
 	# the controller with nothing to call, which is how this started.

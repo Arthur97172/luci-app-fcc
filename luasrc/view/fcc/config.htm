@@ -118,20 +118,160 @@
 	<div class="cbi-section">
 		<h3><%:FCC Server%></h3>
 		<div class="cbi-section-node">
-			<div id="fcc-server-state" class="fcc-card"><%:Loading…%></div>
-			<div class="fcc-toolbar">
-				<button class="cbi-button cbi-button-apply" data-op="start"><%:Start%></button>
-				<button class="cbi-button cbi-button-reset" data-op="stop"><%:Stop%></button>
-				<button class="cbi-button" data-op="restart"><%:Restart%></button>
-				<!-- Section 13. The Admin UI is served by the FCC server, which
-				     refuses every admin route to anything but a loopback peer —
-				     so this points at the LuCI reverse proxy, not at the FCC
-				     port. The link therefore works from any device that can
-				     reach LuCI, whatever the bind address is. Section 104.22. -->
-				<a id="fcc-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
-				   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
+			<!-- The section controls one machine at a time. This switch names
+			     which, and the two panels below are its two states; there is
+			     deliberately no third form field carrying the same choice, and
+			     the LAN panel is hidden rather than removed so nothing it holds
+			     is lost when the local side is shown. -->
+			<div class="fcc-mode" role="group" aria-label="<%:Control target%>">
+				<button type="button" class="fcc-mode-btn" data-mode="local"
+					aria-pressed="true"><%:This router%></button>
+				<button type="button" class="fcc-mode-btn" data-mode="lan"
+					aria-pressed="false"><%:LAN%></button>
 			</div>
-			<div id="fcc-server-status"></div>
+
+			<!-- ---------------------------------------------------- local -->
+			<div id="fcc-local-controls">
+				<div id="fcc-server-state" class="fcc-card"><%:Loading…%></div>
+				<div class="fcc-toolbar">
+					<button class="cbi-button cbi-button-apply" data-op="start"><%:Start%></button>
+					<button class="cbi-button cbi-button-reset" data-op="stop"><%:Stop%></button>
+					<button class="cbi-button" data-op="restart"><%:Restart%></button>
+					<!-- Section 13. The Admin UI is served by the FCC server, which
+					     refuses every admin route to anything but a loopback peer —
+					     so this points at the LuCI reverse proxy, not at the FCC
+					     port. The link therefore works from any device that can
+					     reach LuCI, whatever the bind address is. Section 104.22. -->
+					<a id="fcc-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
+					   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
+				</div>
+				<div id="fcc-server-status"></div>
+			</div>
+
+			<!-- ------------------------------------------------------ LAN -->
+			<!-- One other machine on the LAN. Nothing here is a credential:
+			     the router holds its own key pair under /etc/fcc/ssh and UCI
+			     stores only the host, the account and the pinned fingerprint.
+			     The four buttons stay disabled until the address, the account,
+			     the key and the host key are all in place. -->
+			<div id="fcc-remote-controls" hidden>
+				<div class="cbi-value">
+					<label class="cbi-value-title" for="fcc-remote-host"><%:IP address%></label>
+					<div class="cbi-value-field">
+						<input type="text" id="fcc-remote-host" class="cbi-input-text fcc-mono"
+							placeholder="192.168.5.20" spellcheck="false" autocomplete="off">
+						<div class="cbi-value-description">
+							<%:A private IPv4 address. Hostnames are not accepted: a name can resolve to a WAN address.%>
+						</div>
+					</div>
+				</div>
+
+				<div class="cbi-value">
+					<label class="cbi-value-title" for="fcc-remote-user"><%:Username%></label>
+					<div class="cbi-value-field">
+						<div class="fcc-remote-row">
+							<input type="text" id="fcc-remote-user" class="cbi-input-text"
+								spellcheck="false" autocomplete="off">
+							<button type="button" id="fcc-remote-test" class="cbi-button"><%:Test connection%></button>
+						</div>
+					</div>
+				</div>
+
+				<div class="fcc-toolbar">
+					<button type="button" class="cbi-button cbi-button-apply" data-remote-op="start"><%:Start%></button>
+					<button type="button" class="cbi-button cbi-button-reset" data-remote-op="stop"><%:Stop%></button>
+					<button type="button" class="cbi-button" data-remote-op="restart"><%:Restart%></button>
+					<!-- The same LuCI proxy as the local link. In LAN mode it
+					     reaches the remote server through an SSH local forward,
+					     so the remote sees a loopback peer and the browser still
+					     never talks to the FCC port. -->
+					<a id="fcc-remote-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
+					   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
+				</div>
+
+				<div class="fcc-remote-key">
+					<span id="fcc-remote-key-state" class="fcc-key-state"></span>
+					<button type="button" id="fcc-remote-keygen" class="cbi-button"
+						hidden><%:Generate and configure key%></button>
+					<button type="button" id="fcc-remote-showkey" class="cbi-button"
+						hidden><%:Show public key%></button>
+				</div>
+
+				<div id="fcc-remote-key-panel" class="fcc-key-panel" hidden>
+					<p class="fcc-muted"><%:Add this key to the remote account's ~/.ssh/authorized_keys, then test the connection again.%></p>
+					<pre id="fcc-remote-pubkey" class="fcc-key-text"></pre>
+				</div>
+
+				<div id="fcc-remote-trust-panel" class="fcc-trust" hidden>
+					<p class="fcc-warn"><%:The remote host key is not trusted yet. Compare this fingerprint with the remote machine before trusting it.%></p>
+					<pre id="fcc-remote-trust-fingerprint" class="fcc-key-text"></pre>
+					<div class="fcc-toolbar">
+						<button type="button" id="fcc-remote-trust" class="cbi-button cbi-button-apply"><%:Trust this host%></button>
+						<button type="button" id="fcc-remote-trust-cancel" class="cbi-button cbi-button-reset"><%:Cancel%></button>
+					</div>
+				</div>
+
+				<details class="fcc-advanced" id="fcc-remote-advanced">
+					<summary><%:Advanced settings%></summary>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-ssh-port"><%:SSH port%></label>
+						<div class="cbi-value-field">
+							<input type="text" id="fcc-remote-ssh-port" class="cbi-input-text"
+								size="6" inputmode="numeric" spellcheck="false">
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-platform"><%:Remote platform%></label>
+						<div class="cbi-value-field">
+							<select id="fcc-remote-platform" class="cbi-input-select">
+								<option value="linux">Linux</option>
+								<option value="openwrt">OpenWrt</option>
+								<option value="windows">Windows</option>
+							</select>
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-admin-port"><%:Admin port%></label>
+						<div class="cbi-value-field">
+							<input type="text" id="fcc-remote-admin-port" class="cbi-input-text"
+								size="6" inputmode="numeric" spellcheck="false">
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-service"><%:Service name%></label>
+						<div class="cbi-value-field">
+							<input type="text" id="fcc-remote-service" class="cbi-input-text"
+								spellcheck="false" autocomplete="off">
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-fingerprint"><%:Host fingerprint%></label>
+						<div class="cbi-value-field">
+							<div class="fcc-remote-row">
+								<input type="text" id="fcc-remote-fingerprint" class="cbi-input-text fcc-mono"
+									readonly>
+								<button type="button" id="fcc-remote-forget" class="cbi-button cbi-button-reset"><%:Forget%></button>
+							</div>
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-preview"><%:Command preview%></label>
+						<div class="cbi-value-field">
+							<!-- Read only, and built from the same presets remote.sh
+							     runs, so what is shown is what a click sends. -->
+							<pre id="fcc-remote-preview" class="fcc-key-text"></pre>
+						</div>
+					</div>
+				</details>
+
+				<div id="fcc-remote-status"></div>
+			</div>
 		</div>
 	</div>
 

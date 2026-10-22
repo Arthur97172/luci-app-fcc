@@ -10,7 +10,7 @@ Three pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
-| **Configuration** | FCC server settings (address, port, log level), the runtime install and backup paths, the agent picker, install/update/uninstall, complete uninstall, start/stop/restart, the diagnostics report, and a link to the FCC Admin page. |
+| **Configuration** | FCC server settings (address, port, log level), the runtime install and backup paths, the agent picker, install/update/uninstall, complete uninstall, start/stop/restart, the diagnostics report, a link to the FCC Admin page, and control of the FCC server on one other machine over SSH. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage, and FCC update checks. |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
@@ -156,6 +156,57 @@ second copy. Your `data/` is copied, since a successful update has to find it
 still in place. After a rollback the log says either `Previous FCC version
 restored` or, if the restored server will not start, `FCC Server remains
 stopped. Please inspect logs.` LuCI itself is untouched either way.
+
+---
+
+## LAN control
+
+The **FCC Server** section of the *Configuration* page carries a
+`[This router] [LAN]` switch. It starts on `[This router]`, where the section
+behaves exactly as before; on `[LAN]` the same four buttons — **Start**,
+**Stop**, **Restart** and **Open FCC Admin** — drive the FCC server on one
+other machine. One machine at a time, and it may run Windows, Linux or OpenWrt.
+
+With **IP address** and **Username** filled in:
+
+1. Press **Generate and configure key**. The router creates an Ed25519 key pair
+   under `/etc/fcc/ssh/` and shows the public half; add it to the remote
+   account's `~/.ssh/authorized_keys`. No password is stored or asked for: the
+   connection offers this key and nothing else
+   (`PreferredAuthentications=publickey`, `BatchMode=yes`,
+   `IdentitiesOnly=yes`), so a failed authentication is an answer rather than a
+   prompt.
+2. Press **Test connection**. The first time, the remote host key's fingerprint
+   is shown and has to be confirmed; once confirmed it is stored in UCI and
+   every later connection must match it exactly. A changed fingerprint refuses
+   the connection and reports the value it actually found — that is the moment
+   to stop and look at the machine, not a prompt to click away.
+3. Only then do the four buttons become usable. The command a click sends is
+   chosen by **Remote platform** in *Advanced settings*: Linux runs
+   `systemctl <op> <service>`, OpenWrt runs `/etc/init.d/<service> <op>`, and
+   Windows runs PowerShell's `Start-Service` / `Stop-Service` /
+   `Restart-Service`. A service name may contain only letters, digits and
+   `.` `-` `_`, so a hand-edited UCI value still cannot become another command.
+
+**Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
+`169.254/16`). Hostnames are refused: a name can resolve to a public address,
+and that is no longer "the computer on the desk".
+
+The remote FCC Admin is loopback-only too, so **Open FCC Admin** does not open
+`http://<remote-ip>:8082` directly. LuCI's proxy first opens an SSH local
+forward, `ssh -N -L 127.0.0.1:18082:127.0.0.1:<admin-port>`, and hands the
+request to this end of it: the remote server sees a loopback peer, while the
+browser's access still goes through LuCI's own login — a stricter gate than the
+loopback check it stands in for. The tunnel is opened when Admin is first
+reached and closed when LAN mode is left.
+
+The connection needs an OpenSSH client on the router (`openssh-client`).
+Without it the key line says so and the four buttons stay disabled, rather than
+failing on the first click. *Advanced settings* also holds the SSH port, the
+remote platform, the Admin port and the service name, shows the exact command
+each button sends, and shows the pinned fingerprint with a **Forget** button.
+Changing the address or the SSH port forgets the fingerprint on its own — a
+machine at a new address should not inherit the trust given to the old one.
 
 ---
 

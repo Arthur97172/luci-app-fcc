@@ -68,6 +68,14 @@ function index()
 		config_get = "act_config_get",
 		config_set = "act_config_set",
 		log = "act_log",
+		remote_get = "act_remote_get",
+		remote_set = "act_remote_set",
+		remote_mode = "act_remote_mode",
+		remote_keygen = "act_remote_keygen",
+		remote_trust = "act_remote_trust",
+		remote_forget = "act_remote_forget",
+		remote_test = "act_remote_test",
+		remote_control = "act_remote_control",
 	}
 	for name, fn in pairs(actions) do
 		local e = entry({ "admin", "services", "fcc", "api", name }, call(fn))
@@ -150,6 +158,16 @@ local function run(script, args)
 	local path = paths.script(script)
 	if not path or not util.file_exists(path) then return "", 127 end
 	return util.exec_argv(path, args)
+end
+
+--- The one source of a UCI cursor for every handler on this page.
+--
+-- It is a function rather than a `local c = uci` for the reason section 104.20
+-- records: a bare `uci` is nil under every LuCI this package runs on. Keeping
+-- the call in one place also means a handler added later cannot copy the old
+-- line and fail the same way.
+local function cfg_cursor()
+	return paths.uci_cursor()
 end
 
 -- ---------------------------------------------------------------------------
@@ -472,6 +490,175 @@ function act_server()
 end
 
 -- ---------------------------------------------------------------------------
+-- FCC server on another machine
+--
+-- The Configuration page's FCC Server section has one control target: this
+-- router, or one other machine on the LAN. Everything about the remote side —
+-- the SSH key, the pinned host key, the command presets and the Admin tunnel —
+-- lives in remote.sh; these handlers validate the form values, store them in
+-- UCI and relay the script's JSON. No credential is ever stored here.
+-- ---------------------------------------------------------------------------
+
+--- The stored remote configuration, plus what remote.sh makes of it now.
+function act_remote_get()
+	relay("remote", { "status" })
+end
+
+--- Save the remote target and connection settings.
+--
+-- A changed address or SSH port is a different host as far as trust is
+-- concerned, so the pinned fingerprint and known_hosts entry are discarded and
+-- the tunnel is stopped. Anything else only invalidates the tunnel.
+function act_remote_set()
+	if not require_post() then return end
+	local c = cfg_cursor()
+	if not c then return fail("configuration is unavailable") end
+
+	-- An empty address or account is a legitimate half-configured state: the
+	-- page shows the fields, and the buttons stay disabled until both are set.
+	-- A non-empty value must pass the same grammar remote.sh enforces.
+	local host = util.trim(http.formvalue("host") or "")
+	if host ~= "" then
+		host = util.valid_remote_host(host)
+		if not host then return fail("invalid remote address") end
+	end
+
+	local user = util.trim(http.formvalue("user") or "")
+	if user ~= "" then
+		user = util.valid_remote_user(user)
+		if not user then return fail("invalid remote user") end
+	end
+
+	local sport = util.valid_int(http.formvalue("ssh_port") or "22", 1, 65535)
+	if not sport then return fail("invalid SSH port") end
+
+	local aport = util.valid_int(http.formvalue("admin_port") or "8082", 1, 65535)
+	if not aport then return fail("invalid Admin port") end
+
+	local platform = util.valid_remote_platform(http.formvalue("platform") or "linux")
+	if not platform then return fail("invalid platform") end
+
+	local service = util.valid_remote_service(http.formvalue("service") or "fcc")
+	if not service then return fail("invalid service name") end
+
+	local old_host  = c:get("fcc", "main", "remote_host") or ""
+	local old_user  = c:get("fcc", "main", "remote_user") or ""
+	local old_sport = tostring(c:get("fcc", "main", "remote_ssh_port") or "22")
+	local old_aport = tostring(c:get("fcc", "main", "remote_admin_port") or "8082")
+
+	local host_changed = (old_host ~= host) or (old_sport ~= tostring(sport))
+	local changed = host_changed
+		or (old_user ~= user)
+		or (old_aport ~= tostring(aport))
+
+	c:set("fcc", "main", "remote_host", host)
+	c:set("fcc", "main", "remote_user", user)
+	c:set("fcc", "main", "remote_ssh_port", tostring(sport))
+	c:set("fcc", "main", "remote_admin_port", tostring(aport))
+	c:set("fcc", "main", "remote_platform", platform)
+	c:set("fcc", "main", "remote_service", service)
+	if host_changed then
+		-- The pinned key belonged to the old endpoint.
+		c:set("fcc", "main", "remote_fingerprint", "")
+	end
+	c:commit("fcc")
+
+	-- The script reads UCI, so this runs after the commit. Not being able to
+	-- stop a tunnel is not a reason to fail the save: the next request that
+	-- needs one either reuses the live tunnel or starts a new one.
+	if host_changed then
+		run("remote", { "forget" })
+	elseif changed then
+		run("remote", { "tunnel-stop" })
+	end
+
+	json_out('{"ok":true,"changed":' .. (changed and "true" or "false") ..
+		',"trust_reset":' .. (host_changed and "true" or "false") .. '}')
+end
+
+--- Switch the FCC Server section between this router and the LAN.
+--
+-- Leaving LAN mode stops the tunnel as well: the Admin proxy picks its
+-- upstream from this setting, and a tunnel left running would otherwise be a
+-- second SSH session that nothing would ever close.
+function act_remote_mode()
+	if not require_post() then return end
+	local c = cfg_cursor()
+	if not c then return fail("configuration is unavailable") end
+	local mode = http.formvalue("mode")
+	if mode ~= "local" and mode ~= "lan" then return fail("invalid control target") end
+	c:set("fcc", "main", "control_target", mode)
+	c:commit("fcc")
+	if mode == "local" then run("remote", { "tunnel-stop" }) end
+	json_out('{"ok":true,"mode":' .. util.json_encode(mode) .. '}')
+end
+
+--- Create the router's key pair, or return the existing public half.
+function act_remote_keygen()
+	if not require_post() then return end
+	relay("remote", { "keygen" })
+end
+
+--- Pin the host key the user confirmed.
+--
+-- The fingerprint is what the page showed after the first scan. remote.sh scans
+-- again and refuses when the key changed in between — the fingerprint is
+-- stored only after the script says it matched, so a page that trusts a host
+-- that has changed cannot pin the new key by accident.
+function act_remote_trust()
+	if not require_post() then return end
+	local fp = util.valid_fingerprint(http.formvalue("fingerprint") or "")
+	if not fp then return fail("invalid fingerprint") end
+
+	local out, _ = run("remote", { "trust", fp })
+	-- The output is relayed whatever it says; it is consumed here as well so a
+	-- successful trust can be recorded in UCI.
+	local ok = false
+	local d = util.json_decode((out or ""):match("^[^\n]*") or "")
+	if type(d) == "table" and d.ok == true then
+		local stored = util.valid_fingerprint(d.fingerprint)
+		if stored then
+			local c = cfg_cursor()
+			if not c then return fail("configuration is unavailable") end
+			c:set("fcc", "main", "remote_fingerprint", stored)
+			c:commit("fcc")
+			ok = true
+		end
+	end
+	if not ok and util.trim(out or "") == "" then
+		return fail("could not trust the remote host key")
+	end
+	json_out(util.trim(out or "") ~= "" and util.trim(out) or "{}")
+end
+
+--- Forget the pinned host key and stop the tunnel.
+function act_remote_forget()
+	if not require_post() then return end
+	local c = cfg_cursor()
+	if c then
+		c:set("fcc", "main", "remote_fingerprint", "")
+		c:commit("fcc")
+	end
+	relay("remote", { "forget" })
+end
+
+--- Try the SSH connection. With no pinned host key this scans the remote and
+--  answers needs_trust plus the fingerprint, which the page confirms.
+function act_remote_test()
+	if not require_post() then return end
+	relay("remote", { "test" })
+end
+
+local REMOTE_OPS = { start = true, stop = true, restart = true }
+
+function act_remote_control()
+	if not require_post() then return end
+	local op = http.formvalue("op")
+	if not op or not REMOTE_OPS[op] then return fail("invalid operation") end
+	relay("remote", { "control", op })
+end
+
+-- ---------------------------------------------------------------------------
 -- Web Console sessions
 -- ---------------------------------------------------------------------------
 function act_sessions()
@@ -649,7 +836,7 @@ function act_config_get()
 	-- saved bind address never appeared in the form. It failed quietly, which
 	-- is the worse half: the setter below failed loudly and the pair looked
 	-- like one broken page instead of one broken global. Section 104.20.
-	local c = paths.uci_cursor()
+	local c = cfg_cursor()
 	local function g(opt, default)
 		local v = c and c:get("fcc", "main", opt)
 		if v == nil or v == "" then return default end
@@ -680,7 +867,7 @@ function act_config_set()
 	-- of "Save & Apply" — every submit answered "configuration is
 	-- unavailable" and no setting on the page could be stored at all,
 	-- including the bind address that "Open FCC Admin" depends on. §104.20.
-	local c = paths.uci_cursor()
+	local c = cfg_cursor()
 	if not c then return fail("configuration is unavailable") end
 
 	local newpath = util.valid_install_path(http.formvalue("install_path") or "")
