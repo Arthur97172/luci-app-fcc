@@ -1240,6 +1240,18 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-key-state"' "the key status line exists"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-keygen"' "with the first-use button"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-pubkey"' "and somewhere to show the key"
+	# Where the key goes differs per platform, so the panel names all three:
+	# a Unix path is wrong on Windows and wrong for OpenWrt's Dropbear.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-key-path"' \
+		"the authorized_keys location has its own element"
+	assert_contains "$(cat "$_ts_js")" "'/.ssh/authorized_keys'" \
+		"Linux uses the account's ~/.ssh/authorized_keys"
+	assert_contains "$(cat "$_ts_js")" "/etc/dropbear/authorized_keys" \
+		"OpenWrt's Dropbear reads /etc/dropbear/authorized_keys"
+	assert_contains "$(cat "$_ts_js")" 'C:\\ProgramData\\ssh\\administrators_authorized_keys' \
+		"a Windows administrator account uses the ProgramData file"
+	assert_contains "$(cat "$_ts_js")" "'C:\\\\Users\\\\'" \
+		"and a standard Windows account keeps it under its profile"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-trust-fingerprint"' \
 		"the fingerprint to confirm has its own element"
 

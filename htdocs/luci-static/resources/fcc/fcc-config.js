@@ -240,6 +240,35 @@
 		box.textContent = lines.join('\n');
 	}
 
+	/* Where the public key has to go. The answer is not one path: Linux uses the
+	 * account's ~/.ssh/authorized_keys, OpenWrt's default Dropbear reads
+	 * /etc/dropbear/authorized_keys, and Windows keeps administrators' keys in
+	 * ProgramData — sshd's default config ignores their per-user file. The path
+	 * follows the platform and the account field, so the panel names the file
+	 * the user actually has to edit instead of a Unix path that does not exist
+	 * on two of the three platforms. */
+	function remoteKeyPath() {
+		var path = FCC.$('#fcc-remote-key-path');
+		var note = FCC.$('#fcc-remote-key-note');
+		if (!path || !note) { return; }
+		var user = (FCC.$('#fcc-remote-user') || {}).value || remote.user || '';
+		user = user.replace(/^\s+|\s+$/g, '');
+
+		if (remote.platform === 'windows') {
+			path.textContent =
+				'C:\\Users\\' + (user || '<username>') + '\\.ssh\\authorized_keys\n' +
+				'C:\\ProgramData\\ssh\\administrators_authorized_keys';
+			note.textContent = FCC._('Use the first line for a standard account and the second for an administrator account. The second file must be writable only by Administrators and SYSTEM.');
+		} else if (remote.platform === 'openwrt') {
+			path.textContent = '/etc/dropbear/authorized_keys';
+			note.textContent = FCC._('Dropbear, the default OpenWrt SSH server, reads this file. An OpenSSH server on the same machine reads ~/.ssh/authorized_keys instead.');
+		} else {
+			var home = user === 'root' ? '/root' : (user ? '/home/' + user : '~');
+			path.textContent = home + '/.ssh/authorized_keys';
+			note.textContent = FCC._('If the home directory is not under /home, ~ is that directory. The directory must be 700 and the file 600, and neither may be writable by anyone else.');
+		}
+	}
+
 	function showTrustPanel(fingerprint) {
 		remote.pending_fingerprint = fingerprint || '';
 		var panel = FCC.$('#fcc-remote-trust-panel');
@@ -309,6 +338,7 @@
 		var fp = FCC.$('#fcc-remote-fingerprint');
 		if (fp && document.activeElement !== fp) { fp.value = remote.fingerprint || ''; }
 
+		remoteKeyPath();
 		previewCommands();
 		updateRemoteControls();
 	}

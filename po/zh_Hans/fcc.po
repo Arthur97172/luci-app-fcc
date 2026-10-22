@@ -28,9 +28,9 @@ msgid ""
 msgstr "私有 IPv4 地址。不接受主机名：主机名可能解析为 WAN 地址。"
 
 msgid ""
-"Add this key to the remote account's ~/.ssh/authorized_keys, then test the "
-"connection again."
-msgstr "将此密钥添加到远程账号的 ~/.ssh/authorized_keys，然后重新测试连接。"
+"Add this key to the account's authorized_keys file, then test the connection "
+"again."
+msgstr "将此密钥加入该账号的 authorized_keys 文件，然后重新测试连接。"
 
 msgid ""
 "Address the FCC server listens on. The FCC Admin page is served through "
@@ -179,6 +179,11 @@ msgstr ""
 msgid "Done."
 msgstr "完成。"
 
+msgid ""
+"Dropbear, the default OpenWrt SSH server, reads this file. An OpenSSH server "
+"on the same machine reads ~/.ssh/authorized_keys instead."
+msgstr "OpenWrt 默认的 SSH 服务 Dropbear 读取这个文件；如果该机器改用 OpenSSH，则读取 ~/.ssh/authorized_keys。"
+
 msgid "Enable FCC"
 msgstr "启用 FCC"
 
@@ -208,6 +213,9 @@ msgstr "FCC 运行时"
 msgid "FCC Server"
 msgstr "FCC Server"
 
+msgid "File:"
+msgstr "文件："
+
 msgid "Forget"
 msgstr "忘记"
 
@@ -230,6 +238,11 @@ msgstr "主机指纹"
 
 msgid "IP address"
 msgstr "IP 地址"
+
+msgid ""
+"If the home directory is not under /home, ~ is that directory. The directory "
+"must be 700 and the file 600, and neither may be writable by anyone else."
+msgstr "主目录不在 /home 下时，~ 即该主目录。目录权限须为 700、文件须为 600，且不能允许其他用户写入。"
 
 msgid "Install"
 msgstr "安装"
@@ -551,6 +564,12 @@ msgstr ""
 
 msgid "Uptime"
 msgstr "运行时间"
+
+msgid ""
+"Use the first line for a standard account and the second for an "
+"administrator account. The second file must be writable only by "
+"Administrators and SYSTEM."
+msgstr "标准账号用第一行，管理员账号用第二行；第二个文件只能由 Administrators 和 SYSTEM 写入。"
 
 msgid "Username"
 msgstr "用户名"

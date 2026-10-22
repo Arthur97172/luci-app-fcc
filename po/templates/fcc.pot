@@ -27,7 +27,7 @@ msgstr ""
 msgid "A private IPv4 address. Hostnames are not accepted: a name can resolve to a WAN address."
 msgstr ""
 
-msgid "Add this key to the remote account's ~/.ssh/authorized_keys, then test the connection again."
+msgid "Add this key to the account's authorized_keys file, then test the connection again."
 msgstr ""
 
 msgid "Address the FCC server listens on. The FCC Admin page is served through LuCI, which reaches the server on 127.0.0.1, so keep that unless another device must reach the FCC API directly. Only 0.0.0.0 exposes the server to the LAN, and it adds a LAN-only firewall rule; the port is never opened to the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page cannot be reached through one."
@@ -132,6 +132,9 @@ msgstr ""
 msgid "Done."
 msgstr ""
 
+msgid "Dropbear, the default OpenWrt SSH server, reads this file. An OpenSSH server on the same machine reads ~/.ssh/authorized_keys instead."
+msgstr ""
+
 msgid "Enable FCC"
 msgstr ""
 
@@ -159,6 +162,9 @@ msgstr ""
 msgid "FCC Server"
 msgstr ""
 
+msgid "File:"
+msgstr ""
+
 msgid "Forget"
 msgstr ""
 
@@ -178,6 +184,9 @@ msgid "Host fingerprint"
 msgstr ""
 
 msgid "IP address"
+msgstr ""
+
+msgid "If the home directory is not under /home, ~ is that directory. The directory must be 700 and the file 600, and neither may be writable by anyone else."
 msgstr ""
 
 msgid "Install"
@@ -469,6 +478,9 @@ msgid "Updating reinstalls the FCC runtime from upstream. If a step fails, the p
 msgstr ""
 
 msgid "Uptime"
+msgstr ""
+
+msgid "Use the first line for a standard account and the second for an administrator account. The second file must be writable only by Administrators and SYSTEM."
 msgstr ""
 
 msgid "Username"

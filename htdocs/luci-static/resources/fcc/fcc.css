@@ -525,6 +525,19 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 	word-break: break-all;
 }
 
+/* The path the key goes into. It is one or two lines depending on the
+ * platform, and on Windows it is long, so it wraps rather than scrolling. */
+.fcc-key-hint {
+	margin: .3em 0 .2em;
+}
+
+.fcc-key-path {
+	font-family: monospace;
+	font-size: .85em;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
 /* The advanced rows are the same .cbi-value rows as the two above them; the
  * summary is the only new thing to style. */
 .fcc-advanced {

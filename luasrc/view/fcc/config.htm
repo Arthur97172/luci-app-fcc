@@ -198,8 +198,18 @@
 				</div>
 
 				<div id="fcc-remote-key-panel" class="fcc-key-panel" hidden>
-					<p class="fcc-muted"><%:Add this key to the remote account's ~/.ssh/authorized_keys, then test the connection again.%></p>
+					<p class="fcc-muted"><%:Add this key to the account's authorized_keys file, then test the connection again.%></p>
 					<pre id="fcc-remote-pubkey" class="fcc-key-text"></pre>
+					<!-- Where that file is depends on the remote platform and the
+					     account, so the path is filled in rather than written here:
+					     "~/.ssh/authorized_keys" is the right answer only on Linux.
+					     Windows has two files (standard and administrator accounts)
+					     and OpenWrt's Dropbear reads one of its own. -->
+					<p class="fcc-key-hint">
+						<span class="fcc-muted"><%:File:%></span>
+						<code id="fcc-remote-key-path" class="fcc-key-path"></code>
+					</p>
+					<p class="fcc-muted" id="fcc-remote-key-note"></p>
 				</div>
 
 				<div id="fcc-remote-trust-panel" class="fcc-trust" hidden>

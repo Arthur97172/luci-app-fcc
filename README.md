@@ -139,7 +139,13 @@ Windows、Linux、OpenWrt 都可以。
 填好 **IP 地址** 和 **用户名** 后：
 
 1. 点 **生成并配置密钥**。路由器在 `/etc/fcc/ssh/` 下生成一对 Ed25519 密钥并显示
-   公钥，把它加到远程账号的 `~/.ssh/authorized_keys` 里。本包不保存也不询问密码：
+   公钥，把它加到远程账号的 authorized_keys 文件里——页面会按所选的远程平台直接写出
+   具体路径：Linux 是 `/home/<账号>/.ssh/authorized_keys`（root 为
+   `/root/.ssh/authorized_keys`），OpenWrt 默认的 Dropbear 读
+   `/etc/dropbear/authorized_keys`，Windows 管理员账户用
+   `C:\ProgramData\ssh\administrators_authorized_keys`、标准账户用
+   `C:\Users\<账号>\.ssh\authorized_keys`（Windows 的 sshd 默认配置会忽略管理员
+   账户自己的这个文件）。本包不保存也不询问密码：
    连接只提供这把密钥（`PreferredAuthentications=publickey`、`BatchMode=yes`、
    `IdentitiesOnly=yes`），所以认证失败是一个结果，而不是一个密码提示。
 2. 点 **测试连接**。第一次会显示远程机器的主机密钥指纹并要求确认；确认后指纹写入

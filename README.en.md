@@ -171,8 +171,15 @@ With **IP address** and **Username** filled in:
 
 1. Press **Generate and configure key**. The router creates an Ed25519 key pair
    under `/etc/fcc/ssh/` and shows the public half; add it to the remote
-   account's `~/.ssh/authorized_keys`. No password is stored or asked for: the
-   connection offers this key and nothing else
+   account's authorized_keys file — the page names the exact path for the
+   platform you chose: `/home/<account>/.ssh/authorized_keys` on Linux
+   (`/root/.ssh/authorized_keys` for root), `/etc/dropbear/authorized_keys` for
+   OpenWrt's default Dropbear, and on Windows
+   `C:\Users\<account>\.ssh\authorized_keys` for a standard account or
+   `C:\ProgramData\ssh\administrators_authorized_keys` for an administrator
+   (Windows' default sshd config ignores the per-user file for administrators).
+   No password is stored or asked for: the connection offers this key and
+   nothing else
    (`PreferredAuthentications=publickey`, `BatchMode=yes`,
    `IdentitiesOnly=yes`), so a failed authentication is an answer rather than a
    prompt.
