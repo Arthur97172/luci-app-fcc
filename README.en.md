@@ -10,7 +10,7 @@ Three pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
-| **Configuration** | FCC server settings (address, port, log level), the runtime install path, the agents to install, install/reinstall/update/uninstall, deletion of the saved backups on its own, start/stop/restart, the diagnostics report, and a link to the FCC Admin page. |
+| **Configuration** | FCC server settings (address, port, log level), the runtime install and backup paths, the agent picker, install/update/uninstall, complete uninstall, start/stop/restart, the diagnostics report, and a link to the FCC Admin page. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage, and FCC update checks. |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
@@ -68,29 +68,42 @@ is the package working, not a fault.
 
 ## First run
 
-**1. Install the FCC runtime.** On the *Basic Information* page, choose
-**Install FCC Runtime**. You do not need to SSH in and run FCC's installer by
+**1. Install the FCC runtime.** On the *Configuration* page, choose an agent and
+press **Install**. You do not need to SSH in and run FCC's installer by
 hand — the page fetches the official installer over HTTPS, records its SHA-256,
 and runs it. Python, `uv` and the runtime itself are installed under the
-configured install path (`/opt/fcc` by default), never into this package.
+configured install path (`/opt` by default, so the runtime lands in `/opt/fcc`),
+never into this package.
+
+The agent picker defaults to **All agents**, which means the whole registry: an
+extremely slow download that takes about 8 GB of storage. Choose only the
+agents you need. A single agent is added to the runtime that is already there,
+and the other installed agents are left alone. If a runtime is already
+installed and **All agents** is still selected, the page asks first, then
+removes the runtime and installs every agent again — upstream reconciles the set
+it finds and never reinstalls an existing agent, so removing the runtime is the
+only way to replace a damaged one.
 
 **Check the free space first: the filesystem holding the install path needs at
 least 2 GB available, and 4 GB is recommended.** When there is less, this
 package refuses the install before downloading anything and says how much is
 missing, rather than letting it fail half-way. The runtime itself — Python 3.14,
 `uv`, the agents — peaks at around 741 MB measured, and 2 GB is that rounded up
-with room to spare: sharing the filesystem with the runtime are the backups (up
-to three copies of `data/`), the new runtime written beside the old one during
-an update, and a `uv` cache that grows with the Python it builds — one more
-agent or a larger release all eat into the margin, and guessing low leaves half
-a runtime on the device. 4 GB is recommended because backups accumulate across
-failed retries, and that margin costs less than cleaning up by hand afterwards.
+with room to spare: an update writes the new runtime beside the old one before
+discarding the old, `uv`'s cache grows with the Python it builds, and a failed
+run can leave its rollback copy on disk — one more agent or a larger release all
+eat into the margin, and guessing low leaves half a runtime on the device. The
+rollback copy goes to the **Backup path**, `/tmp/fcc` by default — `/tmp` is
+tmpfs on OpenWrt, which keeps it off the flash the runtime lives on — and is
+removed when the run ends either way. 4 GB is recommended to leave that margin
+for larger agent sets and later releases.
 
 The installer then asks which coding agents to install, and that conversation
 only reads `/dev/tty` — there is no flag or environment variable that skips it.
 So this package does not guess at the answers: the installer is run inside a
-`tmux` session, answered question by question according to the agents ticked on
-the *Configuration* page, and the whole terminal is written to
+`tmux` session, answered question by question according to the agent selected on
+the *Configuration* page (the whole registry, or one agent from the picker), and
+the whole terminal is written to
 `<install_path>/logs/installer.out`. When an install fails, that transcript is
 where the reason is — and the first place to look.
 
@@ -105,7 +118,7 @@ worth knowing, because both have been misread:
 * **The log is append-only, and the page shows the current run.** Each run
   starts with a `===== fcc job start <time>: <command> =====` line, and the page
   shows what follows the last one. For earlier runs, read
-  `<install_path>/logs/fcc-runtime.log` (install/reinstall) or `fcc-update.log`
+  `<install_path>/logs/fcc-runtime.log` (install) or `fcc-update.log`
   (update) on the router directly; when the install path is not writable they
   fall back to `/tmp/fcc-logs/`.
 
@@ -119,6 +132,8 @@ out for longer than that.
 **2. Configure.** On the *Configuration* page, set the address and port, then
 **Open FCC Admin** to add provider credentials. API keys are entered in FCC's
 own admin UI and are never stored in UCI — this package has nowhere to put them.
+The **Install path** and **Backup path** fields on the same page can be changed
+at any time; changing the install path does not move an existing runtime.
 
 > **Keep the address at `127.0.0.1`** unless you deliberately need to reach the
 > FCC Admin page from another device on your LAN. The FCC server's own default
@@ -156,11 +171,12 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 
 `tar` is deliberately *not* among them — which is not the same as the tar on the
 device being good enough. Nothing here shells out to tar: the runtime installer
-is fetched as a shell script and run, and backups are directory renames. The
-*installer* does shell out to it, though: `uv` unpacks its own release with
-`tar xf … --no-same-owner --strip-components 1`, and busybox tar implements
-neither option. It prints its usage text, exits 1, and the install stops a few
-seconds after the last question with nothing on the page but the installer's
+is fetched as a shell script and run, and backups move directories and copy
+`data/`. The *installer* does shell out to it, though: `uv` unpacks its own
+release with `tar xf … --no-same-owner --strip-components 1`, and busybox tar
+implements neither option. It prints its usage text, exits 1, and the install
+stops a few seconds after the last question with nothing on the page but the
+installer's
 `uv installation failed with exit code 1`. So the *Configuration* page's
 diagnostics decide by **actually unpacking an archive**, not by reading a version
 string: a tar that supports both options (GNU tar, or libarchive's) is an OK;
@@ -195,7 +211,8 @@ from the selected set with a line saying why, every question the installer asks
 about it is answered no, and when it was the only agent asked for, the install
 is refused with `AGENT_UNSUPPORTED` instead of being allowed to hit that
 guaranteed failure. The diagnostics report it as a WARN "not available", not as
-a missing dependency.
+a missing dependency. An upstream request for musl builds is open:
+[cline/cline#15271](https://github.com/cline/cline/issues/15271).
 
 `git` is needed for one agent only: the Hermes installer fetches its sources
 with `git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git`,
@@ -225,8 +242,8 @@ why the runtime is installed on demand rather than shipped here.
 ### Packages the preflight installs
 
 *Configuration* → **Diagnostics** → **Run checks** lists every check with its
-value, requirement, result and suggestion. When **Install FCC Runtime**,
-**Reinstall** or **Update** is pressed and *every* failing check is one a
+value, requirement, result and suggestion. When **Install** or **Update** is
+pressed and *every* failing check is one a
 package can clear, the installer adds those packages, asks the diagnostics
 again, and only downloads the runtime once the report passes. A failure no
 package remedies — not enough free space, DNS, unreachable HTTPS, a CPU with no
@@ -305,7 +322,7 @@ exited, and their leftover files; running sessions are not touched.
 Makefile                  explicit Package/ definitions (no luci.mk)
 VERSION                   the upstream version (the release number is PKG_RELEASE)
 luasrc/controller/fcc.lua the LuCI dispatcher and the JSON API
-luasrc/fcc/               util.lua, agents.lua, paths.lua
+luasrc/fcc/               util.lua, agents.lua, paths.lua, adminproxy.lua
 luasrc/view/fcc/          the three pages
 htdocs/luci-static/…/fcc/ browser JavaScript and xterm.js
 root/etc/init.d/fcc       procd service for the FCC server
@@ -440,16 +457,15 @@ the release.
   musl build, so the diagnostics report it as a WARN "not available", and an
   install drops it with a line saying why — see *Requirements*. The other nine
   agents are unaffected.
-* **A first install cannot select zero agents.** Upstream's chooser refuses an
-  empty set and re-asks the whole list, so "no agents" cannot be completed on a
-  fresh install. This package refuses it outright and says why, rather than
-  letting the installer spin. Selecting none is allowed once agents are already
-  installed: upstream keeps the ones it finds.
-* **A rolled-back update costs a second runtime's worth of disk while it runs.**
-  Rollback works by renaming the previous runtime aside rather than copying it,
-  which is free on one filesystem — but the new runtime still has to be written
-  before the old one is discarded, so the free-space preflight has to cover one
-  runtime, not zero. That is what it checks.
+* **A whole-registry install is all-or-nothing.** Upstream stops at the first
+  agent it cannot install and rolls the entire run back, so one agent that
+  cannot be installed on the device makes **All agents** install none of them.
+  Pick that agent on its own from the dropdown, one at a time, to get the rest.
+* **An update needs room for the new runtime before the old one is discarded.**
+  Rollback moves the previous runtime aside: a rename when the backup path is on
+  the same filesystem, a copy when it is the default `/tmp` tmpfs. Either way the
+  new runtime is written before the old one can be dropped, so the free-space
+  preflight has to cover one runtime, not zero. That is what it checks.
 
 ---
 
