@@ -291,6 +291,9 @@ msgstr "日志"
 msgid "LuCI App"
 msgstr "LuCI 应用"
 
+msgid "Malformed response from the router"
+msgstr "路由器返回的响应无法解析"
+
 msgid "Memory"
 msgstr "内存"
 
@@ -657,11 +660,11 @@ msgstr "运行时间"
 
 msgid ""
 "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large "
-"download, makes progress slow and takes about 8 GB of extra storage. Choose "
-"only the items you need and install them in batches."
+"download, makes progress slow and takes about 8 GB of storage. Choose only "
+"the items you need and install them in batches."
 msgstr ""
-"⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并额外占用"
-"约 8 GB 存储空间。建议只选择您需要的项分批安装。"
+"⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
+"8 GB 存储空间。建议只选择您需要的项分批安装。"
 
 #~ msgid "Re-detect versions"
 #~ msgstr "重新检测版本"

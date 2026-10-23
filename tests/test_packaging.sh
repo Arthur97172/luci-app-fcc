@@ -1421,6 +1421,21 @@ test_basic_information_controls_are_manual_and_named() {
 		"Clear update record is wired"
 }
 
+test_malformed_response_is_translated() {
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-common.js"
+	_ts_po="$ROOT/po/zh_Hans/fcc.po"
+
+	# The API client builds this sentence itself, so it only reaches the
+	# catalogue if it goes through FCC._. It did not, and showed in English on
+	# a Chinese page.
+	assert_contains "$(cat "$_ts_js")" \
+		"window.FCC._('Malformed response from the router')" \
+		"the API client's own error goes through the translator"
+	assert_contains "$(grep -A1 'msgid "Malformed response from the router"' "$_ts_po")" \
+		'msgstr "路由器返回的响应无法解析"' \
+		"and has a Chinese translation"
+}
+
 test_agent_information_is_opt_in_and_named() {
 	_ts_info="$ROOT/luasrc/view/fcc/info.htm"
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"

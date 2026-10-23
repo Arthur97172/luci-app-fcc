@@ -237,6 +237,9 @@ msgstr ""
 msgid "LuCI App"
 msgstr ""
 
+msgid "Malformed response from the router"
+msgstr ""
+
 msgid "Memory"
 msgstr ""
 
@@ -555,5 +558,5 @@ msgstr ""
 msgid "uptime"
 msgstr ""
 
-msgid "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large download, makes progress slow and takes about 8 GB of extra storage. Choose only the items you need and install them in batches."
+msgid "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large download, makes progress slow and takes about 8 GB of storage. Choose only the items you need and install them in batches."
 msgstr ""

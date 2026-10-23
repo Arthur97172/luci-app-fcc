@@ -57,7 +57,10 @@
 					throw err;
 				}
 				if (data === null) {
-					var perr = new Error('Malformed response from the router');
+					/* Translated like every other sentence a page can show:
+					 * this one reached the screen as English only because it
+					 * was built here and never passed through the catalogue. */
+					var perr = new Error(window.FCC._('Malformed response from the router'));
 					perr.status = resp.status;
 					throw perr;
 				}
