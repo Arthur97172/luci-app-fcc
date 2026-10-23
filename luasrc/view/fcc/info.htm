@@ -40,12 +40,18 @@
 			     showing the old number until this runs, so the one control the
 			     table needs is the one that re-reads it. It used to sit on the
 			     Configuration page beside the agent list that was removed
-			     (section 104.25); the list is here now, so the control is too. -->
+			     (section 104.25); the list is here now, so the control is too.
+
+			     The table is filled only by that button: opening or returning to
+			     the tab does not run a version detection, so the section starts
+			     empty and stays empty until asked. Clear information puts it back
+			     to that state. -->
 			<div class="fcc-toolbar">
-				<button id="fcc-info-agent-versions" class="cbi-button"><%:Re-detect versions%></button>
+				<button id="fcc-info-agent-versions" class="cbi-button"><%:Status and versions%></button>
+				<button id="fcc-info-agent-clear" class="cbi-button cbi-button-reset"><%:Clear information%></button>
 				<div class="spacer"></div>
 			</div>
-			<table class="fcc-table" id="fcc-info-agents">
+			<table class="fcc-table" id="fcc-info-agents" hidden>
 				<thead>
 					<tr>
 						<th><%:Agent%></th>

@@ -10,6 +10,12 @@
 	var FCC = window.FCC;
 	var timer = null;
 	var versionTimer = null;
+	/* The agent table is opt-in. Opening the tab costs nothing for agents: no
+	 * version detection runs and the table stays empty until "Status and
+	 * versions" is pressed. The status poll keeps the system and FCC cards
+	 * live, but it must not refill the table after Clear information either,
+	 * which is why this flag gates the render as well as the detection. */
+	var agentShown = false;
 
 	function card(title, value, sub) {
 		return FCC.el('div', { class: 'fcc-card' }, [
@@ -198,21 +204,39 @@
 	 * a POST because it shells out to each agent's --version — a GET that costs
 	 * ten processes is one a proxy or a prefetch is entitled to repeat.
 	 *
-	 * It lives on this page because the agent list does. It used to be on
-	 * Configuration, beside the agent table that was removed (section 104.25). */
+	 * It is also what brings the table into view: until it is pressed the
+	 * section shows no agent information at all, so returning to the tab never
+	 * pays for a detection nobody asked for. */
 	function refreshAgentVersions(btn) {
 		var status = FCC.$('#fcc-info-agent-status');
+		var table = FCC.$('#fcc-info-agents');
+		agentShown = true;
+		if (table) { table.hidden = false; }
 		FCC.notice(status, '', FCC._('Detecting versions…'));
 		btn.disabled = true;
 		FCC.api('agent_versions', {}, { method: 'POST' }).then(function () {
 			return loadStatus(false);
 		}).then(function () {
-			FCC.notice(status, 'ok', FCC._('Versions updated.'));
+			/* Clear may have been pressed while the detection ran; it must not
+			 * leave a fresh sentence behind on the empty section. */
+			if (agentShown) { FCC.notice(status, 'ok', FCC._('Versions updated.')); }
 		}).catch(function (err) {
-			FCC.notice(status, 'fail', err.message);
+			if (agentShown) { FCC.notice(status, 'fail', err.message); }
 		}).then(function () {
 			btn.disabled = false;
 		});
+	}
+
+	/* Clear information puts the section back to how it opens: no table, no
+	 * detection sentence, and no detection on the next status poll. It clears
+	 * what the page is showing, not the version cache on the router. */
+	function clearAgentInfo() {
+		agentShown = false;
+		var tbody = FCC.$('#fcc-info-agents tbody');
+		if (tbody) { tbody.innerHTML = ''; }
+		var table = FCC.$('#fcc-info-agents');
+		if (table) { table.hidden = true; }
+		FCC.$('#fcc-info-agent-status').textContent = '';
 	}
 
 	function loadStatus(refresh) {
@@ -221,7 +245,7 @@
 		return FCC.api(action, {}, { method: method }).then(function (d) {
 			renderSystem(d.system || {});
 			renderFcc(d);
-			renderAgents(d.agents || {});
+			if (agentShown) { renderAgents(d.agents || {}); }
 			return d;
 		});
 	}
@@ -258,6 +282,7 @@
 		FCC.$('#fcc-info-agent-versions').addEventListener('click', function () {
 			refreshAgentVersions(this);
 		});
+		FCC.$('#fcc-info-agent-clear').addEventListener('click', clearAgentInfo);
 
 		loadStatus(false).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-info-fcc'), 'fail', err.message);
@@ -275,6 +300,10 @@
 			loadStatus(false).catch(function () {});
 		}, 2000);
 		versionTimer = setInterval(function () {
+			/* status_refresh shells out to every agent's --version, so it only
+			 * runs while its result is on screen. A hidden table must not keep
+			 * a detection going every minute. */
+			if (!agentShown) { return; }
 			loadStatus(true).catch(function () {});
 		}, 60000);
 		window.addEventListener('beforeunload', function () {

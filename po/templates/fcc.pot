@@ -93,6 +93,9 @@ msgstr ""
 msgid "Clear check log"
 msgstr ""
 
+msgid "Clear information"
+msgstr ""
+
 msgid "Clear log"
 msgstr ""
 
@@ -130,9 +133,6 @@ msgid "Diagnostics"
 msgstr ""
 
 msgid "Directory where an install sets its rollback copy aside — the previous runtime, and your data as it was before the install. It needs room for a full copy of the FCC data directory, so it is /tmp/fcc by default: /tmp is memory on OpenWrt, which keeps the copy off the flash the runtime lives on. The copy is removed as soon as the install ends either way. Set this to the install path if you would rather keep it beside the runtime."
-msgstr ""
-
-msgid "Do not choose every agent in the registry when installing: the download is extremely slow and takes about 8 GB of storage. Choose only the agents you need."
 msgstr ""
 
 msgid "Done."
@@ -285,9 +285,6 @@ msgstr ""
 msgid "Port"
 msgstr ""
 
-msgid "Re-detect versions"
-msgstr ""
-
 msgid "Reconnect"
 msgstr ""
 
@@ -367,6 +364,9 @@ msgid "State"
 msgstr ""
 
 msgid "Status"
+msgstr ""
+
+msgid "Status and versions"
 msgstr ""
 
 msgid "Stop"
@@ -553,4 +553,7 @@ msgid "update available"
 msgstr ""
 
 msgid "uptime"
+msgstr ""
+
+msgid "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large download, makes progress slow and takes about 8 GB of extra storage. Choose only the items you need and install them in batches."
 msgstr ""

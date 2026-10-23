@@ -594,7 +594,7 @@ test_the_runtime_help_is_one_warning() {
 
 	assert_contains "$(cat "$_ts_view")" 'class="fcc-warn"' \
 		"the replacement is a warning block"
-	assert_contains "$(cat "$_ts_view")" 'Do not choose every agent in the registry' \
+	assert_contains "$(cat "$_ts_view")" 'avoid choosing “All agents” when installing' \
 		"it warns against choosing the whole registry"
 	assert_contains "$(cat "$_ts_view")" '8 GB' "and names the storage cost"
 
@@ -1358,7 +1358,7 @@ test_basic_information_controls_are_manual_and_named() {
 		"and its update section is gone"
 	assert_contains "$(cat "$_ts_config")" 'class="fcc-update-block"' \
 		"Configuration carries the update block"
-	_ts_warn_line="$(grep -n 'Do not choose every agent in the registry' "$_ts_config" | cut -d: -f1)"
+	_ts_warn_line="$(grep -n 'avoid choosing “All agents”' "$_ts_config" | cut -d: -f1)"
 	_ts_block_line="$(grep -n 'class="fcc-update-block"' "$_ts_config" | cut -d: -f1)"
 	_ts_job_line="$(grep -n 'id="fcc-job"' "$_ts_config" | cut -d: -f1)"
 	if [ -n "$_ts_warn_line" ] && [ -n "$_ts_block_line" ] && [ -n "$_ts_job_line" ] \
@@ -1419,6 +1419,50 @@ test_basic_information_controls_are_manual_and_named() {
 	assert_contains "$(cat "$_ts_js_config")" \
 		"FCC.\$('#fcc-update-clear').addEventListener('click', clearUpdateRecord)" \
 		"Clear update record is wired"
+}
+
+test_agent_information_is_opt_in_and_named() {
+	_ts_info="$ROOT/luasrc/view/fcc/info.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"
+
+	# One button for state and versions, and a second one that puts the
+	# section back to empty.
+	_ts_toolbar="$(sed -n '/id="fcc-info-agent-versions"/,/<\/div>/p' "$_ts_info")"
+	assert_contains "$(cat "$_ts_info")" '<%:Status and versions%>' \
+		"the agent button names what it shows"
+	assert_not_contains "$(cat "$_ts_info")" '<%:Re-detect versions%>' \
+		"and no longer says re-detect"
+	assert_contains "$_ts_toolbar" 'id="fcc-info-agent-clear"' \
+		"Clear information follows it in the same toolbar"
+	assert_contains "$(cat "$_ts_info")" '<%:Clear information%>' \
+		"and is named for what it clears"
+	assert_contains "$(cat "$_ts_info")" 'id="fcc-info-agents" hidden' \
+		"the table starts hidden"
+
+	# Nothing is detected on entry: the render is gated, and the per-minute
+	# version refresh is gated with it, so a tab left open on another page
+	# costs no agent processes.
+	assert_contains "$(cat "$_ts_js")" 'if (agentShown) { renderAgents(' \
+		"the table is drawn only once asked for"
+	assert_contains "$(cat "$_ts_js")" 'if (!agentShown) { return; }' \
+		"the version refresh does not run while the table is cleared"
+	_ts_init="$(sed -n '/^	function init()/,/^	}$/p' "$_ts_js")"
+	assert_not_contains "$_ts_init" 'agent_versions' \
+		"opening the tab does not run a version detection"
+
+	# Status and versions turns the table on before it asks the backend;
+	# Clear information turns it off and empties what is on screen.
+	assert_contains "$(cat "$_ts_js")" 'agentShown = true;' \
+		"the button shows the table"
+	assert_contains "$(cat "$_ts_js")" 'agentShown = false;' \
+		"clearing hides it again"
+	assert_contains "$(cat "$_ts_js")" 'table.hidden = true;' \
+		"and removes it from view"
+	assert_contains "$(cat "$_ts_js")" \
+		"FCC.\$('#fcc-info-agent-clear').addEventListener('click', clearAgentInfo)" \
+		"the clear button is wired"
+	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-info-agent-status').textContent = ''" \
+		"clearing also drops the detection sentence"
 }
 
 tests_main

@@ -125,6 +125,9 @@ msgstr "正在检查…"
 msgid "Clear check log"
 msgstr "清空检查日志"
 
+msgid "Clear information"
+msgstr "清空信息"
+
 msgid "Clear log"
 msgstr "清空日志"
 
@@ -173,14 +176,6 @@ msgstr ""
 "整的 FCC 数据目录副本，因此默认是 /tmp/fcc：在 OpenWrt 上 /tmp 位于内存，可让"
 "副本不占用运行时所在的闪存。无论安装成功还是失败，副本都会在安装结束后删除。"
 "若希望把副本与运行时放在一起，可将此项设为安装路径。"
-
-msgid ""
-"Do not choose every agent in the registry when installing: the download is "
-"extremely slow and takes about 8 GB of storage. Choose only the agents you "
-"need."
-msgstr ""
-"安装时请勿选注册表中的全部智能体，否则会导致下载极其缓慢并占用约 8GB 存储空"
-"间。建议仅选需要的智能体进行安装。"
 
 msgid "Done."
 msgstr "完成。"
@@ -344,9 +339,6 @@ msgstr "平台"
 msgid "Port"
 msgstr "端口"
 
-msgid "Re-detect versions"
-msgstr "重新检测版本"
-
 msgid "Reconnect"
 msgstr "重新连接"
 
@@ -441,6 +433,9 @@ msgstr "状态"
 
 msgid "Status"
 msgstr "状态"
+
+msgid "Status and versions"
+msgstr "状态与版本"
 
 msgid "Stop"
 msgstr "停止"
@@ -659,6 +654,17 @@ msgstr "有可用更新"
 
 msgid "uptime"
 msgstr "运行时间"
+
+msgid ""
+"⚠️ Note: avoid choosing “All agents” when installing. It triggers a large "
+"download, makes progress slow and takes about 8 GB of extra storage. Choose "
+"only the items you need and install them in batches."
+msgstr ""
+"⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并额外占用"
+"约 8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid "Re-detect versions"
+#~ msgstr "重新检测版本"
 
 #~ msgid ""
 #~ "Update the FCC runtime now? The server is stopped during the update and "
