@@ -135,7 +135,34 @@ local function require_post()
 	return false
 end
 
+--- Could this text be a JSON document from a backend script?
+---
+--- Deliberately structural rather than a parse: this has to answer the same
+--- way on a LuCI that has luci.jsonc, one that has luci.json, and one with
+--- neither. The shape is fixed — the document opens with an object (or
+--- array), closes the same way, and carries no control character except the
+--- newline that separates the lines of a pretty-printed one. That last rule
+--- is what matters: a raw carriage return or tab inside a string is exactly
+--- what makes JSON.parse() throw on the whole body, and the page can then only
+--- say "Malformed response from the router" without naming the script that
+--- caused it. Section 104.20.
+local function looks_like_json(text)
+	if type(text) ~= "string" then return false end
+	local t = text:match("^%s*(.-)%s*$")
+	if t == "" then return false end
+	local first, last = t:sub(1, 1), t:sub(-1)
+	if (first ~= "{" and first ~= "[") or (last ~= "}" and last ~= "]") then
+		return false
+	end
+	if t:find("[%z\1-\9\11-\31]") then return false end
+	return true
+end
+
 --- Run a backend script and relay its stdout verbatim.
+---
+--- Verbatim, but never unparsable: a script that answers with something other
+--- than JSON is reported as such, with the beginning of what it said, instead
+--- of being forwarded to a page that can only call it malformed.
 local function relay(script, args)
 	local path = paths.script(script)
 	if not path or not util.file_exists(path) then
@@ -143,6 +170,10 @@ local function relay(script, args)
 	end
 	local out = util.exec_argv(path, args)
 	if out == "" then out = "{}" end
+	if not looks_like_json(out) then
+		return fail("the backend script " .. tostring(script) .. ".sh answered with something that is not JSON: "
+			.. util.trim(out):sub(1, 300))
+	end
 	json_out(out)
 end
 
@@ -479,13 +510,43 @@ local SERVER_OPS = {
 	enable = true, disable = true, reload = true,
 }
 
+--- Stop the FCC server on the LAN target, if there is one to stop.
+---
+--- Best effort by design: the remote answer cannot make this router's own
+--- server refuse to start. What it does decide is what the page is told — the
+--- switch promises that only one server runs, and "the other side was stopped"
+--- is a claim only the remote can support.
+local function stop_remote_server()
+	local out = run("remote", { "control", "stop" })
+	local d = util.json_decode(util.trim(out or ""))
+	return type(d) == "table" and d.ok == true
+end
+
+--- Run one lifecycle verb on this router's FCC server.
+---
+--- This is the "This router" half of the one-server rule. Starting here means
+--- the LAN server is stopped first and the control target is written as this
+--- router, so a caller that reached the action without the switch cannot leave
+--- the page pointing at the LAN while this server runs.
 function act_server()
 	if not require_post() then return end
 	local op = http.formvalue("op")
 	if not op or not SERVER_OPS[op] then return fail("invalid operation") end
+
+	local remote_stopped = false
+	if op == "start" or op == "restart" or op == "reload" then
+		remote_stopped = stop_remote_server()
+		local c = cfg_cursor()
+		if c then
+			c:set("fcc", "main", "control_target", "local")
+			c:commit("fcc")
+		end
+	end
+
 	local out, code = util.exec_argv("/etc/init.d/fcc", { op })
 	json_out('{"ok":' .. (code == 0 and "true" or "false") ..
 		',"op":' .. util.json_encode(op) ..
+		',"remote_stopped":' .. (remote_stopped and "true" or "false") ..
 		',"output":' .. util.json_encode(util.trim(out or "")) .. '}')
 end
 
@@ -577,20 +638,43 @@ function act_remote_set()
 end
 
 --- Switch the FCC Server section between this router and the LAN.
---
--- Leaving LAN mode stops the tunnel as well: the Admin proxy picks its
--- upstream from this setting, and a tunnel left running would otherwise be a
--- second SSH session that nothing would ever close.
+---
+--- The switch chooses which single FCC Server runs, so it stops the other one
+--- as well:
+---
+---   * to the LAN — this router's server is stopped, so the machine the page is
+---     now pointing at is the only one left running;
+---   * to this router — the LAN server is stopped first (remote.sh allows a
+---     stop whatever the stored target says, which is what makes this one
+---     request), then the tunnel, which the Admin proxy uses only in LAN mode.
+---
+--- Neither direction starts anything: the button for that is on the panel the
+--- switch just opened, and a start is a decision about a running service, not
+--- a side effect of changing a dropdown.
 function act_remote_mode()
 	if not require_post() then return end
 	local c = cfg_cursor()
 	if not c then return fail("configuration is unavailable") end
 	local mode = http.formvalue("mode")
 	if mode ~= "local" and mode ~= "lan" then return fail("invalid control target") end
+
+	local remote_stopped = false
+	if mode == "local" then
+		remote_stopped = stop_remote_server()
+	end
 	c:set("fcc", "main", "control_target", mode)
 	c:commit("fcc")
-	if mode == "local" then run("remote", { "tunnel-stop" }) end
-	json_out('{"ok":true,"mode":' .. util.json_encode(mode) .. '}')
+
+	local local_stopped = false
+	if mode == "lan" then
+		local _, code = util.exec_argv("/etc/init.d/fcc", { "stop" })
+		local_stopped = (code == 0)
+	end
+	run("remote", { "tunnel-stop" })
+
+	json_out('{"ok":true,"mode":' .. util.json_encode(mode) ..
+		',"local_stopped":' .. (local_stopped and "true" or "false") ..
+		',"remote_stopped":' .. (remote_stopped and "true" or "false") .. '}')
 end
 
 --- Create the router's key pair, or return the existing public half.
@@ -655,6 +739,12 @@ function act_remote_control()
 	if not require_post() then return end
 	local op = http.formvalue("op")
 	if not op or not REMOTE_OPS[op] then return fail("invalid operation") end
+	-- The LAN is the other half of the one-server rule: a start or a restart
+	-- there stops this router's server first. A stop has nothing on this side
+	-- to take down and is relayed as it is.
+	if op ~= "stop" then
+		util.exec_argv("/etc/init.d/fcc", { "stop" })
+	end
 	relay("remote", { "control", op })
 end
 

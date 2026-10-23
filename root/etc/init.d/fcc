@@ -82,6 +82,18 @@ valid_port() {
 }
 
 start_service() {
+	# One FCC Server at a time. The Configuration page's FCC Server section
+	# chooses which one — this router or one machine on the LAN — and switching
+	# to the LAN stops this server. That stop would be undone by the next boot
+	# if procd started it anyway, which is the one path the page cannot cover:
+	# the remote server has its own boot setting and nothing on this router can
+	# see it. So the stored target is honoured here too.
+	_ss_target="$(uci_get control_target local)"
+	if [ "$_ss_target" = "lan" ]; then
+		logger -t "$LOG_TAG" "control target is the LAN; this router's server is not started"
+		return 0
+	fi
+
 	_ss_r="$(fcc_root_dir)"
 	_ss_bin="$(find_server)" || {
 		logger -t "$LOG_TAG" "FCC runtime not installed (looked under $_ss_r); not starting"

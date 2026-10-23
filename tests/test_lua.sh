@@ -846,6 +846,201 @@ LUA
 		"the probe answers from the root it was given"
 }
 
+test_the_switch_keeps_exactly_one_server() {
+	# The FCC Server section is one switch with two sides, and the one-server
+	# rule is what makes it a switch rather than a pair of panels: entering the
+	# LAN stops this router's server, leaving the LAN stops the remote one, and
+	# starting either side stops the other first. The rule lives in the
+	# controller, so it is driven there — remote.sh only loosened its target
+	# check so that the stop is accepted once the target already says "local".
+	#
+	# A backend answer that is not JSON is covered as well: forwarded verbatim
+	# it reached the page as an unparsable body, which is the "Malformed
+	# response from the router" report this whole change starts from.
+	#
+	# The handler runs the real /etc/init.d/fcc path, as a click does. The
+	# suites run in a container or on a development host where this package is
+	# not installed as a service, so the stop answers 127 and the test reads
+	# that as "nothing to stop".
+	if [ -z "$LUA" ]; then
+		skip "no Lua interpreter available"
+		return
+	fi
+
+	_ts_dir="$(mktemp -d)"
+	mkdir -p "$_ts_dir/libexec"
+	cat > "$_ts_dir/libexec/remote.sh" <<'SH'
+#!/bin/sh
+printf '%s\n' '{"ok":true,"op":"stop","output":"","exit":0}'
+SH
+	cat > "$_ts_dir/libexec/status.sh" <<'SH'
+#!/bin/sh
+printf '%s\n' '<html>the router did not answer</html>'
+SH
+	# A pretty-printed document is still JSON: status and update both write one
+	# with a raw newline between the lines, so the guard must let that through.
+	cat > "$_ts_dir/libexec/update.sh" <<'SH'
+#!/bin/sh
+printf '{\n  "ok": true,\n  "list": []\n}\n'
+SH
+	# A carriage return, on the other hand, is what a CRLF answer leaves behind
+	# once `tr '\n' ' '` has rewritten the line feeds.
+	cat > "$_ts_dir/libexec/doctor.sh" <<'SH'
+#!/bin/sh
+printf '{"ok":true,"note":"a\rb"}\n'
+SH
+	chmod +x "$_ts_dir/libexec/remote.sh" "$_ts_dir/libexec/status.sh" \
+		"$_ts_dir/libexec/update.sh" "$_ts_dir/libexec/doctor.sh"
+
+	_ts_p="$(mktemp)"
+	cat > "$_ts_p" <<'LUA'
+local ROOT = assert(os.getenv("FCC_TEST_ROOT"))
+
+table.insert(package.loaders, 1, function(name)
+	local rel
+	if name == "luci.controller.fcc" then
+		rel = "/luasrc/controller/fcc.lua"
+	else
+		local short = name:match("^luci%.fcc%.([a-z_]+)$")
+		if short then rel = "/luasrc/fcc/" .. short .. ".lua" end
+	end
+	if not rel then return nil end
+	local fh = io.open(ROOT .. rel, "r")
+	if not fh then return nil end
+	local src = fh:read("*a"); fh:close()
+	return assert(loadstring(src, "@" .. rel))
+end)
+
+package.preload["nixio.fs"] = function()
+	return { access = function(p)
+		local f = io.open(p, "r"); if f then f:close() return true end
+		return os.rename(p, p) ~= nil or nil
+	end }
+end
+package.preload["luci.jsonc"] = nil
+package.preload["luci.json"] = nil
+
+local store, commits = { control_target = "lan" }, 0
+local cursor = {
+	get    = function(_, cfg, sec, opt) return store[opt] end,
+	set    = function(_, cfg, sec, opt, val) store[opt] = val end,
+	commit = function() commits = commits + 1 end,
+}
+package.preload["luci.model.uci"] = function()
+	return { cursor = function() return cursor end }
+end
+
+local form, written = {}, {}
+package.preload["luci.http"] = function()
+	return {
+		prepare_content = function() end,
+		write     = function(t) written[#written + 1] = t end,
+		status    = function() end,
+		getenv    = function(k) if k == "REQUEST_METHOD" then return "POST" end end,
+		formvalue = function(k) return form[k] end,
+	}
+end
+
+local util = require "luci.fcc.util"
+-- The router has luci.jsonc; a development host may not. What the handler asks
+-- is only whether the remote answer said ok.
+util.json_decode = function(s)
+	if type(s) == "string" and s:find('"ok":true', 1, true) then return { ok = true } end
+	return nil
+end
+
+local ctrl = require "luci.controller.fcc"
+local function body() return table.concat(written) end
+
+-- Leaving the LAN stops the remote server.
+form = { mode = "local" }
+written = {}; commits = 0
+ctrl.act_remote_mode()
+print("local=" .. body())
+print("target=" .. tostring(store.control_target) .. " commits=" .. commits)
+
+-- Entering the LAN commits the target; the local stop is /etc/init.d/fcc.
+form = { mode = "lan" }
+written = {}; commits = 0
+ctrl.act_remote_mode()
+print("lan=" .. body())
+
+-- A local start makes this router the target whatever was stored.
+store.control_target = "lan"
+form = { op = "start" }
+written = {}; commits = 0
+ctrl.act_server()
+print("server=" .. body())
+print("after=" .. tostring(store.control_target))
+
+-- A script that answers with HTML is reported instead of relayed.
+form = {}
+written = {}
+ctrl.act_status()
+print("bad=" .. body())
+
+-- A pretty-printed document is relayed unchanged. Its newlines are folded to
+-- \n first so the whole answer stays on one line for the test to read back.
+form = {}
+written = {}
+ctrl.act_update_check()
+print("pretty=" .. (body():gsub("\n", "\\n")))
+
+-- A raw carriage return inside a string is not relayed.
+form = {}
+written = {}
+ctrl.act_doctor()
+print("cr=" .. body())
+LUA
+
+	_ts_out="$(FCC_TEST_ROOT="$ROOT" \
+		FCC_LIBEXEC="$_ts_dir/libexec" \
+		FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
+		FCC_VERSION_FILE="$ROOT/VERSION" \
+		PATH="/usr/bin:/bin" "$LUA" "$_ts_p" 2>&1)"
+	rm -f "$_ts_p"
+	rm -f "$_ts_dir/libexec/remote.sh" "$_ts_dir/libexec/status.sh"
+	rmdir "$_ts_dir/libexec" "$_ts_dir" 2>/dev/null
+
+	_ts_local="$(printf '%s\n' "$_ts_out" | sed -n 's/^local=//p')"
+	assert_contains "$_ts_local" '"mode":"local"' \
+		"leaving the LAN commits the local target: [$_ts_local]"
+	assert_contains "$_ts_local" '"remote_stopped":true' \
+		"and reports that the remote server was stopped"
+	assert_contains "$_ts_out" "target=local commits=1" \
+		"the target is written once"
+
+	_ts_lan="$(printf '%s\n' "$_ts_out" | sed -n 's/^lan=//p')"
+	assert_contains "$_ts_lan" '"mode":"lan"' \
+		"entering the LAN commits the LAN target: [$_ts_lan]"
+	assert_contains "$_ts_lan" '"local_stopped"' \
+		"and reports what happened to this router's server"
+
+	_ts_srv="$(printf '%s\n' "$_ts_out" | sed -n 's/^server=//p')"
+	assert_contains "$_ts_srv" '"remote_stopped":true' \
+		"a local start stops the LAN server first: [$_ts_srv]"
+	assert_contains "$_ts_out" "after=local" \
+		"and makes this router the control target"
+
+	_ts_bad="$(printf '%s\n' "$_ts_out" | sed -n 's/^bad=//p')"
+	assert_contains "$_ts_bad" '"error"' \
+		"a non-JSON backend answer becomes a JSON error: [$_ts_bad]"
+	assert_contains "$_ts_bad" 'status.sh answered with something that is not JSON' \
+		"naming the script that answered it"
+
+	_ts_pretty="$(printf '%s\n' "$_ts_out" | sed -n 's/^pretty=//p')"
+	assert_not_contains "$_ts_pretty" '"error"' \
+		"a pretty-printed document is not refused: [$_ts_pretty]"
+	assert_contains "$_ts_pretty" '"list": []' \
+		"and is relayed as it was written"
+
+	_ts_cr="$(printf '%s\n' "$_ts_out" | sed -n 's/^cr=//p')"
+	assert_contains "$_ts_cr" '"error"' \
+		"a raw carriage return is refused: [$_ts_cr]"
+	assert_contains "$_ts_cr" 'doctor.sh answered with something that is not JSON' \
+		"naming that script too"
+}
+
 test_the_menu_survives_a_lost_config_file() {
 	# A package manager whose conffile handling goes wrong can leave the package
 	# installed with /etc/config/fcc gone — that is what happened on the test

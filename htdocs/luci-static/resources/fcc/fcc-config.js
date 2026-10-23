@@ -166,10 +166,18 @@
 				if (!r.ok) {
 					FCC.notice(FCC.$('#fcc-server-status'), 'fail',
 						r.output || FCC._('The operation failed.'));
+				} else if (r.remote_stopped) {
+					FCC.notice(FCC.$('#fcc-server-status'), 'ok',
+						FCC._('Done. The LAN FCC Server was stopped.'));
 				} else {
 					FCC.notice(FCC.$('#fcc-server-status'), 'ok', FCC._('Done.'));
 				}
-				setTimeout(refreshAll, 1500);
+				/* A start or restart here makes this router the control target,
+				 * so the switch has moved and the LAN panel's state is stale. */
+				setTimeout(function () {
+					refreshAll();
+					loadRemote();
+				}, 1500);
 			});
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-server-status'), 'fail', err.message);
@@ -430,13 +438,40 @@
 		});
 	}
 
+	/* The switch is disabled while the answer is on its way: it changes which
+	 * server runs, and a second click during that would ask for the opposite
+	 * of what the first one is still doing. */
+	function setModeBusy(busy) {
+		Array.prototype.forEach.call(
+			document.querySelectorAll('.fcc-mode-btn'),
+			function (b) { b.disabled = busy; }
+		);
+	}
+
 	function setRemoteMode(mode) {
 		showRemoteMode(mode);
 		if (mode === remote.target) { return Promise.resolve(); }
+		/* Read before the request: the answer's remote_stopped only says the
+		 * remote stop ran, and a LAN that was never configured would otherwise
+		 * be reported as one that could not be stopped. */
+		var lanConfigured = remote.ready === true;
 		FCC.notice(remoteStatus(), '', '');
+		setModeBusy(true);
 		return FCC.api('remote_mode', { mode: mode }, { method: 'POST' })
-			.then(function () {
+			.then(function (r) {
 				remote.target = mode;
+				/* One FCC Server at a time, and the switch is what enforces it,
+				 * so the page says which side it stopped rather than leaving
+				 * the user to find out from a process list. */
+				if (mode === 'lan') {
+					FCC.notice(remoteStatus(), 'ok', FCC._('Switched to the LAN. The FCC Server on this router was stopped.'));
+				} else if (!lanConfigured) {
+					FCC.notice(remoteStatus(), 'ok', FCC._('Switched to this router. No LAN server is configured.'));
+				} else if (r.remote_stopped) {
+					FCC.notice(remoteStatus(), 'ok', FCC._('Switched to this router. The LAN FCC Server was stopped.'));
+				} else {
+					FCC.notice(remoteStatus(), 'warn', FCC._('Switched to this router, but the LAN FCC Server could not be stopped.'));
+				}
 				return loadRemote();
 			})
 			.catch(function (err) {
@@ -445,7 +480,8 @@
 				 * never saved. */
 				showRemoteMode(remote.target);
 				FCC.notice(remoteStatus(), 'fail', err.message);
-			});
+			})
+			.then(function () { setModeBusy(false); });
 	}
 
 	function saveRemoteConfig() {

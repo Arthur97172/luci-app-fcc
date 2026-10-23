@@ -348,9 +348,52 @@ fcc_log() {
 # JSON emission helpers
 # ---------------------------------------------------------------------------
 fcc_json_str() {
-	# Emit a quoted JSON string for the given value (handles ", \ and controls).
+	# Emit a quoted JSON string for the given value.
+	#
+	# Everything JSON refuses inside a string is escaped: the two structural
+	# characters and every control character. The control half is not academic.
+	# remote.sh pipes an SSH command's merged output through `tr '\n' ' '`, which
+	# rewrites the LF of a CRLF answer and leaves the CR — so a Windows remote,
+	# or any tool that writes a tab, put a raw control byte inside the document.
+	# The page's JSON.parse() then threw on the whole body and the UI could only
+	# say "Malformed response from the router", whatever the operation had
+	# actually answered. Section 104.20 records the class of report this is.
 	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | \
-		awk 'BEGIN{printf "\""} {if(NR>1)printf "\\n"; printf "%s",$0} END{printf "\""}'
+		awk '
+		BEGIN {
+			# The escapes and the characters they stand for are built, not
+			# written as literals. How many backslashes a gsub() replacement
+			# needs differs between awk implementations, and this function runs
+			# under busybox awk on the router and under whichever awk the host
+			# has when the tests run; building the bytes makes the output the
+			# same everywhere. A per-character loop has no such variance at all,
+			# which is why it is a loop and not three gsub() calls.
+			bs    = sprintf("%c", 92)
+			esc_n = bs "n"
+			esc_r = bs "r"
+			esc_t = bs "t"
+			esc_u = bs "u"
+			for (i = 1; i <= 31; i++) ctl[sprintf("%c", i)] = i
+			tab = sprintf("%c", 9)
+			cr  = sprintf("%c", 13)
+			printf "\""
+		}
+		{
+			if (NR > 1) printf "%s", esc_n
+			s = $0
+			n = length(s)
+			for (i = 1; i <= n; i++) {
+				c = substr(s, i, 1)
+				if (c == tab) { printf "%s", esc_t; continue }
+				if (c == cr)  { printf "%s", esc_r; continue }
+				if (c in ctl) {
+					printf "%s%04x", esc_u, ctl[c]
+					continue
+				}
+				printf "%s", c
+			}
+		}
+		END { printf "\"" }'
 }
 
 fcc_json_bool() {

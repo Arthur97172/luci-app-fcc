@@ -147,6 +147,9 @@ msgstr ""
 msgid "Done."
 msgstr ""
 
+msgid "Done. The LAN FCC Server was stopped."
+msgstr ""
+
 msgid "Dropbear, the default OpenWrt SSH server, reads this file. An OpenSSH server on the same machine reads ~/.ssh/authorized_keys instead."
 msgstr ""
 
@@ -285,6 +288,9 @@ msgstr ""
 msgid "Now"
 msgstr ""
 
+msgid "Only one FCC Server runs at a time. Switching to a side stops the other one."
+msgstr ""
+
 msgid "Open FCC Admin"
 msgstr ""
 
@@ -400,6 +406,18 @@ msgid "Stopping FCC Server may affect active Coding Agent sessions."
 msgstr ""
 
 msgid "Storage"
+msgstr ""
+
+msgid "Switched to the LAN. The FCC Server on this router was stopped."
+msgstr ""
+
+msgid "Switched to this router, but the LAN FCC Server could not be stopped."
+msgstr ""
+
+msgid "Switched to this router. No LAN server is configured."
+msgstr ""
+
+msgid "Switched to this router. The LAN FCC Server was stopped."
 msgstr ""
 
 msgid "System"

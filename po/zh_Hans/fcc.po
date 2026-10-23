@@ -190,6 +190,9 @@ msgstr ""
 msgid "Done."
 msgstr "完成。"
 
+msgid "Done. The LAN FCC Server was stopped."
+msgstr "已完成。局域网的 FCC Server 已停止。"
+
 msgid ""
 "Dropbear, the default OpenWrt SSH server, reads this file. An OpenSSH server "
 "on the same machine reads ~/.ssh/authorized_keys instead."
@@ -340,6 +343,10 @@ msgstr "未安装"
 msgid "Now"
 msgstr "当前"
 
+msgid ""
+"Only one FCC Server runs at a time. Switching to a side stops the other one."
+msgstr "同一时间只运行一个 FCC Server。切换到另一侧时会停止原来那一侧的服务。"
+
 msgid "Open FCC Admin"
 msgstr "打开 FCC Admin"
 
@@ -470,6 +477,18 @@ msgstr "停止 FCC 服务器可能会影响正在进行的编码智能体会话�
 
 msgid "Storage"
 msgstr "存储空间"
+
+msgid "Switched to the LAN. The FCC Server on this router was stopped."
+msgstr "已切换到局域网，本机上的 FCC Server 已停止。"
+
+msgid "Switched to this router, but the LAN FCC Server could not be stopped."
+msgstr "已切换到本机，但无法停止局域网的 FCC Server。"
+
+msgid "Switched to this router. No LAN server is configured."
+msgstr "已切换到本机。尚未配置局域网服务器。"
+
+msgid "Switched to this router. The LAN FCC Server was stopped."
+msgstr "已切换到本机，局域网的 FCC Server 已停止。"
 
 msgid "System"
 msgstr "系统"

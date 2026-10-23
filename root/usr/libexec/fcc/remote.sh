@@ -469,8 +469,12 @@ fcc_remote_ssh() {
 	_rs_user="$(fcc_remote_user)"
 	_rs_host="$(fcc_remote_host)"
 	_rs_sport="$(fcc_remote_sport)"
-	# Fixed option words, intentionally split by the shell.
+	# Fixed option words, intentionally split by the shell. ServerAlive* is only
+	# on this path, not in the shared set: the tunnel adds its own, and a request
+	# that waits on a host that stopped answering must end while the HTTP
+	# request it belongs to is still alive.
 	"$_rs_ssh" $FCC_REMOTE_SSH_OPTS \
+		-o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
 		-i "$FCC_REMOTE_KEY" -p "$_rs_sport" \
 		-l "$_rs_user" "$_rs_host" "$1" 2>&1
 }
@@ -548,8 +552,17 @@ fcc_remote_control() {
 		start|stop|restart) : ;;
 		*) fcc_remote_error "invalid operation"; return 1 ;;
 	esac
-	[ "$(fcc_remote_target)" = "lan" ] \
-		|| { fcc_remote_error "remote control is not enabled"; return 1; }
+	# Only start and restart belong to the LAN target. Stop is allowed whatever
+	# the control target is: it is the one operation that leaves fewer servers
+	# running, and the controller asks for it whenever this router's server is
+	# started or this side is selected — both of which can happen while the
+	# stored target still says "local", with a LAN server left over from an
+	# earlier session. Refusing the stop on that ground would leave that server
+	# running beside this router's own.
+	if [ "$_cc_op" != "stop" ]; then
+		[ "$(fcc_remote_target)" = "lan" ] \
+			|| { fcc_remote_error "remote control is not enabled"; return 1; }
+	fi
 	fcc_remote_config_ok \
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \

@@ -243,6 +243,19 @@ test_json_string_escaping() {
 	assert_eq '"a\\b"'         "$(sh_common 'fcc_json_str "a\\b"')"         "a backslash is escaped"
 	assert_eq '"a\nb"'         "$(sh_common 'fcc_json_str "a
 b"')" "a newline is escaped"
+	# Control characters are the difference between a page that says what the
+	# backend answered and one that can only say "Malformed response from the
+	# router": JSON has no raw control byte inside a string, so one CR in an
+	# SSH answer used to make the whole document unparsable. A Windows remote
+	# writes CRLF, and remote.sh's `tr '\n' ' '` keeps the CR.
+	assert_eq '"a\rb"'         "$(sh_common 'fcc_json_str "$(printf "a\rb")"')" \
+		"a carriage return is escaped"
+	assert_eq '"a\tb"'         "$(sh_common 'fcc_json_str "$(printf "a\tb")"')" \
+		"a tab is escaped"
+	assert_eq '"a\u0001b"'     "$(sh_common 'fcc_json_str "$(printf "a\001b")"')" \
+		"a control character with no short form is escaped as a code point"
+	assert_eq '"a&b"'          "$(sh_common 'fcc_json_str "a&b"')" \
+		"an ampersand is not a replacement pattern"
 }
 
 test_json_helpers() {

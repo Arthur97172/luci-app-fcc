@@ -397,6 +397,23 @@ test_control_refuses_outside_lan_mode() {
 	drop_sandbox
 }
 
+test_stop_is_allowed_outside_lan_mode() {
+	# The one-server rule makes the controller stop the remote server while
+	# leaving LAN mode, and by then the stored target is already "local". A stop
+	# refused on that ground would leave the remote server running beside this
+	# router's own, so stop is the one verb the target does not gate.
+	fresh
+	ready_lan
+	uci_set control_target local
+	rc=0
+	out="$(run_remote control stop)" || rc=$?
+	assert_eq "0" "$rc" "a stop is accepted while the target is this router"
+	assert_contains "$out" '"ok":true' "and it reports what the remote said"
+	assert_eq "systemctl stop fcc" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+		"the command is the same preset a LAN stop sends"
+	drop_sandbox
+}
+
 test_control_refuses_an_unknown_operation() {
 	fresh
 	ready_lan

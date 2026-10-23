@@ -1387,6 +1387,26 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the client name reaches the page in status"
 	assert_not_contains "$(cat "$_ts_remote")" 'package openssh-client)' \
 		"the old package name that exists on the remote machine is not used"
+
+	# One FCC Server at a time. The switch, a Start on either side and the boot
+	# path all have to stop the other side, or two instances answer on the same
+	# network — which is what the page used to allow.
+	_ts_ctl="$ROOT/luasrc/controller/fcc.lua"
+	_ts_init="$ROOT/root/etc/init.d/fcc"
+	assert_contains "$(cat "$_ts_view")" 'Only one FCC Server runs at a time' \
+		"the switch says that only one side runs"
+	assert_contains "$(cat "$_ts_js")" 'setModeBusy' \
+		"the switch is disabled while it is being applied"
+	assert_contains "$(cat "$_ts_js")" 'r.remote_stopped' \
+		"the page reports whether the other side was stopped"
+	assert_contains "$(cat "$_ts_ctl")" 'stop_remote_server' \
+		"the controller stops the LAN server when it moves to this router"
+	assert_contains "$(cat "$_ts_ctl")" 'remote_stopped' \
+		"and tells the page whether that worked"
+	assert_contains "$(cat "$_ts_init")" 'control_target' \
+		"the init script reads the stored target"
+	assert_contains "$(cat "$_ts_remote")" '[ "$_cc_op" != "stop" ]' \
+		"the LAN script still allows Stop while the target is this router"
 }
 
 # ---------------------------------------------------------------------------
