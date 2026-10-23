@@ -32,6 +32,17 @@
  * notes under the toolbar use — otherwise it reads as a third button. */
 .fcc-toolbar-label { color: var(--fcc-text-dim); }
 
+/* Update checking and updating belong to FCC Runtime, not to a section of their
+ * own: a rule above them says the block is a part of this section while the
+ * heading still names what the buttons do. */
+.fcc-update-block {
+	margin-top: 1em;
+	padding-top: .2em;
+	border-top: 1px solid var(--fcc-border);
+}
+
+.fcc-update-block h4 { margin: .6em 0 .3em; }
+
 /* Basic Information's System and FCC sections are a grid of cards and nothing
  * else, so they were the only blocks on any page with no line of space under
  * them: every other section ends in a .fcc-toolbar or a log, both of which

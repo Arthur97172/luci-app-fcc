@@ -11,8 +11,8 @@
 | 页面 | 作用 |
 | --- | --- |
 | **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider 的真正交互式终端——每个 Agent 一个 tmux 会话，直接在浏览器里用。 |
-| **配置** | FCC 服务器设置（地址、端口、日志级别）、运行时安装路径与备份路径、Agent 选择框、安装/更新/卸载/彻底卸载、启动/停止/重启、诊断报告、FCC Admin 页面入口，以及通过 SSH 控制局域网内另一台机器上的 FCC 服务器。 |
-| **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储，以及 FCC 更新检查。 |
+| **配置** | FCC 服务器设置（地址、端口、日志级别）、运行时安装路径与备份路径、Agent 选择框、安装/卸载/彻底卸载、更新检查（检查更新、更新 FCC、清除更新记录）、启动/停止/重启、诊断报告、FCC Admin 页面入口，以及通过 SSH 控制局域网内另一台机器上的 FCC 服务器。 |
+| **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储。 |
 
 `luci-app-fcc` **只是控制层**。它只包含 Lua、JavaScript 和 POSIX shell，
 **不包含** Python、Node.js、`uv`、FCC 运行时或任何编程 Agent——这些都按需单独安装在
@@ -117,7 +117,7 @@ API 密钥在 FCC 自己的管理界面里填写，从不写入 UCI——本软�
 **3. 使用 Agent。** 在 *Web 终端*页面选择 Agent 并按 **Start**。
 每个 Agent 拥有自己的会话，命名为 `fcc-<agent>-NNN`。
 
-**4. 更新。** *基本信息* → **Check for updates** → **Update FCC**。
+**4. 更新。** *配置* → **FCC 运行时** 下方的 **Check for updates** → **Update FCC**。
 检查只在点这个按钮时执行，打开或切回标签页不会自己联网；**Clear update record**
 把这次检查显示的版本表和升级命令清掉，回到"尚未检查"，同时禁用 **Update FCC**。
 更新结束后这份记录也会被清空，因为更新前的版本信息已经不再成立；需要时再点一次检查。

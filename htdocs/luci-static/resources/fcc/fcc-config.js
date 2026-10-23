@@ -21,6 +21,7 @@
 
 	var jobTimer = null;
 	var jobStart = 0;
+	var updateAvailable = false;
 
 	/* ------------------------------------------------------------- settings */
 
@@ -585,7 +586,7 @@
 		});
 	}
 
-	function startJobWatch(lock, log) {
+	function startJobWatch(lock, log, onDone) {
 		jobStart = Date.now();
 		var panel = FCC.$('#fcc-job');
 		if (panel) { panel.style.display = ''; }
@@ -663,6 +664,7 @@
 						 * succeeded or failed, and a failure is exactly when
 						 * it is least worth reading an old report. */
 						runDoctor();
+						if (onDone) { onDone(); }
 					}
 				})
 				.catch(function () { /* keep polling; a blip is not a failure */ });
@@ -672,9 +674,9 @@
 		jobTimer = setInterval(tick, 2000);
 	}
 
-	function runJobAction(action, params, lock, log) {
+	function runJobAction(action, params, lock, log, onDone) {
 		FCC.api(action, params || {}, { method: 'POST' }).then(function () {
-			startJobWatch(lock, log);
+			startJobWatch(lock, log, onDone);
 		}).catch(function (err) {
 			/* The request failed, so no job was started — but the panel is still
 			 * the right place to be, because the two things that explain a
@@ -683,7 +685,7 @@
 			 * response was read. Watching costs nothing when there is nothing to
 			 * watch, and it means the failure is never a single sentence with
 			 * the evidence hidden behind it. */
-			startJobWatch(lock, log);
+			startJobWatch(lock, log, onDone);
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
 	}
@@ -741,6 +743,117 @@
 		}).catch(function (err) {
 			FCC.notice(box, 'fail', err.message);
 		});
+	}
+
+	/* ------------------------------------------------------------- updates */
+
+	/* The check result and the run that may follow it live here, beside the
+	 * runtime they describe. Checking is manual: the block opens at "Not
+	 * checked yet" and reaches the network only when the button is pressed. */
+
+	function renderUpdates(u) {
+		var box = FCC.$('#fcc-update-state');
+		if (!box) { return; }
+		box.innerHTML = '';
+		var l = u.luci_fcc || {}, f = u.fcc_runtime || {};
+
+		function row(label, o) {
+			var status;
+			/* Nothing installed means there is nothing to compare, and the
+			 * backend reports checked=false for that too — "not installed" is
+			 * the useful sentence, so it comes first. */
+			if (!o.installed) {
+				status = FCC.el('span', { class: 'fcc-badge off', text: FCC._('not installed') });
+			} else if (o.checked === false || o.checked === 'false') {
+				status = FCC.el('span', { class: 'fcc-badge off', text: FCC._('not checked') });
+			} else if (o.update_available === true || o.update_available === 'true') {
+				status = FCC.el('span', { class: 'fcc-badge warn', text: FCC._('update available') });
+			} else {
+				status = FCC.el('span', { class: 'fcc-badge ok', text: FCC._('up to date') });
+			}
+			return FCC.el('tr', {}, [
+				FCC.el('td', { text: label }),
+				FCC.el('td', { class: 'fcc-mono', text: o.installed || '—' }),
+				FCC.el('td', { class: 'fcc-mono', text: o.latest || '—' }),
+				FCC.el('td', {}, [status])
+			]);
+		}
+
+		var table = FCC.el('table', { class: 'fcc-table' }, [
+			FCC.el('thead', {}, [FCC.el('tr', {}, [
+				FCC.el('th', { text: FCC._('Component') }),
+				FCC.el('th', { text: FCC._('Installed') }),
+				FCC.el('th', { text: FCC._('Latest') }),
+				FCC.el('th', { text: FCC._('Status') })
+			])]),
+			FCC.el('tbody', {}, [
+				row(FCC._('LuCI App'), l),
+				row(FCC._('FCC Runtime'), f)
+			])
+		]);
+		box.appendChild(table);
+
+		if (u.upgrade_command) {
+			box.appendChild(FCC.el('div', { class: 'fcc-note' }, [
+				FCC.el('div', { text: FCC._('To upgrade luci-app-fcc itself, run on the router:') }),
+				FCC.el('pre', { class: 'fcc-log', text: u.upgrade_command })
+			]));
+		}
+		if (!l.checked && l.checked !== 'true') {
+			box.appendChild(FCC.el('div', {
+				class: 'fcc-note warn',
+				text: FCC._('The LuCI app version could not be checked — the router could not reach the version source.')
+			}));
+		}
+
+		/* The button only lights up when the runtime is installed and the check
+		 * says there is something to move to: an enabled "Update FCC" next to
+		 * "up to date" invites a reinstall nobody asked for.
+		 *
+		 * Runtime "installed" is the version string, not a boolean — the check
+		 * reports what it found and null when there is nothing. Testing it for
+		 * `true` was what kept this button disabled after a successful check,
+		 * so pressing it did nothing at all; that is the "no reaction" a click
+		 * used to get. */
+		var installed = f.installed !== null && f.installed !== undefined
+			&& f.installed !== '' && f.installed !== false;
+		updateAvailable = installed
+			&& (f.checked === true || f.checked === 'true')
+			&& (f.update_available === true || f.update_available === 'true');
+		var btn = FCC.$('#fcc-update-run');
+		if (btn) { btn.disabled = !updateAvailable; }
+	}
+
+	function checkUpdates() {
+		var box = FCC.$('#fcc-update-state');
+		if (!box) { return; }
+		box.innerHTML = '';
+		box.appendChild(FCC.el('div', { class: 'fcc-muted', text: FCC._('Checking…') }));
+		FCC.api('update_check', {}, { method: 'GET' })
+			.then(renderUpdates)
+			.catch(function (err) { FCC.notice(box, 'fail', err.message); });
+	}
+
+	/* The result lives only in the page. Clearing it puts the block back to the
+	 * state it has before the first check, and takes "Update FCC" with it: the
+	 * button may only be lit by a check the user is looking at. */
+	function clearUpdateRecord() {
+		var box = FCC.$('#fcc-update-state');
+		if (!box) { return; }
+		box.innerHTML = '';
+		box.appendChild(FCC.el('div', { class: 'fcc-muted', text: FCC._('Not checked yet.') }));
+		updateAvailable = false;
+		var btn = FCC.$('#fcc-update-run');
+		if (btn) { btn.disabled = true; }
+	}
+
+	function runUpdate() {
+		var btn = FCC.$('#fcc-update-run');
+		if (btn) { btn.disabled = true; }
+		/* The update holds fcc-update.lock, not the install lock; watching the
+		 * wrong one reported "finished" on the first poll, before the update
+		 * had done anything, which is what made the button look inert. */
+		runJobAction('update_runtime', {}, 'update', 'fcc-update.log', clearUpdateRecord);
 	}
 
 	/* ---------------------------------------------------------------- init */
@@ -872,9 +985,18 @@
 		 * install to an agent that does not need the failing thing, and is told
 		 * their install is blocked. */
 		if (agentPicker) { agentPicker.addEventListener('change', runDoctor); }
-		FCC.$('#fcc-runtime-update').addEventListener('click', function () {
-			runJobAction('update_runtime', {}, 'install', 'fcc-update.log');
-		});
+		/* Both ways of starting an update — the toolbar button and the one under
+		 * the check result — watch the same lock, because the backend holds
+		 * fcc-update.lock for this job and not fcc-install.lock. */
+		FCC.$('#fcc-runtime-update').addEventListener('click', runUpdate);
+		FCC.$('#fcc-update-check').addEventListener('click', checkUpdates);
+		FCC.$('#fcc-update-run').addEventListener('click', runUpdate);
+		FCC.$('#fcc-update-clear').addEventListener('click', clearUpdateRecord);
+		/* A page restored from the back/forward cache keeps the DOM it left,
+		 * disabled state included. The block opens at "Not checked yet" and
+		 * with "Update FCC" inert on every entry, whatever the last visit
+		 * left behind. */
+		clearUpdateRecord();
 		/* Uninstall comes in two strengths, and the confirmation says which one
 		 * you are getting rather than mentioning a purge the button does not
 		 * perform. The destructive one names what is lost — the dialog is the

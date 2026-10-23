@@ -10,8 +10,8 @@ Three pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
-| **Configuration** | FCC server settings (address, port, log level), the runtime install and backup paths, the agent picker, install/update/uninstall, complete uninstall, start/stop/restart, the diagnostics report, a link to the FCC Admin page, and control of the FCC server on one other machine over SSH. |
-| **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage, and FCC update checks. |
+| **Configuration** | FCC server settings (address, port, log level), the runtime install and backup paths, the agent picker, install/uninstall, complete uninstall, update checks (check for updates, update FCC, clear update record), start/stop/restart, the diagnostics report, a link to the FCC Admin page, and control of the FCC server on one other machine over SSH. |
+| **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
 shell. It does **not** contain Python, Node.js, `uv`, the FCC runtime or any
@@ -143,7 +143,7 @@ at any time; changing the install path does not move an existing runtime.
 **3. Use an agent.** On the *Web Console* page, pick an agent and press
 **Start**. Each agent gets its own session, named `fcc-<agent>-NNN`.
 
-**4. Update.** *Basic Information* → **Check for updates** → **Update FCC**. The
+**4. Update.** *Configuration* → **FCC Runtime** → **Check for updates** → **Update FCC**. The
 check runs only when that button is pressed; opening or returning to the tab
 does not reach the network. **Clear update record** removes the version table
 and upgrade command that check produced, returning the section to "Not checked

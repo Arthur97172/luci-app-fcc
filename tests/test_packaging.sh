@@ -1326,6 +1326,7 @@ test_basic_information_controls_are_manual_and_named() {
 	_ts_info="$ROOT/luasrc/view/fcc/info.htm"
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"
 	_ts_config="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js_config="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
 
 	assert_contains "$(cat "$_ts_config")" '<%:Clear check log%>' \
 		"the diagnostics button is named after the check report, not logs"
@@ -1349,28 +1350,75 @@ test_basic_information_controls_are_manual_and_named() {
 		"the update section no longer has a Refresh button"
 	assert_not_contains "$(cat "$_ts_js")" 'fcc-info-refresh' \
 		"and nothing still binds to it"
-	_ts_updates="$(sed -n '/id="fcc-info-updates"/,/<\/div>/p' "$_ts_info")"
-	assert_contains "$_ts_updates" 'id="fcc-info-update"' \
+
+	# The whole update block lives under FCC Runtime on Configuration now.
+	assert_not_contains "$(cat "$_ts_info")" 'fcc-info-update' \
+		"Basic Information no longer carries the update controls"
+	assert_not_contains "$(cat "$_ts_info")" 'id="fcc-info-updates"' \
+		"and its update section is gone"
+	assert_contains "$(cat "$_ts_config")" 'class="fcc-update-block"' \
+		"Configuration carries the update block"
+	_ts_warn_line="$(grep -n 'Do not choose every agent in the registry' "$_ts_config" | cut -d: -f1)"
+	_ts_block_line="$(grep -n 'class="fcc-update-block"' "$_ts_config" | cut -d: -f1)"
+	_ts_job_line="$(grep -n 'id="fcc-job"' "$_ts_config" | cut -d: -f1)"
+	if [ -n "$_ts_warn_line" ] && [ -n "$_ts_block_line" ] && [ -n "$_ts_job_line" ] \
+		&& [ "$_ts_block_line" -gt "$_ts_warn_line" ] && [ "$_ts_block_line" -lt "$_ts_job_line" ]; then
+		pass "the block sits below the install warning, above the job panel"
+	else
+		fail "the block sits below the install warning, above the job panel" \
+			"warning=$_ts_warn_line block=$_ts_block_line job=$_ts_job_line"
+	fi
+	_ts_updates="$(sed -n '/class="fcc-update-block"/,/id="fcc-job"/p' "$_ts_config")"
+	assert_contains "$_ts_updates" 'id="fcc-update-check"' \
+		"Check for updates is in the block's toolbar"
+	assert_contains "$_ts_updates" 'id="fcc-update-run"' \
 		"Update FCC is in the update toolbar"
-	_ts_after_update="$(sed -n '/id="fcc-info-update"/,/<\/div>/p' "$_ts_info")"
-	assert_contains "$_ts_after_update" 'id="fcc-info-clear"' \
+	_ts_after_update="$(sed -n '/id="fcc-update-run"/,/<\/div>/p' "$_ts_config")"
+	assert_contains "$_ts_after_update" 'id="fcc-update-clear"' \
 		"and Clear update record follows it"
 
-	# No check on load. The init body must not call the checker; the section
+	# No check on load. The init body must not call the checker; the block
 	# starts in the same state the clear button restores.
-	_ts_init="$(sed -n '/^	function init()/,/^	}$/p' "$_ts_js")"
+	_ts_init="$(sed -n '/^	function init()/,/^	}$/p' "$_ts_js_config")"
 	assert_not_contains "$_ts_init" 'checkUpdates();' \
 		"opening the tab does not run an update check"
 	assert_contains "$_ts_init" 'clearUpdateRecord();' \
 		"it renders the not-checked state instead"
-	assert_not_contains "$(cat "$_ts_js")" 'checkUpdates();' \
+	assert_not_contains "$(cat "$_ts_js_config")" 'checkUpdates();' \
 		"no code path runs a check on its own, not even after an update"
-	assert_contains "$(cat "$_ts_js")" "text: FCC._('Not checked yet.')" \
+	assert_contains "$(cat "$_ts_js_config")" "text: FCC._('Not checked yet.')" \
 		"which is one shared sentence"
-	assert_contains "$(cat "$_ts_js")" 'updateAvailable = false;' \
+	assert_contains "$(cat "$_ts_js_config")" 'updateAvailable = false;' \
 		"clearing also drops the pending update"
-	assert_contains "$(cat "$_ts_js")" 'btn.disabled = true;' \
+	assert_contains "$(cat "$_ts_js_config")" 'btn.disabled = true;' \
 		"and disables Update FCC until a new check"
+	# The runtime's "installed" field is the version string, null when absent.
+	# Testing it for `true` left the button disabled after a check that found
+	# an update, so the click did nothing — the reported bug.
+	assert_not_contains "$(cat "$_ts_js_config")" 'f.installed === true' \
+		"the check result's installed field is not treated as a boolean"
+	assert_contains "$(cat "$_ts_js_config")" \
+		"&& (f.update_available === true || f.update_available === 'true');" \
+		"the button lights from a checked, installed runtime with an update"
+
+	# The update holds fcc-update.lock, so the page must follow that lock. A
+	# watch on 'install' found nothing on the first poll and reported the job
+	# finished before it had started, which is why Update FCC looked inert.
+	assert_contains "$(cat "$_ts_js_config")" \
+		"runJobAction('update_runtime', {}, 'update', 'fcc-update.log', clearUpdateRecord)" \
+		"the update watches its own lock and clears the record when it ends"
+	assert_not_contains "$(cat "$_ts_js_config")" \
+		"runJobAction('update_runtime', {}, 'install'" \
+		"and never the install lock"
+	assert_contains "$(cat "$_ts_js_config")" \
+		"FCC.\$('#fcc-runtime-update').addEventListener('click', runUpdate)" \
+		"the runtime toolbar's Update starts the same job"
+	assert_contains "$(cat "$_ts_js_config")" \
+		"FCC.\$('#fcc-update-check').addEventListener('click', checkUpdates)" \
+		"Check for updates is wired"
+	assert_contains "$(cat "$_ts_js_config")" \
+		"FCC.\$('#fcc-update-clear').addEventListener('click', clearUpdateRecord)" \
+		"Clear update record is wired"
 }
 
 tests_main

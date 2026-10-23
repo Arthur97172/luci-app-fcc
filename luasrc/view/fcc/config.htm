@@ -342,6 +342,23 @@
 				</p>
 			</div>
 
+			<!-- Update checking and the update itself, under the runtime they
+			     act on. Checking is manual: this block opens at "Not checked
+			     yet" and reaches the network only when the button is pressed.
+			     The job panel further down shows the update once it starts. -->
+			<div class="fcc-update-block">
+				<h4><%:Updates%></h4>
+				<div id="fcc-update-state"><%:Not checked yet.%></div>
+				<div class="fcc-toolbar">
+					<button id="fcc-update-check" class="cbi-button"><%:Check for updates%></button>
+					<button id="fcc-update-run" class="cbi-button cbi-button-apply" disabled><%:Update FCC%></button>
+					<button id="fcc-update-clear" class="cbi-button cbi-button-reset"><%:Clear update record%></button>
+				</div>
+				<p class="fcc-muted">
+					<%:Updating reinstalls the FCC runtime from upstream. If a step fails, the previous runtime is put back and your data is left in place.%>
+				</p>
+			</div>
+
 			<div id="fcc-job" style="display:none">
 				<div class="fcc-progress"><span id="fcc-job-bar" style="width:0"></span></div>
 				<pre class="fcc-log" id="fcc-job-log"></pre>

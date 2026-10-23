@@ -10,8 +10,6 @@
 	var FCC = window.FCC;
 	var timer = null;
 	var versionTimer = null;
-	var jobTimer = null;
-	var updateAvailable = false;
 
 	function card(title, value, sub) {
 		return FCC.el('div', { class: 'fcc-card' }, [
@@ -228,143 +226,6 @@
 		});
 	}
 
-	/* ------------------------------------------------------------- updates */
-
-	function renderUpdates(u) {
-		var box = FCC.$('#fcc-info-updates');
-		box.innerHTML = '';
-		var l = u.luci_fcc || {}, f = u.fcc_runtime || {};
-
-		function row(label, o) {
-			var status;
-			if (o.checked === false || o.checked === 'false') {
-				status = FCC.el('span', { class: 'fcc-badge off', text: FCC._('not checked') });
-			} else if (o.update_available === true || o.update_available === 'true') {
-				status = FCC.el('span', { class: 'fcc-badge warn', text: FCC._('update available') });
-			} else {
-				status = FCC.el('span', { class: 'fcc-badge ok', text: FCC._('up to date') });
-			}
-			return FCC.el('tr', {}, [
-				FCC.el('td', { text: label }),
-				FCC.el('td', { class: 'fcc-mono', text: o.installed || '—' }),
-				FCC.el('td', { class: 'fcc-mono', text: o.latest || '—' }),
-				FCC.el('td', {}, [status])
-			]);
-		}
-
-		var table = FCC.el('table', { class: 'fcc-table' }, [
-			FCC.el('thead', {}, [FCC.el('tr', {}, [
-				FCC.el('th', { text: FCC._('Component') }),
-				FCC.el('th', { text: FCC._('Installed') }),
-				FCC.el('th', { text: FCC._('Latest') }),
-				FCC.el('th', { text: FCC._('Status') })
-			])]),
-			FCC.el('tbody', {}, [
-				row(FCC._('LuCI App'), l),
-				row(FCC._('FCC Runtime'), f)
-			])
-		]);
-		box.appendChild(table);
-
-		if (u.upgrade_command) {
-			box.appendChild(FCC.el('div', { class: 'fcc-note' }, [
-				FCC.el('div', { text: FCC._('To upgrade luci-app-fcc itself, run on the router:') }),
-				FCC.el('pre', { class: 'fcc-log', text: u.upgrade_command })
-			]));
-		}
-		if (!l.checked && l.checked !== 'true') {
-			box.appendChild(FCC.el('div', {
-				class: 'fcc-note warn',
-				text: FCC._('The LuCI app version could not be checked — the router could not reach the version source.')
-			}));
-		}
-
-		/* Section 94's flow is Check Update -> Update FCC, both on this page.
-		 * The button only lights up when the runtime is installed and the check
-		 * says there is something to move to: an enabled "Update FCC" next to
-		 * "up to date" invites a reinstall nobody asked for. */
-		updateAvailable = f.installed === true || f.installed === 'true'
-			? (f.update_available === true || f.update_available === 'true')
-			: false;
-		var btn = FCC.$('#fcc-info-update');
-		if (btn) { btn.disabled = !updateAvailable; }
-	}
-
-	function checkUpdates() {
-		var box = FCC.$('#fcc-info-updates');
-		box.innerHTML = '';
-		box.appendChild(FCC.el('div', { class: 'fcc-muted', text: FCC._('Checking…') }));
-		FCC.api('update_check', {}, { method: 'GET' })
-			.then(renderUpdates)
-			.catch(function (err) { FCC.notice(box, 'fail', err.message); });
-	}
-
-	/* The check result lives only in the page. Clearing it puts the section
-	 * back to the state it has before the first check, and takes "Update FCC"
-	 * with it: the button may only be lit by a check the user is looking at. */
-	function clearUpdateRecord() {
-		var box = FCC.$('#fcc-info-updates');
-		box.innerHTML = '';
-		box.appendChild(FCC.el('div', { class: 'fcc-muted', text: FCC._('Not checked yet.') }));
-		updateAvailable = false;
-		var btn = FCC.$('#fcc-info-update');
-		if (btn) { btn.disabled = true; }
-	}
-
-	/* ------------------------------------------------------- update + jobs */
-
-	/* The update runs as a job: it downloads, verifies and reinstalls, which is
-	 * minutes on a router. The page shows the log and follows the lock, the
-	 * same way the Configuration page does — the lock is the authoritative
-	 * "still working" signal, since the log can go quiet while a download runs. */
-	function watchUpdateJob() {
-		var started = Date.now();
-		var panel = FCC.$('#fcc-info-job');
-		if (panel) { panel.style.display = ''; }
-		if (jobTimer) { clearInterval(jobTimer); }
-
-		var tick = function () {
-			FCC.api('job', { lock: 'install', log: 'fcc-update.log', lines: 60 }, { method: 'GET' })
-				.then(function (r) {
-					var pre = FCC.$('#fcc-info-job-log');
-					if (pre) {
-						pre.textContent = (r.lines || []).join('\n');
-						pre.scrollTop = pre.scrollHeight;
-					}
-					var bar = FCC.$('#fcc-info-job-bar');
-					if (bar && r.running) {
-						bar.style.width = Math.min(95, (Date.now() - started) / 300) + '%';
-					}
-					if (!r.running) {
-						clearInterval(jobTimer);
-						jobTimer = null;
-						if (bar) { bar.style.width = '100%'; }
-						/* The record described the runtime before the update,
-						 * so it is no longer true. A check is manual, though:
-						 * clear it and let the user ask again rather than
-						 * reaching the network on their behalf. */
-						clearUpdateRecord();
-						loadStatus(true).catch(function () {});
-					}
-				})
-				.catch(function () { /* a blip is not a failure; keep polling */ });
-		};
-
-		tick();
-		jobTimer = setInterval(tick, 2000);
-	}
-
-	function runUpdate() {
-		var btn = FCC.$('#fcc-info-update');
-		if (btn) { btn.disabled = true; }
-		FCC.api('update_runtime', {}, { method: 'POST' }).then(function () {
-			watchUpdateJob();
-		}).catch(function (err) {
-			if (btn) { btn.disabled = false; }
-			FCC.notice(FCC.$('#fcc-info-updates'), 'fail', err.message);
-		});
-	}
-
 	/* ---------------------------------------------------------------- logs */
 
 	function loadLog() {
@@ -390,15 +251,6 @@
 	/* ---------------------------------------------------------------- init */
 
 	function init() {
-		FCC.$('#fcc-info-check').addEventListener('click', checkUpdates);
-		FCC.$('#fcc-info-update').addEventListener('click', function () {
-			if (!updateAvailable) { return; }
-			if (!window.confirm(FCC._('Update the FCC runtime now? The server is stopped during the update and your data is kept.'))) {
-				return;
-			}
-			runUpdate();
-		});
-		FCC.$('#fcc-info-clear').addEventListener('click', clearUpdateRecord);
 		FCC.$('#fcc-info-log-load').addEventListener('click', loadLog);
 		FCC.$('#fcc-info-log-clear').addEventListener('click', function () {
 			FCC.$('#fcc-info-log').textContent = '';
@@ -410,10 +262,6 @@
 		loadStatus(false).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-info-fcc'), 'fail', err.message);
 		});
-		/* No checkUpdates() here: opening this tab is not a request to reach
-		 * the network. The section says "Not checked yet." until the button is
-		 * pressed — the same text "Clear update record" restores. */
-		clearUpdateRecord();
 		loadLog();
 
 		/* Section 20 splits the two cadences, and the split is the point: status
@@ -432,7 +280,6 @@
 		window.addEventListener('beforeunload', function () {
 			if (timer) { clearInterval(timer); }
 			if (versionTimer) { clearInterval(versionTimer); }
-			if (jobTimer) { clearInterval(jobTimer); }
 		});
 	}
 

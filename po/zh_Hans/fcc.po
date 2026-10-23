@@ -564,11 +564,6 @@ msgstr "更新"
 msgid "Update FCC"
 msgstr "更新 FCC"
 
-msgid ""
-"Update the FCC runtime now? The server is stopped during the update and your "
-"data is kept."
-msgstr "现在更新 FCC 运行时？更新期间服务器将停止，你的数据会被保留。"
-
 msgid "Updates"
 msgstr "更新"
 
@@ -664,6 +659,11 @@ msgstr "有可用更新"
 
 msgid "uptime"
 msgstr "运行时间"
+
+#~ msgid ""
+#~ "Update the FCC runtime now? The server is stopped during the update and "
+#~ "your data is kept."
+#~ msgstr "现在更新 FCC 运行时？更新期间服务器将停止，你的数据会被保留。"
 
 #~ msgid "Refresh"
 #~ msgstr "刷新"

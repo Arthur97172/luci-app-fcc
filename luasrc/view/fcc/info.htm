@@ -1,8 +1,9 @@
 <%#
  luci-app-fcc — Basic Information.
 
- The runtime monitor: versions, process state, resource use and update status.
+ The runtime monitor: versions, process state and resource use.
  Everything on this page is read-only and comes from one batched status call.
+ Update checks and the update itself live on Configuration, under FCC Runtime.
 -%>
 
 <% local v = require("luci.fcc.paths").asset_version() %>
@@ -58,31 +59,6 @@
 				<tbody></tbody>
 			</table>
 			<div id="fcc-info-agent-status"></div>
-		</div>
-	</div>
-
-	<div class="cbi-section">
-		<h3><%:Updates%></h3>
-		<div class="cbi-section-node">
-			<div id="fcc-info-updates"><%:Not checked yet.%></div>
-			<div class="fcc-toolbar">
-				<!-- Checking is manual: opening or returning to this tab must not
-				     reach the network on its own. The third button puts the
-				     section back to its initial state (no table, no upgrade
-				     command) without deleting anything on the router. -->
-				<button id="fcc-info-check" class="cbi-button"><%:Check for updates%></button>
-				<button id="fcc-info-update" class="cbi-button cbi-button-apply" disabled><%:Update FCC%></button>
-				<button id="fcc-info-clear" class="cbi-button cbi-button-reset"><%:Clear update record%></button>
-			</div>
-
-			<div id="fcc-info-job" style="display:none">
-				<div class="fcc-progress"><span id="fcc-info-job-bar" style="width:0"></span></div>
-				<pre class="fcc-log" id="fcc-info-job-log"></pre>
-			</div>
-
-			<p class="fcc-muted">
-				<%:Updating reinstalls the FCC runtime from upstream. If a step fails, the previous runtime is put back and your data is left in place.%>
-			</p>
 		</div>
 	</div>
 
