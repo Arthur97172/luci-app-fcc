@@ -39,7 +39,13 @@
 		});
 	}
 
-	function saveConfig() {
+	/* One handler, two verbs. apply=true is Save & Apply: store the values and
+	 * restart the server (and reconcile the firewall rule) so they take effect.
+	 * apply=false is Save settings: store them and leave a running server
+	 * alone, so a port or bind change can be staged without dropping the agent
+	 * sessions attached to it. The backend defaults to applying when the flag
+	 * is absent, which is what a page cached from before this button sees. */
+	function saveConfig(apply) {
 		var body = {
 			enabled: FCC.$('#fcc-enabled').checked ? '1' : '0',
 			auto_start: FCC.$('#fcc-auto-start').checked ? '1' : '0',
@@ -47,11 +53,15 @@
 			backup_path: FCC.$('#fcc-backup-path').value,
 			bind: FCC.$('#fcc-bind').value,
 			port: FCC.$('#fcc-port').value,
-			log_level: FCC.$('#fcc-log-level').value
+			log_level: FCC.$('#fcc-log-level').value,
+			apply: apply ? '1' : '0'
 		};
 		FCC.notice(FCC.$('#fcc-config-status'), '', '');
 		FCC.api('config_set', body, { method: 'POST' }).then(function (r) {
 			var msg = FCC._('Settings saved.');
+			if (!apply) {
+				msg += ' ' + FCC._('They take effect when you choose Save & Apply.');
+			}
 			if (r.path_changed) {
 				msg += ' ' + FCC._('The install path changed — install the runtime at the new location to use it.');
 			}
@@ -66,6 +76,19 @@
 			}
 			FCC.notice(FCC.$('#fcc-config-status'), r.path_changed ? 'warn' : 'ok', msg);
 			refreshAll();
+		}).catch(function (err) {
+			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
+		});
+	}
+
+	/* Reset changes, LuCI's third verb: throw away the edits and put the saved
+	 * values back in the form. It reads them from UCI rather than from a copy
+	 * taken when the page opened, so a value changed in another tab — or by a
+	 * save that succeeded just before a failed one — is what comes back. */
+	function resetConfig() {
+		return loadConfig().then(function () {
+			FCC.notice(FCC.$('#fcc-config-status'), 'ok',
+				FCC._('Changes discarded. The saved settings are shown.'));
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
 		});
@@ -590,6 +613,9 @@
 		jobStart = Date.now();
 		var panel = FCC.$('#fcc-job');
 		if (panel) { panel.style.display = ''; }
+		/* A new job makes any "record cleared" line stale: it describes the
+		 * panel that is now showing this run. */
+		FCC.notice(FCC.$('#fcc-runtime-status'), '', '');
 		if (jobTimer) { clearInterval(jobTimer); }
 
 		/* A job that has just been asked for has not necessarily taken its lock
@@ -856,6 +882,28 @@
 		runJobAction('update_runtime', {}, 'update', 'fcc-update.log', clearUpdateRecord);
 	}
 
+	/* The install record is the job panel below the runtime toolbar: the
+	 * progress bar and this run's log, left where the job finished. Clearing it
+	 * empties the page and nothing on disk — the logs under the install path
+	 * are the evidence an install leaves behind, and the same rule every other
+	 * Clear on this page follows. Refused while a job is running, because that
+	 * log is the live output, not a record. */
+	function clearInstallRecord() {
+		var box = FCC.$('#fcc-runtime-status');
+		if (jobTimer) {
+			FCC.notice(box, 'warn',
+				FCC._('A job is still running. Wait for it to finish before clearing the record.'));
+			return;
+		}
+		var panel = FCC.$('#fcc-job');
+		if (panel) { panel.style.display = 'none'; }
+		var bar = FCC.$('#fcc-job-bar');
+		if (bar) { bar.style.width = '0'; }
+		var pre = FCC.$('#fcc-job-log');
+		if (pre) { pre.textContent = ''; }
+		FCC.notice(box, 'ok', FCC._('Install record cleared.'));
+	}
+
 	/* ---------------------------------------------------------------- init */
 
 	function refreshAll() {
@@ -872,7 +920,9 @@
 	 * the first paint is just the first refresh. Section 104.25. */
 
 	function init() {
-		FCC.$('#fcc-save').addEventListener('click', saveConfig);
+		FCC.$('#fcc-save').addEventListener('click', function () { saveConfig(true); });
+		FCC.$('#fcc-save-only').addEventListener('click', function () { saveConfig(false); });
+		FCC.$('#fcc-reset').addEventListener('click', resetConfig);
 		var agentPicker = FCC.$('#fcc-runtime-agent');
 
 		/* Scoped to the local panel: the LAN panel has its own buttons with
@@ -989,6 +1039,7 @@
 		 * the check result — watch the same lock, because the backend holds
 		 * fcc-update.lock for this job and not fcc-install.lock. */
 		FCC.$('#fcc-runtime-update').addEventListener('click', runUpdate);
+		FCC.$('#fcc-runtime-clear').addEventListener('click', clearInstallRecord);
 		FCC.$('#fcc-update-check').addEventListener('click', checkUpdates);
 		FCC.$('#fcc-update-run').addEventListener('click', runUpdate);
 		FCC.$('#fcc-update-clear').addEventListener('click', clearUpdateRecord);

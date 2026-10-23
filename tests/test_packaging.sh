@@ -619,6 +619,81 @@ test_the_runtime_help_is_one_warning() {
 	assert_contains "$_ts_css_text" '--fcc-warn-border: #92400e' "with an amber-800 border"
 }
 
+test_settings_offer_save_and_reset_and_the_runtime_clears_its_record() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+	_ts_view_text="$(cat "$_ts_view")"
+	_ts_js_text="$(cat "$_ts_js")"
+	_ts_ctrl_text="$(cat "$_ts_ctrl")"
+
+	# Three verbs on the settings row, in increasing strength: Save & Apply
+	# stores and restarts, Save settings stores and leaves a running server
+	# alone, Reset changes throws the edits away. The two new labels name their
+	# context instead of saying a bare "Save"/"Reset", because LuCI's compiled
+	# catalogues share one global namespace and a generic key retitles every
+	# other package's button.
+	_ts_actions="$(sed -n '/class="fcc-actions"/,/<\/div>/p' "$_ts_view")"
+	assert_contains "$_ts_actions" 'id="fcc-save"' "Save & Apply is still there"
+	_ts_after_save="$(printf '%s\n' "$_ts_actions" | sed -n '/id="fcc-save"/,$p')"
+	assert_contains "$_ts_after_save" 'id="fcc-save-only"' \
+		"Save settings follows it"
+	_ts_after_save_only="$(printf '%s\n' "$_ts_actions" | sed -n '/id="fcc-save-only"/,$p')"
+	assert_contains "$_ts_after_save_only" 'id="fcc-reset"' \
+		"and Reset changes follows Save settings"
+	assert_contains "$_ts_actions" '<%:Save settings%>' \
+		"the save-only button names what it saves"
+	assert_contains "$_ts_actions" '<%:Reset changes%>' \
+		"the reset button names what it discards"
+
+	# The runtime toolbar's clear comes after Uninstall completely, where the
+	# record it clears is produced.
+	_ts_after_purge="$(sed -n '/id="fcc-runtime-purge"/,/<\/div>/p' "$_ts_view")"
+	assert_contains "$_ts_after_purge" 'id="fcc-runtime-clear"' \
+		"Clear install record follows Uninstall completely"
+	assert_contains "$_ts_view_text" '<%:Clear install record%>' \
+		"and says what it clears"
+	assert_contains "$_ts_view_text" 'id="fcc-runtime-status"' \
+		"the runtime section has its own place to answer a click"
+
+	# The save handler is one function with the flag the backend reads. Both
+	# buttons go through it, and the Apply path is the one that keeps the old
+	# behaviour.
+	assert_contains "$_ts_js_text" 'saveConfig(true)' \
+		"Save & Apply applies"
+	assert_contains "$_ts_js_text" 'saveConfig(false)' \
+		"Save settings does not"
+	assert_contains "$_ts_js_text" "apply: apply ? '1' : '0'" \
+		"the choice travels to the backend as a flag"
+	assert_contains "$_ts_ctrl_text" 'local apply = (http.formvalue("apply") ~= "0")' \
+		"and the backend reads it, defaulting to apply"
+	assert_contains "$_ts_ctrl_text" '"applied":' \
+		"the reply says whether it was applied"
+	assert_contains "$_ts_ctrl_text" 'if apply then' \
+		"restart and firewall work only run on the apply path"
+
+	# Reset reloads from UCI rather than a copy kept in the page, so it shows
+	# what is saved now.
+	assert_contains "$_ts_js_text" 'function resetConfig()' "Reset changes is its own action"
+	assert_contains "$_ts_js_text" 'return loadConfig().then' \
+		"and reads the saved settings back"
+	assert_contains "$_ts_js_text" 'Changes discarded. The saved settings are shown.' \
+		"telling the user the edits are gone"
+
+	# Clearing the install record is page-local, like every other Clear here,
+	# and refused while the job that owns the log is still running.
+	assert_contains "$_ts_js_text" 'function clearInstallRecord()' \
+		"Clear install record is its own action"
+	assert_contains "$_ts_js_text" 'if (jobTimer) {' \
+		"it refuses while a job is running"
+	assert_contains "$_ts_js_text" 'panel.style.display = '"'"'none'"'"';' \
+		"and otherwise hides the job panel"
+	assert_contains "$_ts_js_text" "pre.textContent = '';" \
+		"empties the log on the page"
+	assert_contains "$_ts_js_text" "FCC.\$('#fcc-runtime-clear').addEventListener('click', clearInstallRecord)" \
+		"the button is wired"
+}
+
 test_every_page_asset_is_cache_stamped() {
 	# The pages and the scripts ship in the same package, but a browser caches
 	# them separately: the page is rendered per request while a /luci-static/

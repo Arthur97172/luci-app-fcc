@@ -106,9 +106,20 @@
 			     right end of its own row. It is not a .cbi-value: Argon lays
 			     those out left to right and the button would sit under the
 			     labels, which read as an unfinished row rather than the end
-			     of the settings. -->
+			     of the settings.
+
+			     Three verbs, in increasing strength. Save & Apply stores the
+			     values and restarts the server (and reconciles the firewall
+			     rule) so they take effect now; Save settings stores them and
+			     leaves a running server alone; Reset changes throws the edits
+			     away and puts the saved values back in the form. The labels
+			     name their context rather than saying Save/Reset, because
+			     LuCI's catalogues share one namespace and a bare "Reset"
+			     would retitle every other package's button. -->
 			<div class="fcc-actions">
 				<button id="fcc-save" class="cbi-button cbi-button-apply"><%:Save &amp; Apply%></button>
+				<button id="fcc-save-only" class="cbi-button"><%:Save settings%></button>
+				<button id="fcc-reset" class="cbi-button cbi-button-reset"><%:Reset changes%></button>
 			</div>
 		</div>
 		<div id="fcc-config-status"></div>
@@ -326,7 +337,16 @@
 				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
 				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
 				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall completely%></button>
+				<!-- The record is what the job panel below shows — this run's
+				     progress and log, left on the page after the job ended.
+				     Like every other Clear on the page it empties what is on
+				     screen and nothing on disk: the logs under the install
+				     path are the evidence an install left behind, not
+				     clutter to be swept up. -->
+				<button id="fcc-runtime-clear" class="cbi-button"><%:Clear install record%></button>
 			</div>
+
+			<div id="fcc-runtime-status"></div>
 
 			<div class="fcc-help">
 				<!-- The one thing to know before pressing Install. The five notes

@@ -782,6 +782,18 @@ written = {}; ctrl.act_config_set()
 print("set=" .. body())
 print("stored=" .. tostring(store.bind) .. ":" .. tostring(store.port) ..
       ":" .. tostring(store.log_level) .. " commits=" .. commits)
+
+-- And "Save settings": the same form with apply=0. The values are stored, the
+-- reply says nothing was applied, and the running server is left alone.
+local only = {}
+for k, v in pairs(saved) do only[k] = v end
+only.port = "9002"
+only.apply = "0"
+form = only
+commits = 0
+written = {}; ctrl.act_config_set()
+print("savedonly=" .. body() .. " stored=" .. tostring(store.port) ..
+      " commits=" .. commits)
 LUA
 
 	# PATH without /home/arthur/.local/bin, where a development copy of
@@ -815,6 +827,18 @@ LUA
 
 	assert_contains "$_ts_out" "stored=192.168.10.156:9001:warning commits=1" \
 		"the submitted values reach UCI and are committed once"
+
+	# The Save settings button posts the same form with apply=0. The store is
+	# still written — that is the whole point of the button — but the reply has
+	# to say that nothing was applied, because the page shows a different
+	# sentence for it.
+	_ts_savedonly="$(printf '%s\n' "$_ts_out" | sed -n 's/^savedonly=//p')"
+	assert_contains "$_ts_savedonly" '"applied":false' \
+		"a save without apply says so: [$_ts_savedonly]"
+	assert_contains "$_ts_savedonly" '"restarted":false' \
+		"and reports no restart"
+	assert_contains "$_ts_savedonly" 'stored=9002 commits=1' \
+		"while still committing the new port"
 
 	# A root with no runtime under it is reported as such, which is also the
 	# check that the probe read its own root rather than this host.

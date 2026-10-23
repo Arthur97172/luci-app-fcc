@@ -21,6 +21,9 @@ msgstr ""
 msgid "%d agent session(s) are running and will be left as they are."
 msgstr ""
 
+msgid "A job is still running. Wait for it to finish before clearing the record."
+msgstr ""
+
 msgid "A new SSH key was generated."
 msgstr ""
 
@@ -84,6 +87,9 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
+msgid "Changes discarded. The saved settings are shown."
+msgstr ""
+
 msgid "Check for updates"
 msgstr ""
 
@@ -94,6 +100,9 @@ msgid "Clear check log"
 msgstr ""
 
 msgid "Clear information"
+msgstr ""
+
+msgid "Clear install record"
 msgstr ""
 
 msgid "Clear log"
@@ -204,6 +213,9 @@ msgstr ""
 msgid "Install path"
 msgstr ""
 
+msgid "Install record cleared."
+msgstr ""
+
 msgid "Installation is blocked until the failed checks pass."
 msgstr ""
 
@@ -303,6 +315,9 @@ msgstr ""
 msgid "Remove the FCC runtime? Your configuration and data under the install path are kept."
 msgstr ""
 
+msgid "Reset changes"
+msgstr ""
+
 msgid "Restart"
 msgstr ""
 
@@ -328,6 +343,9 @@ msgid "SSH port"
 msgstr ""
 
 msgid "Save &amp; Apply"
+msgstr ""
+
+msgid "Save settings"
 msgstr ""
 
 msgid "Service name"
@@ -448,6 +466,9 @@ msgid "The remote host key is not trusted yet. Confirm the fingerprint below."
 msgstr ""
 
 msgid "The remote host key is now trusted."
+msgstr ""
+
+msgid "They take effect when you choose Save & Apply."
 msgstr ""
 
 msgid "This log is empty."
