@@ -10,7 +10,7 @@ Three pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
-| **Configuration** | FCC server settings (address, port, log level), the runtime install and backup paths, the agent picker, install/uninstall, complete uninstall, update checks (check for updates, update FCC, clear update record), start/stop/restart, the diagnostics report, a link to the FCC Admin page, and control of the FCC server on one other machine over SSH. |
+| **Configuration** | Server settings (address, port, log level), install and backup paths, the agent picker, install/uninstall/complete uninstall, updates, start/stop/restart, the diagnostics report, the FCC Admin link, and control of the FCC server on one other machine over SSH. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
@@ -18,8 +18,6 @@ shell. It does **not** contain Python, Node.js, `uv`, the FCC runtime or any
 coding agent — those are installed separately, on demand, under `/opt/fcc`.
 
 ![The Web Console: a Claude Code session running inside LuCI](screenshot.png)
-
-*The Web Console — one tmux session per agent, in the browser.*
 
 ---
 
@@ -29,207 +27,155 @@ OpenWrt 24.10:
 
 ```sh
 opkg install luci-app-fcc_*.ipk
-# Chinese interface: install the translation package as well
-opkg install luci-i18n-fcc-zh-cn_*.ipk
+opkg install luci-i18n-fcc-zh-cn_*.ipk   # Chinese interface
 ```
 
 OpenWrt 25.12:
 
 ```sh
 apk add --allow-untrusted luci-app-fcc-*.apk
-# Chinese interface: install the translation package as well
-apk add --allow-untrusted luci-i18n-fcc-zh-cn-*.apk
+apk add --allow-untrusted luci-i18n-fcc-zh-cn-*.apk   # Chinese interface
 ```
 
 The `.ipk` and the `.apk` are produced by CI from the corresponding OpenWrt SDK.
 They are genuinely different package formats — an `.ipk` renamed to `.apk` is
 not a package and will not install.
 
-Then open:
+Then open `LuCI → Services → FCC`. All three pages work immediately, before
+anything else is installed.
 
-```
-LuCI → Services → FCC
-```
-
-All three pages work immediately, before anything else is installed.
-
-The second line in each pair above is optional. The interface follows LuCI's
-language: English is the source language and ships in `luci-app-fcc`, while the
-compiled Simplified Chinese catalogue is a **separate package,
-`luci-i18n-fcc-zh-cn`**, so a Chinese interface means installing that one too.
-Once it is there, LuCI loads it by itself whenever the interface language is
-Chinese — no configuration, and no service to restart.
-
-The two are independent: install English only, add Chinese later, upgrade and
-remove them separately. An English interface with only `luci-app-fcc` installed
-is the package working, not a fault.
+English is the source language and ships in `luci-app-fcc`; the compiled
+Simplified Chinese catalogue is a **separate package, `luci-i18n-fcc-zh-cn`**,
+which LuCI loads by itself whenever the interface language is Chinese — no
+configuration, no service restart. The two are independent and can be
+installed, upgraded and removed separately.
 
 ---
 
 ## First run
 
 **1. Install the FCC runtime.** On the *Configuration* page, choose an agent and
-press **Install**. You do not need to SSH in and run FCC's installer by
-hand — the page fetches the official installer over HTTPS, records its SHA-256,
-and runs it. Python, `uv` and the runtime itself are installed under the
+press **Install**. The page fetches the official installer over HTTPS, records
+its SHA-256, and runs it. Python, `uv` and the runtime itself go under the
 configured install path (`/opt` by default, so the runtime lands in `/opt/fcc`),
 never into this package.
 
-The agent picker defaults to **All agents**, which means the whole registry: an
-extremely slow download that takes about 8 GB of storage. Choose only the
-agents you need. Choosing one agent installs just that agent — plus the runtime
-if it is missing — and leaves the other installed agents alone. If a runtime is
-already installed and **All agents** is still selected, the page asks first,
-then removes the runtime and installs every agent again — upstream reconciles
-the set it finds and never reinstalls an existing agent, so removing the
-runtime is the only way to replace a damaged one.
-
-**Check the free space first: the filesystem holding the install path needs at
-least 2 GB available, and 4 GB is recommended.** When there is less, this
-package refuses the install before downloading anything and says how much is
-missing, rather than letting it fail half-way. The runtime itself — Python 3.14,
-`uv`, the agents — peaks at around 741 MB measured, and 2 GB is that rounded up
-with room to spare: an update writes the new runtime beside the old one before
-discarding the old, `uv`'s cache grows with the Python it builds, and a failed
-run can leave its rollback copy on disk — one more agent or a larger release all
-eat into the margin, and guessing low leaves half a runtime on the device. The
-rollback copy goes to the **Backup path**, `/tmp/fcc` by default — `/tmp` is
-tmpfs on OpenWrt, which keeps it off the flash the runtime lives on — and is
-removed when the run ends, unless a rollback could not complete. 4 GB is
-recommended to leave that margin for larger agent sets and later releases.
-
-The installer then asks which coding agents to install, and that conversation
-only reads `/dev/tty` — there is no flag or environment variable that skips it.
-So this package does not guess at the answers: the installer is run inside a
-`tmux` session, answered question by question according to the agent selected on
-the *Configuration* page (the whole registry, or one agent from the picker), and
-the whole terminal is written to
-`<install_path>/logs/installer.out`. When an install fails, that transcript is
-where the reason is — and the first place to look.
-
-The *Configuration* page then follows the job while it runs. Two things are
-worth knowing, because both have been misread:
-
+* The agent picker defaults to **All agents** — the whole registry: an extremely
+  slow download that takes about 8 GB of storage. Choose only the agents you
+  need. Choosing one agent installs just that agent (plus the runtime if it is
+  missing) and leaves the other installed agents alone. If a runtime is already
+  installed and **All agents** is selected, the page asks first, then removes
+  the runtime and installs every agent again — upstream never reinstalls an
+  existing agent, so removing the runtime is the only way to replace a damaged
+  one.
+* **Check the free space first: the filesystem holding the install path needs at
+  least 2 GB available, and 4 GB is recommended.** When there is less, this
+  package refuses the install before downloading anything and says how much is
+  missing. The runtime peaks at around 741 MB measured; an update keeps the new
+  runtime beside the old one, and `uv`'s cache grows with the Python it builds.
+  The rollback copy goes to the **Backup path**, `/tmp/fcc` by default — `/tmp`
+  is tmpfs on OpenWrt, which keeps it off the flash the runtime lives on — and
+  is removed when the run ends.
+* The installer only reads `/dev/tty`, with no flag or environment variable that
+  skips it. This package runs it inside a `tmux` session, answers its questions
+  according to the agent selected on the *Configuration* page, and writes the
+  whole terminal to `<install_path>/logs/installer.out` — the first place to
+  look when an install fails.
 * **The progress bar is not an estimate — it means "still running".** It eases
-  toward 95% and stops there for the rest of the run, reaching 100% only when
-  the job actually ends and its lock is released. A bar sitting at around 90%
-  therefore says nothing more than that the job is still going; a bar at 100%
-  says the job finished, and the log says how.
-* **The log is append-only, and the page shows the current run.** Each run
-  starts with a `===== fcc job start <time>: <command> =====` line, and the page
-  shows what follows the last one. For earlier runs, read
-  `<install_path>/logs/fcc-runtime.log` (install) or `fcc-update.log`
-  (update) on the router directly; when the install path is not writable they
-  fall back to `/tmp/fcc-logs/`.
+  toward 95% and stops there, reaching 100% only when the job ends and its lock
+  is released.
+* **The log is append-only, and the page shows the current run.** Each run starts
+  with a `===== fcc job start <time>: <command> =====` line. For earlier runs,
+  read `<install_path>/logs/fcc-runtime.log` (install) or `fcc-update.log`
+  (update) on the router; when the install path is not writable they fall back
+  to `/tmp/fcc-logs/`.
+* Clicking install or update again while a job is running is refused with
+  `another install/update is already running`. A lock left behind by a killed
+  job goes stale after at most an hour.
 
-Clicking install or update again while a job is running is refused outright,
-with `another install/update is already running` in the log — the same sentence
-the shell backend writes when it cannot take the lock. A job that was killed
-outright — the router rebooting mid-install, say — leaves its lock behind, but
-that lock goes stale after at most an hour, so it cannot keep the next install
-out for longer than that.
-
-**2. Configure.** On the *Configuration* page, set the address and port, then
-**Open FCC Admin** to add provider credentials. API keys are entered in FCC's
-own admin UI and are never stored in UCI — this package has nowhere to put them.
-The **Install path** and **Backup path** fields on the same page can be changed
-at any time; changing the install path does not move an existing runtime.
+**2. Configure.** Set the address and port, then **Open FCC Admin** to add
+provider credentials. API keys are entered in FCC's own admin UI and are never
+stored in UCI. The **Install path** and **Backup path** fields can be changed at
+any time; changing the install path does not move an existing runtime.
 
 > **Keep the address at `127.0.0.1`** unless you deliberately need to reach the
-> FCC Admin page from another device on your LAN. The FCC server's own default
-> is `0.0.0.0`; this package overrides it and will not accept a bind address
-> that is not a literal IP.
+> FCC Admin page from another device. The FCC server's own default is `0.0.0.0`;
+> this package overrides it and will not accept a bind address that is not a
+> literal IP.
 
 **3. Use an agent.** On the *Web Console* page, pick an agent and press
 **Start**. Each agent gets its own session, named `fcc-<agent>-NNN`.
 
-**4. Update.** *Configuration* → **FCC Runtime** → **Check for updates** → **Update FCC**. The
-check runs only when that button is pressed; opening or returning to the tab
-does not reach the network. **Clear update record** removes the version table
-and upgrade command that check produced, returning the section to "Not checked
-yet" and disabling **Update FCC**. A finished update clears the record too,
-since what it described is no longer installed; press the check again when
-needed. The update itself is a sequence, not a single call: it checks free
-space, warns about open console sessions, saves the current state, stops the
-server, reinstalls, verifies the binary, restarts, and then confirms the server
-is actually answering before reporting success.
+**4. Update.** *Configuration* → **FCC Runtime** → **Check for updates** →
+**Update FCC**. The check runs only when that button is pressed; opening or
+returning to the tab does not reach the network. **Clear update record** removes
+the version table and upgrade command and disables **Update FCC**. The update
+itself is a sequence: it checks free space, warns about open console sessions,
+saves the current state, stops the server, reinstalls, verifies the binary,
+restarts, and confirms the server is answering before reporting success.
 
 If any step fails, the previous runtime is put back. The old runtime tree is
-*renamed* aside before the update rather than copied — on one filesystem that is
-instant and costs no extra space — so restoring it needs no download and no
-second copy. Your `data/` is copied, since a successful update has to find it
-still in place. After a rollback the log says either `Previous FCC version
-restored` or, if the restored server will not start, `FCC Server remains
-stopped. Please inspect logs.` LuCI itself is untouched either way.
+*renamed* aside rather than copied — instant on one filesystem, no extra space —
+so restoring it needs no download. Your `data/` is copied. After a rollback the
+log says `Previous FCC version restored` or, if the restored server will not
+start, `FCC Server remains stopped. Please inspect logs.` LuCI itself is
+untouched either way.
 
 ---
 
 ## LAN control
 
 The **FCC Server** section of the *Configuration* page carries a
-`[This router] [LAN]` switch. It starts on `[This router]`, where the section
-behaves exactly as before; on `[LAN]` the same four buttons — **Start**,
-**Stop**, **Restart** and **Open FCC Admin** — drive the FCC server on one
-other machine. One machine at a time, and it may run Windows, Linux or OpenWrt.
+`[This router] [LAN]` switch. On `[LAN]` the same four buttons — **Start**,
+**Stop**, **Restart** and **Open FCC Admin** — drive the FCC server on one other
+machine: Windows, Linux or OpenWrt, one at a time.
 
-With **IP address** and **Username** filled in:
-
-1. Press **Generate and configure key**. The router creates an Ed25519 key pair
-   under `/etc/fcc/ssh/` and shows the public half; add it to the remote
-   account's authorized_keys file — the page names the exact path for the
-   platform you chose: `/home/<account>/.ssh/authorized_keys` on Linux
-   (`/root/.ssh/authorized_keys` for root), `/etc/dropbear/authorized_keys` for
-   OpenWrt's default Dropbear, and on Windows
-   `C:\Users\<account>\.ssh\authorized_keys` for a standard account or
-   `C:\ProgramData\ssh\administrators_authorized_keys` for an administrator
-   (Windows' default sshd config ignores the per-user file for administrators).
-   No password is stored or asked for: the connection offers this key and
-   nothing else
-   (`PreferredAuthentications=publickey`, `BatchMode=yes`,
-   `IdentitiesOnly=yes`), so a failed authentication is an answer rather than a
-   prompt.
+1. With **IP address** and **Username** filled in, press **Generate and
+   configure key**. The router creates an Ed25519 key pair under `/etc/fcc/ssh/`
+   and shows the public half; add it to the remote account's authorized_keys
+   file — the page names the exact path for the platform you chose:
+   `/home/<account>/.ssh/authorized_keys` on Linux (`/root/.ssh/authorized_keys`
+   for root), `/etc/dropbear/authorized_keys` for OpenWrt's Dropbear, and on
+   Windows `C:\ProgramData\ssh\administrators_authorized_keys` for an
+   administrator or `C:\Users\<account>\.ssh\authorized_keys` for a standard
+   account. No password is stored or asked for: the connection offers this key
+   and nothing else (`PreferredAuthentications=publickey`, `BatchMode=yes`,
+   `IdentitiesOnly=yes`).
 2. Press **Test connection**. The first time, the remote host key's fingerprint
    is shown and has to be confirmed; once confirmed it is stored in UCI and
    every later connection must match it exactly. A changed fingerprint refuses
-   the connection and reports the value it actually found — that is the moment
-   to stop and look at the machine, not a prompt to click away.
+   the connection and reports the value it actually found.
 3. Only then do the four buttons become usable. The command a click sends is
    chosen by **Remote platform** in *Advanced settings*: Linux runs
    `systemctl <op> <service>`, OpenWrt runs `/etc/init.d/<service> <op>`, and
    Windows runs PowerShell's `Start-Service` / `Stop-Service` /
    `Restart-Service`. A service name may contain only letters, digits and
-   `.` `-` `_`, so a hand-edited UCI value still cannot become another command.
+   `.` `-` `_`.
 
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
-`169.254/16`). Hostnames are refused: a name can resolve to a public address,
-and that is no longer "the computer on the desk".
+`169.254/16`). Hostnames are refused: a name can resolve to a public address.
 
 The remote FCC Admin is loopback-only too, so **Open FCC Admin** does not open
 `http://<remote-ip>:8082` directly. LuCI's proxy first opens an SSH local
 forward, `ssh -N -L 127.0.0.1:18082:127.0.0.1:<admin-port>`, and hands the
 request to this end of it: the remote server sees a loopback peer, while the
-browser's access still goes through LuCI's own login — a stricter gate than the
-loopback check it stands in for. The tunnel is opened when Admin is first
-reached and closed when LAN mode is left.
+browser's access still goes through LuCI's own login. The tunnel is opened when
+Admin is first reached and closed when LAN mode is left.
 
 The connection needs an OpenSSH client **on the router**; the client on the
-remote machine is not used. OpenWrt's default Dropbear also answers as
-`/usr/bin/ssh`, but it does not support the options this feature passes, so when
-`ssh -V` says Dropbear the page says exactly that. The package below brings
-`ssh`, `ssh-keygen` and `ssh-keyscan`:
+remote machine is not used. Dropbear also answers as `/usr/bin/ssh` but does not
+support the options this feature passes, and the page says exactly that. Install
+the missing helpers with:
 
 ```sh
 opkg install openssh-client-utils     # 24.10 and earlier
 apk add openssh-client-utils          # 25.12 and later
 ```
 
-Whichever helper is missing, the key line names its package; the four buttons
-stay disabled instead of failing on the first click. *Advanced settings* also
-holds the SSH port, the remote platform, the Admin port and the service name,
-shows the exact command each button sends, and shows the pinned fingerprint with
-a **Forget** button. Changing the address or the SSH port forgets the
-fingerprint on its own — a machine at a new address should not inherit the trust
-given to the old one.
+*Advanced settings* holds the SSH port, the remote platform, the Admin port and
+the service name, shows the exact command each button sends, and shows the
+pinned fingerprint with a **Forget** button. Changing the address or the SSH
+port forgets the fingerprint on its own.
 
 ---
 
@@ -243,87 +189,38 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 
 `tmux` is not optional: it is the terminal backend the Web Console drives.
 
-`tar` is deliberately *not* among them — which is not the same as the tar on the
-device being good enough. Nothing here shells out to tar: the runtime installer
-is fetched as a shell script and run, and backups move directories and copy
-`data/`. The *installer* does shell out to it, though: `uv` unpacks its own
-release with `tar xf … --no-same-owner --strip-components 1`, and busybox tar
-implements neither option. It prints its usage text, exits 1, and the install
-stops a few seconds after the last question with nothing on the page but the
-installer's
-`uv installation failed with exit code 1`. So the *Configuration* page's
-diagnostics decide by **actually unpacking an archive**, not by reading a version
-string: a tar that supports both options (GNU tar, or libarchive's) is an OK;
-busybox tar alone is a FAIL with the install command, because the next update
-downloads `uv` again and therefore needs it.
-
-Why not simply depend on it, then? Because on 25.12 that makes this package
-unselectable: upstream's tar carries a variant gate (`TAR_XZ` on, `xz-utils` off
-by default) that the metadata generator copies onto every dependent, so the
-dependency does not resolve under any default configuration. The substitute is
-not a report you have to act on by hand: **when an install starts, the gaps a
-package can fill are filled automatically**, in the section below.
-
-`bash` is deliberately *not* in that list. Upstream's installer hands five of the
-ten agents — Claude Code, OpenCode, Hermes, Grok Build and Muse Code — to their
-own bash installers, and OpenWrt images ship busybox ash and no bash at all.
-Depending on it would mean dragging a shell onto every router that only wanted to
-look at the status page, so it is required only when one of those agents is
-selected, and the *Configuration* page's diagnostics report it: a FAIL with the
-install command when the selected set needs it, a WARN when it does not. The
-preflight then installs it if it is missing. Without either, the install failed
-after the download and the build, with nothing in the log but upstream's
-`bash is required. Install it first, then rerun this installer.`
-
-`cline` is the one no package can fix: Cline publishes glibc Linux builds only
-and there is no musl build, while OpenWrt is musl. The executable its npm
-package installs has an ELF interpreter of `/lib64/ld-linux-x86-64.so.2`, which
-does not exist on OpenWrt, so Node fails to run it with nothing but
-`spawnSync … ENOENT` and the install stops there. On such a system Cline is
-therefore kept away from the installer rather than failed over: it is dropped
-from the selected set with a line saying why, every question the installer asks
-about it is answered no, and when it was the only agent asked for, the install
-is refused with `AGENT_UNSUPPORTED` instead of being allowed to hit that
-guaranteed failure. The diagnostics report it as a WARN "not available", not as
-a missing dependency. An upstream request for musl builds is open:
-[cline/cline#15271](https://github.com/cline/cline/issues/15271).
-
-`git` is needed for one agent only: the Hermes installer fetches its sources
-with `git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git`,
-and OpenWrt splits the HTTPS transport into the `git-http` package — a machine
-with plain `git` runs the binary but fails the clone at its first step. The
-check therefore covers both halves: git runs, and its `--exec-path` holds
-`git-remote-https`. Either half missing is a FAIL naming `git-http`, which
-depends on `git` and so clears both at once. A fresh 24.10.8 has neither, and
-the installer stops with `✗ git is required. Install it with your system
-package manager.`
-
-`luci-compat` is the other load-bearing one, and less obviously so. OpenWrt
-24.10 and 25.12 moved LuCI's core to ucode: `luci-base` no longer ships
-`/usr/lib/lua/luci` at all. The Lua dispatcher and template engine that this
-package's controller and views run on now live in `luci-lua-runtime`, which
-`luci-compat` depends on — so listing `luci-compat` is what brings them in.
-Without it the package still installs cleanly and the pages are simply never
-reachable, which is why the install smoke test asserts that
-`/usr/lib/lua/luci/dispatcher.lua` is present after an install.
-
-The FCC runtime has its own requirements — currently Python 3.14 (upstream pins
-`requires-python == 3.14.7`), FastAPI and Uvicorn. Those are the runtime's
-business, not this package's: installing `luci-app-fcc` must not pull a language
-runtime onto a router that only wanted to look at the status page. That is also
-why the runtime is installed on demand rather than shipped here.
+* **`tar`** is deliberately not a dependency, but busybox tar is not good
+  enough: `uv` unpacks its own release with
+  `tar xf … --no-same-owner --strip-components 1`, which busybox does not
+  implement. The diagnostics decide by **actually unpacking an archive**. It is
+  not a dependency because on 25.12 upstream's tar carries a variant gate
+  (`TAR_XZ` on, `xz-utils` off by default) that makes this package
+  unselectable; the preflight installs it instead.
+* **`bash`** is needed by the installers of Claude Code, OpenCode, Hermes, Grok
+  Build and Muse Code. When the selected set needs it the diagnostics report a
+  FAIL with the install command, otherwise a WARN; the preflight installs it.
+* **`cline`** cannot be fixed by any package: Cline publishes glibc Linux builds
+  only and OpenWrt is musl. It is dropped from the selected set with a line
+  saying why, and when it was the only agent asked for the install is refused
+  with `AGENT_UNSUPPORTED`. Upstream request:
+  [cline/cline#15271](https://github.com/cline/cline/issues/15271).
+* **`git`** is needed for one agent only: the Hermes installer clones its
+  sources over HTTPS, which OpenWrt ships in `git-http` (which pulls `git` in).
+* **`luci-compat`** brings `luci-lua-runtime`, the Lua dispatcher and template
+  engine this package's controller and views run on. Without it the package
+  installs cleanly and the pages are simply never reachable.
+* The FCC runtime has its own requirements — Python 3.14, FastAPI and Uvicorn.
+  Those are the runtime's business: installing `luci-app-fcc` must not pull a
+  language runtime onto a router that only wanted the status page.
 
 ### Packages the preflight installs
 
 *Configuration* → **Diagnostics** → **Run checks** lists every check with its
-value, requirement, result and suggestion. When **Install** or **Update** is
-pressed and *every* failing check is one a
-package can clear, the installer adds those packages, asks the diagnostics
-again, and only downloads the runtime once the report passes. A failure no
-package remedies — not enough free space, DNS, unreachable HTTPS, a CPU with no
-Node build — changes nothing and refuses the install with the full report.
-
-What it may install:
+value, requirement and result. When **Install** or **Update** is pressed and
+*every* failing check is one a package can clear, the installer adds those
+packages, asks the diagnostics again, and only downloads the runtime once the
+report passes. A failure no package remedies — free space, DNS, unreachable
+HTTPS, no Node build for the CPU — refuses the install with the full report.
 
 | Check | Package | Needed when |
 | --- | --- | --- |
@@ -332,22 +229,15 @@ What it may install:
 | bash | `bash` | Claude Code, OpenCode, Hermes, Grok Build, Muse Code |
 | fold | `coreutils-fold` | Codex's installer |
 | sleep | `coreutils-sleep` | Pi's installer, whose sleep must take fractions |
-| git | `git-http` | The Hermes installer clones its repository (HTTPS lives in `git-http`) |
-| Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node Pi and DeepSeek Harness fetch, and the one the Hermes installer fetches |
+| git | `git-http` | The Hermes installer clones its repository (includes `git`) |
+| Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node fetched by Pi, DeepSeek Harness and Hermes |
 | curl | `curl` | Downloading the installer and the runtime |
 
-The names are the same on 24.10 (opkg) and 25.12 (apk). `libstdcpp6` follows
-the SONAME's major suffix (`libstdc++.so.6`), not the package manager; GNU tar
-and coreutils install under `/usr/libexec/` with alternatives taking over
-`/bin/tar`, `/bin/sleep` and `/usr/bin/fold`, so they take effect instead of
-losing to BusyBox's applet of the same name. `git-http` ships
-`/usr/lib/git-core/git-remote-https` and pulls `git` in as its dependency. The
-command follows the image: `apk add` on 25.12, `opkg install` on 24.10, with one
-repository-index update and a retry when the first attempt fails.
-
-**Clear check log**, beside **Run checks**, empties the panel and nothing on disk.
-The log viewer on *Basic Information* has its own **Clear log**, which empties
-the pane it is showing and likewise leaves the file alone.
+The names are the same on 24.10 (opkg) and 25.12 (apk); the command follows the
+image (`opkg install` / `apk add`), with one repository-index update and a retry
+when the first attempt fails. **Clear check log**, beside **Run checks**, empties
+the panel and nothing on disk; the log viewer on *Basic Information* has its own
+**Clear log** with the same behaviour.
 
 ---
 
@@ -356,39 +246,27 @@ the pane it is showing and likewise leaves the file alone.
 The console is a genuine terminal, not a log viewer. Each session is a `tmux`
 session on the router; the browser talks to it through the LuCI backend.
 
-**The transport is an HTTP byte stream, not a WebSocket.** This is a deliberate
-departure and it is worth stating plainly:
+**The transport is an HTTP byte stream, not a WebSocket.** A WebSocket would
+need a long-running Node.js or Python server — forbidden here, since the package
+must not add a language runtime or run a persistent daemon beyond the FCC server
+itself — and `uhttpd` has no WebSocket support. So the backend exposes the
+session's output as a byte stream with **absolute offsets**, and the browser
+long-polls it: a reconnect resumes exactly where it stopped. Scrollback is capped
+and trimmed from the front, with the base offset advancing by exactly the number
+of bytes dropped. Keystrokes travel as base64, are decoded to bytes, and are
+re-encoded as hex for `tmux send-keys -H` — the value handed to tmux is never
+attacker-controlled text.
 
-* A WebSocket would need a long-running Node.js or Python server. Both are
-  forbidden here — the package must not add a language runtime, and it must not
-  run a persistent daemon beyond the FCC server itself.
-* `uhttpd`, the web server LuCI runs on, has no WebSocket support to fall back
-  on.
+The cost is one long-poll round trip of input latency, with the poll interval
+capped at 25 seconds server-side. For an interactive coding agent that is not
+noticeable; for a full-screen TUI redraw it can be.
 
-So the backend exposes the session's output as a byte stream with **absolute
-offsets**, and the browser long-polls it. Each response carries the bytes after
-the offset the client already has, so a reconnect resumes exactly where it
-stopped instead of replaying the screen. Scrollback is capped and trimmed from
-the front; the base offset advances by exactly the number of bytes dropped, so
-an absolute offset means the same thing before and after a trim.
-
-Keystrokes travel the other way as base64, are decoded to bytes by the backend
-and re-encoded as hex for `tmux send-keys -H` — the value handed to tmux is
-never attacker-controlled text.
-
-The practical cost of not using a WebSocket: input latency is one long-poll
-round trip rather than immediate, and the poll interval is capped at 25 seconds
-server-side. For an interactive coding agent on a router that is not
-noticeable; for a full-screen TUI redraw it can be. See *Known limitations*.
-
-A session can also leave the LuCI page. **Open in browser** on the toolbar puts
-the current session in a window of its own — no menu, no tab bar, the terminal
-filling the window. **Closing that window ends the session**; reloading it does
-not, because the reattach cancels the delayed close. **End all sessions** ends
-every session this console created after a confirmation dialog — only the
-`fcc-*` namespace, so tmux sessions you started by hand are left alone.
-**Clean up finished sessions** reaps only sessions whose process has already
-exited, and their leftover files; running sessions are not touched.
+**Open in browser** on the toolbar puts the current session in a window of its
+own. **Closing that window ends the session**; reloading it does not, because the
+reattach cancels the delayed close. **End all sessions** ends every session this
+console created after a confirmation — only the `fcc-*` namespace. **Clean up
+finished sessions** reaps only sessions whose process has already exited, and
+their leftover files.
 
 ---
 
@@ -423,9 +301,8 @@ id|Friendly Name|launcher|default_install|approx_size_mb|min_ram_mb|probe
 
 The `probe` column is the *underlying* CLI used to read a version, and must
 never be an `fcc-*` launcher — those start the agent. Leave it empty when the
-underlying CLI is unknown or unsafe to run (`hermes --version` hangs, so
-`hermes` has no probe). Real state is always detected dynamically; the file is a
-hint.
+underlying CLI is unknown or unsafe to run (`hermes --version` hangs). Real
+state is always detected dynamically; the file is a hint.
 
 ---
 
@@ -435,15 +312,13 @@ Everything runs on a normal Linux machine. No OpenWrt tree, no cross-compiler,
 no root:
 
 ```sh
-sh scripts/test.sh          # package-check + every suite
-sh scripts/test.sh -q       # summaries only
+sh scripts/test.sh            # package-check + every suite
+sh scripts/test.sh -q         # summaries only
 sh scripts/test.sh lua shell  # named suites
-sh scripts/package-check.sh # the static package check on its own
-sh scripts/gen-po.sh        # regenerate po/templates/fcc.pot
-sh scripts/gen-po.sh --check # fail if the template is stale
+sh scripts/package-check.sh   # the static package check on its own
+sh scripts/gen-po.sh          # regenerate po/templates/fcc.pot
+sh scripts/gen-po.sh --check  # fail if the template is stale
 ```
-
-The suites are:
 
 | Suite | Covers |
 | --- | --- |
@@ -456,92 +331,56 @@ The suites are:
 
 `scripts/smoke.sh` is deliberately not part of `test.sh`: it needs Docker and a
 release root filesystem, so CI runs it as its own job. It unpacks the official
-rootfs for the release, boots it under a real procd, installs the built package
-with that release's own package manager — `opkg` on 24.10, `apk` on 25.12 — and
-then runs `/etc/init.d/fcc status` inside it. That is the check sections 90 and
-91 ask for, and it is the only one that no amount of reading files can answer.
+rootfs, boots it under a real procd, installs the built package with that
+release's own package manager (`opkg` on 24.10, `apk` on 25.12), and runs
+`/etc/init.d/fcc status` inside it.
 
-The shell backend follows one rule that is easy to trip over: POSIX `sh` has a
-single global scope shared by every function, and the scripts run under
-`set -u`. A helper that assigns a bare `_name` therefore clobbers its caller's
-variable. Every local is prefixed with a per-function tag (`_ug_v`, `_ou_off`),
-and `tests/test_shell.sh` enforces it.
+The shell backend runs under `set -u`, and POSIX `sh` has a single global scope
+shared by every function, so every local is prefixed with a per-function tag
+(`_ug_v`, `_ou_off`), enforced by `tests/test_shell.sh`.
 
 ### Releases
 
-The version is composed from two files: `VERSION` is the upstream version (the
-Makefile reads it for `PKG_VERSION`, the *Basic Information* page displays it)
-and `PKG_RELEASE` in the Makefile is the release number. Together they are the
-package's version, and that one string is used three times — it is the file
-name, the tag and the release name. The release carrying
-`luci-app-fcc_0.1.1-r2_all.ipk` is called `0.1.1-r2` and is tagged `0.1.1-r2`.
-`scripts/version.sh` is the one place that composes it:
-
-```sh
-sh scripts/version.sh    # 0.1.1-r2
-```
-
-There is no tag to push. A push to `main` runs the static checks, builds once
-against the 24.10 SDK and once against the 25.12 SDK — both x86_64 — and
-install-smoke-tests each in its own release rootfs, publishing only if all of it
-passes; the workflow creates the tag itself, from the same two files the
-packages are stamped with. Bumping `PKG_RELEASE` is what cuts the next release.
-
-The release number is part of the name because it is part of the package: a
-rebuild under the same `VERSION` takes a new `PKG_RELEASE`, so `0.1.1-r1` and
-`0.1.1-r2` are different packages and have to be different tags. A name carrying
-only the first half would put two different packages under one tag.
-
-Publishing under a version that already has a release replaces it — the job
-deletes the previous release and its tag first — so re-running for the same
-version is idempotent rather than a failure on a tag that already exists. A pull
-request never publishes.
+`VERSION` (the upstream version, also shown on *Basic Information*) and
+`PKG_RELEASE` in the Makefile (the release number) compose the package's
+version, and that one string is used three times: the file name, the tag and the
+release name. `scripts/version.sh` is the one place that composes it, and there
+is no tag to push. A push to `main` runs the static checks, builds once against
+the 24.10 SDK and once against the 25.12 SDK, install-smoke-tests each in its
+own release rootfs, and publishes only if all of it passes; the workflow creates
+the tag itself. Bumping `PKG_RELEASE` is what cuts the next release. Publishing
+under a version that already has a release replaces it, so re-running is
+idempotent; a pull request never publishes.
 
 The assets are this package alone — `luci-app-fcc_<version>-r<release>_all.ipk`,
-`luci-app-fcc-<version>-r<release>.apk` and `SHA256SUMS`. There is one build per
-release: the package is `PKGARCH:=all` (pure Lua, JavaScript and shell), so the
-file an x86_64 SDK produces installs on ARM, MIPS and x86 alike, and an aarch64
-build would only compile the same dependency chain a second time. When more than
-one artifact does arrive, the copies are compared rather than merged — an SDK
-disagreeing about the same package fails the release. The FCC runtime is
-installed on demand over the network, so there is no prebuilt runtime tarball in
-the release.
+`luci-app-fcc-<version>-r<release>.apk` and `SHA256SUMS`. The package is
+`PKGARCH:=all` (pure Lua, JavaScript and shell), so the file an x86_64 SDK
+produces installs on ARM, MIPS and x86 alike. The FCC runtime is installed on
+demand over the network, so there is no prebuilt runtime tarball in the release.
 
 ---
 
 ## Known limitations
 
-* **No WebSocket transport for the console.** Explained above; it is a
-  consequence of the no-extra-runtime and no-persistent-daemon constraints, not
-  an oversight. A full-screen TUI redraw is visibly slower than it would be over
-  a socket.
+* **No WebSocket transport for the console.** A consequence of the
+  no-extra-runtime and no-persistent-daemon constraints; a full-screen TUI redraw
+  is visibly slower than it would be over a socket.
 * **`hermes` has no version probe.** `hermes --version` does not terminate, so
-  the registry leaves its probe empty and the UI reports the version as unknown
-  rather than hanging the status refresh.
+  the UI reports the version as unknown rather than hanging the status refresh.
 * **Agent versions are probed, not guaranteed.** A version is read from the
-  underlying CLI with a 5-second timeout and cached for 60 seconds. An agent
-  whose CLI changes its output format will show an unfamiliar string.
-* **The console and the runtime installer both need `tmux`.** Without it the other
-  two pages still work, but the console reports the missing dependency instead of
-  failing silently and an install is refused before it starts. The diagnostics
-  report calls tmux a FAIL rather than a WARN: a warning in front of a guaranteed
-  failure only teaches the reader to ignore the one line that mattered.
-* **Five agents need `bash`.** See *Requirements*. The preflight installs it;
-  only when it cannot be installed (no network, no space) is the install
-  refused before anything is downloaded, with the missing piece named.
-* **Cline cannot be installed on OpenWrt.** It ships glibc builds only and no
-  musl build, so the diagnostics report it as a WARN "not available", and an
-  install drops it with a line saying why — see *Requirements*. The other nine
-  agents are unaffected.
+  underlying CLI with a 5-second timeout and cached for 60 seconds.
+* **The console and the runtime installer both need `tmux`.** Without it the
+  console reports the missing dependency and an install is refused before it
+  starts.
+* **Five agents need `bash`.** See *Requirements*; the preflight installs it.
+* **Cline cannot be installed on OpenWrt.** It ships glibc builds only, so the
+  diagnostics report it as a WARN and an install drops it with a line saying why.
 * **A whole-registry install is all-or-nothing.** Upstream stops at the first
-  agent it cannot install and rolls the entire run back, so one agent that
-  cannot be installed on the device makes **All agents** install none of them.
-  Pick that agent on its own from the dropdown, one at a time, to get the rest.
+  agent it cannot install and rolls the entire run back; pick that agent on its
+  own from the dropdown to get the rest.
 * **An update needs room for the new runtime before the old one is discarded.**
-  Rollback moves the previous runtime aside: a rename when the backup path is on
-  the same filesystem, a copy when it is the default `/tmp` tmpfs. Either way the
-  new runtime is written before the old one can be dropped, so the free-space
-  preflight has to cover one runtime, not zero. That is what it checks.
+  Rollback moves the previous runtime aside, so the free-space preflight has to
+  cover one runtime, not zero.
 
 ---
 
