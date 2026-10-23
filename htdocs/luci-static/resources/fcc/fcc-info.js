@@ -299,6 +299,18 @@
 			.catch(function (err) { FCC.notice(box, 'fail', err.message); });
 	}
 
+	/* The check result lives only in the page. Clearing it puts the section
+	 * back to the state it has before the first check, and takes "Update FCC"
+	 * with it: the button may only be lit by a check the user is looking at. */
+	function clearUpdateRecord() {
+		var box = FCC.$('#fcc-info-updates');
+		box.innerHTML = '';
+		box.appendChild(FCC.el('div', { class: 'fcc-muted', text: FCC._('Not checked yet.') }));
+		updateAvailable = false;
+		var btn = FCC.$('#fcc-info-update');
+		if (btn) { btn.disabled = true; }
+	}
+
 	/* ------------------------------------------------------- update + jobs */
 
 	/* The update runs as a job: it downloads, verifies and reinstalls, which is
@@ -327,7 +339,11 @@
 						clearInterval(jobTimer);
 						jobTimer = null;
 						if (bar) { bar.style.width = '100%'; }
-						checkUpdates();
+						/* The record described the runtime before the update,
+						 * so it is no longer true. A check is manual, though:
+						 * clear it and let the user ask again rather than
+						 * reaching the network on their behalf. */
+						clearUpdateRecord();
 						loadStatus(true).catch(function () {});
 					}
 				})
@@ -374,11 +390,6 @@
 	/* ---------------------------------------------------------------- init */
 
 	function init() {
-		FCC.$('#fcc-info-refresh').addEventListener('click', function () {
-			loadStatus(true).catch(function (err) {
-				FCC.notice(FCC.$('#fcc-info-fcc'), 'fail', err.message);
-			});
-		});
 		FCC.$('#fcc-info-check').addEventListener('click', checkUpdates);
 		FCC.$('#fcc-info-update').addEventListener('click', function () {
 			if (!updateAvailable) { return; }
@@ -387,7 +398,11 @@
 			}
 			runUpdate();
 		});
+		FCC.$('#fcc-info-clear').addEventListener('click', clearUpdateRecord);
 		FCC.$('#fcc-info-log-load').addEventListener('click', loadLog);
+		FCC.$('#fcc-info-log-clear').addEventListener('click', function () {
+			FCC.$('#fcc-info-log').textContent = '';
+		});
 		FCC.$('#fcc-info-agent-versions').addEventListener('click', function () {
 			refreshAgentVersions(this);
 		});
@@ -395,7 +410,10 @@
 		loadStatus(false).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-info-fcc'), 'fail', err.message);
 		});
-		checkUpdates();
+		/* No checkUpdates() here: opening this tab is not a request to reach
+		 * the network. The section says "Not checked yet." until the button is
+		 * pressed — the same text "Clear update record" restores. */
+		clearUpdateRecord();
 		loadLog();
 
 		/* Section 20 splits the two cadences, and the split is the point: status

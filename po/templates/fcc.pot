@@ -90,7 +90,13 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
+msgid "Clear check log"
+msgstr ""
+
 msgid "Clear log"
+msgstr ""
+
+msgid "Clear update record"
 msgstr ""
 
 msgid "Close session"
@@ -255,6 +261,9 @@ msgstr ""
 msgid "No entries yet."
 msgstr ""
 
+msgid "Not checked yet."
+msgstr ""
+
 msgid "Not installed"
 msgstr ""
 
@@ -280,9 +289,6 @@ msgid "Re-detect versions"
 msgstr ""
 
 msgid "Reconnect"
-msgstr ""
-
-msgid "Refresh"
 msgstr ""
 
 msgid "Remote platform"

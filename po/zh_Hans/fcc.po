@@ -122,8 +122,14 @@ msgstr "检查更新"
 msgid "Checking…"
 msgstr "正在检查…"
 
+msgid "Clear check log"
+msgstr "清空检查日志"
+
 msgid "Clear log"
 msgstr "清空日志"
+
+msgid "Clear update record"
+msgstr "清除更新记录"
 
 msgid "Close session"
 msgstr "关闭会话"
@@ -314,6 +320,9 @@ msgstr "未安装任何智能体"
 msgid "No entries yet."
 msgstr "暂无记录。"
 
+msgid "Not checked yet."
+msgstr "尚未检查"
+
 msgid "Not installed"
 msgstr "未安装"
 
@@ -340,9 +349,6 @@ msgstr "重新检测版本"
 
 msgid "Reconnect"
 msgstr "重新连接"
-
-msgid "Refresh"
-msgstr "刷新"
 
 msgid "Remote platform"
 msgstr "远程平台"
@@ -537,7 +543,8 @@ msgstr "本机需要 ssh-keygen 才能生成密钥（软件包 openssh-keygen）
 msgid ""
 "This router needs ssh-keyscan to read the remote host key (package openssh-"
 "client-utils)."
-msgstr "本机需要 ssh-keyscan 才能读取远程主机密钥（软件包 openssh-client-utils）。"
+msgstr ""
+"本机需要 ssh-keyscan 才能读取远程主机密钥（软件包 openssh-client-utils）。"
 
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
@@ -635,16 +642,16 @@ msgid ""
 "ssh on this router is Dropbear, which cannot use these options. Install the "
 "OpenSSH client (package openssh-client-utils) on the router."
 msgstr ""
-"本机的 ssh 是 Dropbear，不支持这些选项。请在本机安装 OpenSSH 客户端"
-"（软件包 openssh-client-utils）。"
+"本机的 ssh 是 Dropbear，不支持这些选项。请在本机安装 OpenSSH 客户端（软件包 "
+"openssh-client-utils）。"
 
 msgid ""
 "ssh on this router is not a usable OpenSSH client. Install the OpenSSH "
 "client (package openssh-client-utils) on the router; the client on the "
 "remote machine is not used."
 msgstr ""
-"本机的 ssh 不是可用的 OpenSSH 客户端。请在本机安装 OpenSSH 客户端"
-"（软件包 openssh-client-utils）；远程电脑上的客户端不会被使用。"
+"本机的 ssh 不是可用的 OpenSSH 客户端。请在本机安装 OpenSSH 客户端（软件包 "
+"openssh-client-utils）；远程电脑上的客户端不会被使用。"
 
 msgid "unhealthy"
 msgstr "异常"
@@ -657,6 +664,9 @@ msgstr "有可用更新"
 
 msgid "uptime"
 msgstr "运行时间"
+
+#~ msgid "Refresh"
+#~ msgstr "刷新"
 
 #~ msgid "OpenSSH client is required (package openssh-client)"
 #~ msgstr "需要 OpenSSH 客户端（软件包 openssh-client）"

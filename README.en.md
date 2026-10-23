@@ -143,11 +143,16 @@ at any time; changing the install path does not move an existing runtime.
 **3. Use an agent.** On the *Web Console* page, pick an agent and press
 **Start**. Each agent gets its own session, named `fcc-<agent>-NNN`.
 
-**4. Update.** *Basic Information* → **Check Update** → **Update FCC**. The
-update is a sequence, not a single call: it checks free space, warns about open
-console sessions, saves the current state, stops the server, reinstalls, verifies
-the binary, restarts, and then confirms the server is actually answering before
-reporting success.
+**4. Update.** *Basic Information* → **Check for updates** → **Update FCC**. The
+check runs only when that button is pressed; opening or returning to the tab
+does not reach the network. **Clear update record** removes the version table
+and upgrade command that check produced, returning the section to "Not checked
+yet" and disabling **Update FCC**. A finished update clears the record too,
+since what it described is no longer installed; press the check again when
+needed. The update itself is a sequence, not a single call: it checks free
+space, warns about open console sessions, saves the current state, stops the
+server, reinstalls, verifies the binary, restarts, and then confirms the server
+is actually answering before reporting success.
 
 If any step fails, the previous runtime is put back. The old runtime tree is
 *renamed* aside before the update rather than copied — on one filesystem that is
@@ -340,7 +345,9 @@ losing to BusyBox's applet of the same name. `git-http` ships
 command follows the image: `apk add` on 25.12, `opkg install` on 24.10, with one
 repository-index update and a retry when the first attempt fails.
 
-**Clear log**, beside **Run checks**, empties the panel and nothing on disk.
+**Clear check log**, beside **Run checks**, empties the panel and nothing on disk.
+The log viewer on *Basic Information* has its own **Clear log**, which empties
+the pane it is showing and likewise leaves the file alone.
 
 ---
 

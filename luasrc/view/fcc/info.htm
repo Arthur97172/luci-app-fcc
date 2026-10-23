@@ -64,11 +64,15 @@
 	<div class="cbi-section">
 		<h3><%:Updates%></h3>
 		<div class="cbi-section-node">
-			<div id="fcc-info-updates"><%:Loading…%></div>
+			<div id="fcc-info-updates"><%:Not checked yet.%></div>
 			<div class="fcc-toolbar">
+				<!-- Checking is manual: opening or returning to this tab must not
+				     reach the network on its own. The third button puts the
+				     section back to its initial state (no table, no upgrade
+				     command) without deleting anything on the router. -->
 				<button id="fcc-info-check" class="cbi-button"><%:Check for updates%></button>
 				<button id="fcc-info-update" class="cbi-button cbi-button-apply" disabled><%:Update FCC%></button>
-				<button id="fcc-info-refresh" class="cbi-button"><%:Refresh%></button>
+				<button id="fcc-info-clear" class="cbi-button cbi-button-reset"><%:Clear update record%></button>
 			</div>
 
 			<div id="fcc-info-job" style="display:none">
@@ -94,6 +98,10 @@
 					<option value="fcc-terminal.log">fcc-terminal.log</option>
 				</select>
 				<button id="fcc-info-log-load" class="cbi-button"><%:Load%></button>
+				<!-- Empties the pane below, not the file the select names: the
+				     button is beside a viewer, and a viewer's control must not
+				     delete evidence. -->
+				<button id="fcc-info-log-clear" class="cbi-button cbi-button-reset"><%:Clear log%></button>
 			</div>
 			<pre class="fcc-log" id="fcc-info-log"></pre>
 		</div>

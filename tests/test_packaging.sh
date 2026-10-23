@@ -1314,4 +1314,63 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the old package name that exists on the remote machine is not used"
 }
 
+# ---------------------------------------------------------------------------
+# Basic Information has manual, named controls
+#
+# A tab switch must not cost a network request, so the update check is a
+# button and nothing else. The two clear buttons say which record each one
+# empties: the check report on Diagnostics and the loaded log here.
+# ---------------------------------------------------------------------------
+
+test_basic_information_controls_are_manual_and_named() {
+	_ts_info="$ROOT/luasrc/view/fcc/info.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"
+	_ts_config="$ROOT/luasrc/view/fcc/config.htm"
+
+	assert_contains "$(cat "$_ts_config")" '<%:Clear check log%>' \
+		"the diagnostics button is named after the check report, not logs"
+	assert_not_contains "$(cat "$_ts_config")" '<%:Clear log%>' \
+		"so it cannot be read as the log viewer's control"
+
+	# The log viewer on this page gets its own clear, next to Load.
+	assert_contains "$(cat "$_ts_info")" 'id="fcc-info-log-clear"' \
+		"the log viewer has a clear button"
+	assert_contains "$(sed -n '/id="fcc-info-log-select"/,/<\/div>/p' "$_ts_info")" \
+		'id="fcc-info-log-load"' "Load is in the same toolbar"
+	assert_contains "$(sed -n '/id="fcc-info-log-select"/,/<\/div>/p' "$_ts_info")" \
+		'id="fcc-info-log-clear"' "and Clear log sits beside it"
+	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-info-log-clear')" \
+		"the button is wired"
+	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-info-log').textContent = ''" \
+		"and empties the pane rather than any file"
+
+	# Refresh is gone; Clear update record takes its place after Update FCC.
+	assert_not_contains "$(cat "$_ts_info")" 'fcc-info-refresh' \
+		"the update section no longer has a Refresh button"
+	assert_not_contains "$(cat "$_ts_js")" 'fcc-info-refresh' \
+		"and nothing still binds to it"
+	_ts_updates="$(sed -n '/id="fcc-info-updates"/,/<\/div>/p' "$_ts_info")"
+	assert_contains "$_ts_updates" 'id="fcc-info-update"' \
+		"Update FCC is in the update toolbar"
+	_ts_after_update="$(sed -n '/id="fcc-info-update"/,/<\/div>/p' "$_ts_info")"
+	assert_contains "$_ts_after_update" 'id="fcc-info-clear"' \
+		"and Clear update record follows it"
+
+	# No check on load. The init body must not call the checker; the section
+	# starts in the same state the clear button restores.
+	_ts_init="$(sed -n '/^	function init()/,/^	}$/p' "$_ts_js")"
+	assert_not_contains "$_ts_init" 'checkUpdates();' \
+		"opening the tab does not run an update check"
+	assert_contains "$_ts_init" 'clearUpdateRecord();' \
+		"it renders the not-checked state instead"
+	assert_not_contains "$(cat "$_ts_js")" 'checkUpdates();' \
+		"no code path runs a check on its own, not even after an update"
+	assert_contains "$(cat "$_ts_js")" "text: FCC._('Not checked yet.')" \
+		"which is one shared sentence"
+	assert_contains "$(cat "$_ts_js")" 'updateAvailable = false;' \
+		"clearing also drops the pending update"
+	assert_contains "$(cat "$_ts_js")" 'btn.disabled = true;' \
+		"and disables Update FCC until a new check"
+}
+
 tests_main
