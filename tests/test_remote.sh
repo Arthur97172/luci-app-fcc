@@ -414,6 +414,73 @@ test_stop_is_allowed_outside_lan_mode() {
 	drop_sandbox
 }
 
+test_running_reports_an_active_linux_service() {
+	# The LAN panel has to say what the other machine is doing after a reload,
+	# not only which side the switch was left on. systemctl is-active answers
+	# with one word and exits 0 only for "active".
+	fresh
+	ready_lan
+	out="$(SSH_OUT=active run_remote running)" || true
+	assert_contains "$out" '"ok":true' "the check answered"
+	assert_contains "$out" '"checked":true' "and it is an answer rather than a guess"
+	assert_contains "$out" '"running":true' "an active service is running"
+	assert_eq "systemctl is-active fcc" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+		"systemd is asked with is-active"
+	drop_sandbox
+}
+
+test_running_reports_a_stopped_linux_service() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT=inactive run_remote running)" || true
+	assert_contains "$out" '"ok":true' "a stopped service is still a successful check"
+	assert_contains "$out" '"running":false' "and it is reported as not running"
+	drop_sandbox
+}
+
+test_running_does_not_call_an_unreachable_host_stopped() {
+	# ssh's own failure (255) is not a service state. Reporting it as "not
+	# running" would make the one-server rule look satisfied when nothing was
+	# checked at all, so it gets its own answer.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='ssh: connect to host 192.168.5.20 port 22: Network is unreachable' \
+		SSH_EXIT=255 run_remote running)" || true
+	assert_contains "$out" '"ok":false' "an unreachable host is not a state answer"
+	assert_contains "$out" '"checked":false' "and the page is told the check failed"
+	assert_contains "$out" 'could not be read' "in words rather than as a false"
+	drop_sandbox
+}
+
+test_running_uses_the_openwrt_and_windows_presets() {
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
+	assert_contains "$out" '"running":true' "rc.common exits 0 when the service runs"
+	assert_eq "/etc/init.d/fcc status" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+		"OpenWrt is asked through its init script"
+
+	uci_set remote_platform windows
+	out="$(SSH_OUT='Running' run_remote running)" || true
+	assert_contains "$out" '"running":true' "PowerShell prints Running"
+	assert_contains "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" 'Get-Service' \
+		"Windows is asked through PowerShell"
+	drop_sandbox
+}
+
+test_running_requires_a_trusted_host() {
+	fresh
+	ready_lan
+	rm -f "$SSH_DIR/known_hosts"
+	: > "$UCI/remote_fingerprint"
+	out="$(run_remote running)" || true
+	assert_contains "$out" 'trust the remote host key first' \
+		"the check is not made before the host key is pinned"
+	assert_eq "0" "$([ -f "$TMP/ssh.log" ] && echo 1 || echo 0)" "no ssh process is started"
+	drop_sandbox
+}
+
 test_control_refuses_an_unknown_operation() {
 	fresh
 	ready_lan

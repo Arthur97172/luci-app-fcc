@@ -76,6 +76,7 @@ function index()
 		remote_forget = "act_remote_forget",
 		remote_test = "act_remote_test",
 		remote_control = "act_remote_control",
+		remote_running = "act_remote_running",
 	}
 	for name, fn in pairs(actions) do
 		local e = entry({ "admin", "services", "fcc", "api", name }, call(fn))
@@ -746,6 +747,16 @@ function act_remote_control()
 		util.exec_argv("/etc/init.d/fcc", { "stop" })
 	end
 	relay("remote", { "control", op })
+end
+
+--- Ask the LAN machine whether its FCC server is running.
+---
+--- Read-only, and deliberately not part of the batched status call: it is one
+--- SSH round trip, and a page opened on the local side must not wait for a
+--- host it is not using. The page asks after the LAN panel is the one shown,
+--- so a reload still reports what is actually running over there.
+function act_remote_running()
+	relay("remote", { "running" })
 end
 
 -- ---------------------------------------------------------------------------

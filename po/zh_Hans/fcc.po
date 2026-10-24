@@ -126,6 +126,9 @@ msgstr "已放弃未保存的更改，当前显示的是已保存的设置。"
 msgid "Check for updates"
 msgstr "检查更新"
 
+msgid "Checking the LAN FCC Server state..."
+msgstr "正在检查局域网的 FCC Server 状态…"
+
 msgid "Checking…"
 msgstr "正在检查…"
 
@@ -505,6 +508,15 @@ msgstr "终端连接已断开，正在重新连接…"
 msgid "Test connection"
 msgstr "测试连接"
 
+msgid "The LAN FCC Server is not running."
+msgstr "局域网的 FCC Server 未运行。"
+
+msgid "The LAN FCC Server is running."
+msgstr "局域网的 FCC Server 正在运行。"
+
+msgid "The LAN FCC Server state could not be checked"
+msgstr "无法检查局域网的 FCC Server 状态"
+
 msgid ""
 "The LAN access rule was removed; the port is no longer opened by this app."
 msgstr "局域网访问规则已移除；本应用不再开放该端口。"
@@ -686,6 +698,9 @@ msgid ""
 msgstr ""
 "本机的 ssh 不是可用的 OpenSSH 客户端。请在本机安装 OpenSSH 客户端（软件包 "
 "openssh-client-utils）；远程电脑上的客户端不会被使用。"
+
+msgid "the machine did not answer"
+msgstr "对端主机没有响应"
 
 msgid "unhealthy"
 msgstr "异常"

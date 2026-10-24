@@ -210,7 +210,13 @@
 		keygen_available: true,
 		scan_available: true,
 		tunnel_running: false,
-		pending_fingerprint: ''
+		pending_fingerprint: '',
+		/* null means "not known": never checked, being checked, or the check
+		 * could not reach the machine. A false here is an answer from the
+		 * remote service manager, not a default. */
+		server_running: null,
+		server_pending: false,
+		server_error: ''
 	};
 
 	function remoteStatus() { return FCC.$('#fcc-remote-status'); }
@@ -231,6 +237,7 @@
 				b.className = 'fcc-mode-btn' + (on ? ' on' : '');
 			}
 		);
+		renderRemoteServerState();
 	}
 
 	function remoteFields() {
@@ -343,6 +350,69 @@
 		if (gen) { gen.disabled = !remote.keygen_available; }
 	}
 
+	/* What the machine on the other side is doing.
+	 *
+	 * The switch position and the running server are two different facts. The
+	 * position survives a logout because it is stored in UCI; whether the
+	 * remote service is still up is only true for as long as nobody touched
+	 * it, so the page asks instead of assuming. That is what makes a reload
+	 * report the server that is actually running, the way the local panel
+	 * already does from its own status call. */
+	function renderRemoteServerState() {
+		var box = FCC.$('#fcc-remote-server-state');
+		if (!box) { return; }
+		box.className = 'fcc-key-state';
+		if (remote.target !== 'lan') {
+			box.textContent = '';
+			return;
+		}
+		if (remote.server_pending) {
+			box.textContent = FCC._('Checking the LAN FCC Server state...');
+			return;
+		}
+		if (remote.server_running === true) {
+			box.className = 'fcc-key-state on';
+			box.textContent = FCC._('The LAN FCC Server is running.');
+			return;
+		}
+		if (remote.server_running === false) {
+			box.className = 'fcc-key-state off';
+			box.textContent = FCC._('The LAN FCC Server is not running.');
+			return;
+		}
+		if (remote.server_error) {
+			box.className = 'fcc-key-state fail';
+			box.textContent = FCC._('The LAN FCC Server state could not be checked') +
+				': ' + remote.server_error;
+			return;
+		}
+		box.textContent = '';
+	}
+
+	/* One SSH round trip, made only when the LAN panel is the one on screen and
+	 * the connection is ready. A page opened on the local side never waits for
+	 * a machine it is not using. */
+	function checkRemoteRunning() {
+		remote.server_running = null;
+		remote.server_error = '';
+		remote.server_pending = remote.target === 'lan' && remote.ready === true;
+		renderRemoteServerState();
+		if (!remote.server_pending) { return Promise.resolve(); }
+		return FCC.api('remote_running', {}, { method: 'GET' }).then(function (d) {
+			remote.server_pending = false;
+			if (d && d.ok === true && d.checked === true) {
+				remote.server_running = d.running === true;
+			} else {
+				remote.server_error = (d && d.error) || FCC._('the machine did not answer');
+			}
+			renderRemoteServerState();
+		}).catch(function (err) {
+			remote.server_pending = false;
+			remote.server_error = err.message;
+			renderRemoteServerState();
+		});
+	}
+
 	/* The one thing standing between the place the page is in and a working
 	 * connection, in the order the user would hit it. "OpenSSH is required"
 	 * without saying where sent people to install it on the remote machine —
@@ -434,6 +504,9 @@
 			fillRemoteFields();
 			renderRemoteState();
 			showRemoteMode(remote.target);
+			/* Not chained: the switch, the fields and the key state are already
+			 * shown, and the SSH answer fills in behind them. */
+			checkRemoteRunning();
 			return d;
 		});
 	}
@@ -611,6 +684,10 @@
 				FCC.notice(remoteStatus(), 'fail',
 					d.error || d.output || FCC._('The operation failed.'));
 			}
+			/* Ask again rather than infer from the verb: the state line is the
+			 * one place that says what the remote machine is doing, and a stop
+			 * that was already stopped answers ok too. */
+			return checkRemoteRunning();
 		}).catch(function (err) {
 			FCC.notice(remoteStatus(), 'fail', err.message);
 		});

@@ -681,12 +681,95 @@ fcc_remote_status() {
 }
 
 # ---------------------------------------------------------------------------
+# Is the remote server running?
+# ---------------------------------------------------------------------------
+#
+# The page has to show the LAN server's state after a reload, the way the local
+# panel already shows its own from status.sh. Nothing on this router can see a
+# process on another machine, so the only honest answer is to ask: one SSH
+# command, through the same checks every control verb uses.
+#
+# The answer is three-valued — running, stopped, or could not ask. A host that
+# is switched off is not the same thing as a server that was stopped, and
+# calling both "stopped" would make the one-server rule look satisfied when
+# nothing had been checked.
+fcc_remote_running() {
+	fcc_remote_config_ok \
+		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
+	fcc_remote_key_ready \
+		|| { fcc_remote_error "the SSH key has not been generated"; return 1; }
+	[ "$(fcc_remote_client)" = "openssh" ] \
+		|| { fcc_remote_client_error; return 1; }
+	_rn_fp="$(fcc_remote_fingerprint)"
+	fcc_remote_valid_fingerprint "$_rn_fp" \
+		|| { fcc_remote_error "trust the remote host key first"; return 1; }
+	[ -s "$FCC_REMOTE_KNOWN" ] \
+		|| { fcc_remote_error "trust the remote host key first"; return 1; }
+
+	_rn_platform="$(fcc_remote_platform)"
+	_rn_service="$(fcc_remote_service)"
+	case "$_rn_platform" in
+		linux)
+			# is-active prints one word and exits 0 only for "active".
+			_rn_cmd="systemctl is-active $_rn_service" ;;
+		openwrt)
+			# rc.common is procd's init framework; its status verb answers with
+			# the exit code (0 running, 3 not) rather than a word.
+			_rn_cmd="/etc/init.d/$_rn_service status" ;;
+		windows)
+			_rn_cmd="powershell.exe -NoProfile -NonInteractive -Command \"(Get-Service -Name '$_rn_service').Status\"" ;;
+		*)
+			fcc_remote_error "invalid platform"; return 1 ;;
+	esac
+
+	_rn_out="$(fcc_remote_ssh "$_rn_cmd")"
+	_rn_code=$?
+	# One line, lower case, without the CR a Windows answer can leave behind —
+	# the same CR that made a start's answer unparsable before fcc_json_str
+	# escaped control characters.
+	_rn_word="$(printf '%s' "$_rn_out" | tr -d '\r' | tr 'A-Z' 'a-z' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+
+	_rn_known=0
+	_rn_running=false
+	case "$_rn_platform" in
+		linux)
+			case "$_rn_word" in
+				active) _rn_running=true; _rn_known=1 ;;
+				inactive|failed|activating|deactivating|reloading|unknown) _rn_known=1 ;;
+			esac ;;
+		windows)
+			case "$_rn_word" in
+				running) _rn_running=true; _rn_known=1 ;;
+				stopped|startpending|stoppending|paused|pausepending) _rn_known=1 ;;
+			esac ;;
+		openwrt)
+			case "$_rn_code" in
+				0) _rn_running=true; _rn_known=1 ;;
+				3) _rn_known=1 ;;
+			esac ;;
+	esac
+
+	if [ "$_rn_known" = "0" ]; then
+		printf '{"ok":false,"checked":false,"error":%s,"output":%s}\n' \
+			"$(fcc_json_str "the state of the remote server could not be read")" \
+			"$(fcc_json_str "$(printf '%s' "$_rn_out" | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
+		return 0
+	fi
+	printf '{"ok":true,"checked":true,"running":%s,"output":%s}\n' \
+		"$_rn_running" \
+		"$(fcc_json_str "$(printf '%s' "$_rn_out" | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
 case "${1:-}" in
 	status)
 		fcc_remote_status ;;
+	running)
+		fcc_remote_running ;;
 	keygen)
 		fcc_remote_keygen ;;
 	trust)

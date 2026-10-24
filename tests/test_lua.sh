@@ -871,7 +871,10 @@ test_the_switch_keeps_exactly_one_server() {
 	mkdir -p "$_ts_dir/libexec"
 	cat > "$_ts_dir/libexec/remote.sh" <<'SH'
 #!/bin/sh
-printf '%s\n' '{"ok":true,"op":"stop","output":"","exit":0}'
+case "${1:-}" in
+	running) printf '%s\n' '{"ok":true,"checked":true,"running":true,"output":"active"}' ;;
+	*) printf '%s\n' '{"ok":true,"op":"stop","output":"","exit":0}' ;;
+esac
 SH
 	cat > "$_ts_dir/libexec/status.sh" <<'SH'
 #!/bin/sh
@@ -991,6 +994,12 @@ form = {}
 written = {}
 ctrl.act_doctor()
 print("cr=" .. body())
+
+-- The LAN running check is a plain relay of remote.sh's answer.
+form = {}
+written = {}
+ctrl.act_remote_running()
+print("running=" .. body())
 LUA
 
 	_ts_out="$(FCC_TEST_ROOT="$ROOT" \
@@ -1039,6 +1048,12 @@ LUA
 		"a raw carriage return is refused: [$_ts_cr]"
 	assert_contains "$_ts_cr" 'doctor.sh answered with something that is not JSON' \
 		"naming that script too"
+
+	_ts_run="$(printf '%s\n' "$_ts_out" | sed -n 's/^running=//p')"
+	assert_contains "$_ts_run" '"running":true' \
+		"the LAN running check relays the remote answer: [$_ts_run]"
+	assert_contains "$_ts_run" '"checked":true' \
+		"including the difference between an answer and a failed check"
 }
 
 test_the_menu_survives_a_lost_config_file() {

@@ -1407,6 +1407,23 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the init script reads the stored target"
 	assert_contains "$(cat "$_ts_remote")" '[ "$_cc_op" != "stop" ]' \
 		"the LAN script still allows Stop while the target is this router"
+
+	# The switch position survives a logout; the running server is a fact about
+	# another machine, so the page asks again instead of remembering an answer.
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-server-state"' \
+		"the LAN panel has a line for the remote server state"
+	assert_contains "$(cat "$_ts_js")" 'checkRemoteRunning' \
+		"the page checks it when the LAN panel is shown"
+	assert_contains "$(cat "$_ts_js")" "'remote_running'" \
+		"through a read-only endpoint of its own"
+	assert_contains "$(cat "$_ts_remote")" 'systemctl is-active' \
+		"which asks systemd on Linux"
+	assert_contains "$(cat "$_ts_remote")" 'Get-Service' \
+		"and PowerShell on Windows"
+	assert_contains "$(cat "$_ts_ctl")" 'act_remote_running' \
+		"the controller routes it"
+	assert_not_contains "$(sed -n '/^mutating_actions()/,/^}/p' "$ROOT/tests/test_security.sh")" \
+		'act_remote_running' "and it is not listed as state-changing"
 }
 
 # ---------------------------------------------------------------------------

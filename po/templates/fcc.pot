@@ -93,6 +93,9 @@ msgstr ""
 msgid "Check for updates"
 msgstr ""
 
+msgid "Checking the LAN FCC Server state..."
+msgstr ""
+
 msgid "Checking…"
 msgstr ""
 
@@ -435,6 +438,15 @@ msgstr ""
 msgid "Test connection"
 msgstr ""
 
+msgid "The LAN FCC Server is not running."
+msgstr ""
+
+msgid "The LAN FCC Server is running."
+msgstr ""
+
+msgid "The LAN FCC Server state could not be checked"
+msgstr ""
+
 msgid "The LAN access rule was removed; the port is no longer opened by this app."
 msgstr ""
 
@@ -583,6 +595,9 @@ msgid "ssh on this router is Dropbear, which cannot use these options. Install t
 msgstr ""
 
 msgid "ssh on this router is not a usable OpenSSH client. Install the OpenSSH client (package openssh-client-utils) on the router; the client on the remote machine is not used."
+msgstr ""
+
+msgid "the machine did not answer"
 msgstr ""
 
 msgid "unhealthy"
