@@ -22,6 +22,11 @@
 	var jobTimer = null;
 	var jobStart = 0;
 	var updateAvailable = false;
+	/* The runtime panel's poll (see pollStatus). Kept apart from jobTimer:
+	 * that one watches an install and stops with it, this one lives as long as
+	 * the page does. */
+	var statusTimer = null;
+	var statusBusy = false;
 
 	/* ------------------------------------------------------------- settings */
 
@@ -1224,6 +1229,39 @@
 		});
 	}
 
+	/* The panel under the toolbar used to be whatever the page found when it
+	 * opened, so it could still say "Running, uptime 26s" about a process that
+	 * had been restarted in the meantime. Basic Information polls the same
+	 * status call every two seconds, and that call is the cheap one — one
+	 * status.sh reading /proc once for every agent — so the same cadence
+	 * applies here. Two things are deliberately left alone: a hidden tab does
+	 * not poll (a page left open in the background must not cost the router a
+	 * process every two seconds), and the LAN panel is not polled at all — its
+	 * status costs an SSH connection, not a fork. */
+	function pollStatus() {
+		if (statusBusy || document.hidden) { return; }
+		statusBusy = true;
+		/* Promise.resolve() first so a synchronous throw still reaches the
+		 * catch: one failed refresh must not leave statusBusy set and stop the
+		 * panel for the rest of the page's life. */
+		Promise.resolve().then(refreshAll)
+			.catch(function () { /* a blip is not a failure */ })
+			.then(function () { statusBusy = false; });
+	}
+
+	function startStatusPoll() {
+		if (statusTimer) { return; }
+		statusTimer = setInterval(pollStatus, 2000);
+		/* Back from another tab, the numbers should be right before the first
+		 * interval elapses rather than up to two seconds later. pollStatus
+		 * itself ignores the events while the page is hidden. */
+		document.addEventListener('visibilitychange', pollStatus);
+		window.addEventListener('beforeunload', function () {
+			if (statusTimer) { clearInterval(statusTimer); }
+			statusTimer = null;
+		});
+	}
+
 	/* There is no ordering requirement left on the first paint. It used to have
 	 * one — the recommended set had to be known before the table was drawn,
 	 * because the table was where the tick boxes lived — and with the table gone
@@ -1391,6 +1429,11 @@
 		});
 		refreshAll().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
+		}).then(function () {
+			/* That first answer is the first paint; from here on the panel is
+			 * kept current. Started after it, so the first interval cannot
+			 * overlap the call that drew the page. */
+			startStatusPoll();
 		});
 		/* A second, independent call: the local status does not carry the mode
 		 * or anything about the remote host, and the LAN panel still has to be

@@ -10,7 +10,7 @@ Three pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
-| **Configuration** | Server settings (address, port, log level), install and backup paths, the agent picker, install/uninstall/complete uninstall, updates, start/stop/restart, the diagnostics report, the FCC Admin link, and control of the FCC server on one other machine over SSH. |
+| **Configuration** | Server settings (address, port, log level), install and backup paths, the agent picker, install/uninstall/complete uninstall, updates, start/stop/restart, the diagnostics report, the FCC Admin link (the runtime panel refreshes every two seconds and pauses while the tab is hidden), and control of the FCC server on one other machine over SSH. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX

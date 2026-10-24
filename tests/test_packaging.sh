@@ -1681,6 +1681,44 @@ test_basic_information_controls_are_manual_and_named() {
 		"nothing still binds a second Clear button"
 }
 
+test_configuration_runtime_panel_polls_the_status() {
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_poll="$(sed -n '/function pollStatus()/,/^	}$/p' "$_ts_js")"
+	_ts_start="$(sed -n '/function startStatusPoll()/,/^	}$/p' "$_ts_js")"
+
+	# The runtime panel used to be the snapshot the page opened with: it could
+	# still say "Running, uptime 26s" about a process restarted minutes ago.
+	# Basic Information already polls the same call every two seconds, and the
+	# status call is the cheap one, so Configuration follows the same cadence.
+	assert_contains "$_ts_start" 'setInterval(pollStatus, 2000)' \
+		"the runtime panel polls status every two seconds"
+	assert_contains "$_ts_poll" '.then(refreshAll)' \
+		"the poll redraws both panels from the one batched call"
+	assert_contains "$_ts_poll" 'document.hidden' \
+		"a hidden tab does not poll"
+	assert_contains "$_ts_poll" 'statusBusy' \
+		"and a slow answer is not overlapped by the next tick"
+	assert_contains "$_ts_start" "addEventListener('visibilitychange', pollStatus)" \
+		"coming back to the tab refreshes before the next interval"
+	assert_contains "$_ts_start" "addEventListener('beforeunload'" \
+		"leaving the page stops the timer"
+
+	# The LAN panel is a different cost: its status is an SSH connection, not a
+	# fork. It must stay out of this poll, or the router dials the remote every
+	# two seconds.
+	assert_not_contains "$_ts_poll" 'loadRemote' \
+		"the LAN panel is not polled"
+	assert_contains "$(cat "$_ts_js")" 'startStatusPoll();' \
+		"init starts the poll after the first status answer"
+
+	# Deleting the two rows was the other candidate; the fields stay because
+	# DESIGN_SPEC 14.3 lists them.
+	assert_contains "$(cat "$_ts_js")" "FCC._('Uptime')" \
+		"the panel still shows the uptime the spec asks for"
+	assert_contains "$(cat "$_ts_js")" "FCC._('Memory (RSS)')" \
+		"and the RSS beside it"
+}
+
 test_malformed_response_is_translated() {
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-common.js"
 	_ts_po="$ROOT/po/zh_Hans/fcc.po"

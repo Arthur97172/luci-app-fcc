@@ -11,7 +11,7 @@
 | 页面 | 作用 |
 | --- | --- |
 | **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider 的真正交互式终端——每个 Agent 一个 tmux 会话，直接在浏览器里用。 |
-| **配置** | 服务器设置（地址、端口、日志级别）、安装与备份路径、Agent 选择、安装/卸载/彻底卸载、更新、启动/停止/重启、诊断报告、FCC Admin 入口，以及通过 SSH 控制局域网内另一台机器。 |
+| **配置** | 服务器设置（地址、端口、日志级别）、安装与备份路径、Agent 选择、安装/卸载/彻底卸载、更新、启动/停止/重启、诊断报告、FCC Admin 入口（运行信息每 2 秒刷新，后台标签页暂停），以及通过 SSH 控制局域网内另一台机器。 |
 | **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储。 |
 
 `luci-app-fcc` **只是控制层**：只包含 Lua、JavaScript 和 POSIX shell，**不包含** Python、
