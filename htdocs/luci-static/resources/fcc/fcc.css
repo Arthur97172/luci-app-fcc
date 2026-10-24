@@ -473,7 +473,14 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 
 /* A field and the button that acts on it, on the same line. The Username row
  * is the one place in the panel where a button belongs beside an input rather
- * than under it. */
+ * than under it.
+ *
+ * The input keeps its own width and does not grow into the free space. Argon
+ * on 24.10 stretches .cbi-value-field across the row and gives every text
+ * input a width of its own; a flex-grow here won that fight and made the
+ * Username box 681px wide under a 256px IP box. flex: 0 1 auto leaves the
+ * width to the theme, so both boxes are the same size on every theme, and the
+ * button simply follows the input instead of being pushed to the far edge. */
 .fcc-remote-row {
 	display: flex;
 	flex-wrap: wrap;
@@ -481,7 +488,7 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 	align-items: center;
 }
 
-.fcc-remote-row input[type="text"] { flex: 1 1 12em; }
+.fcc-remote-row input[type="text"] { flex: 0 1 auto; }
 
 /* The key status line: a dot and one sentence, then the one button that
  * changes it. It is the same line whether the key exists or not, because the

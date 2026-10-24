@@ -1359,6 +1359,13 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the selected side of the switch is styled"
 	assert_contains "$(cat "$_ts_css")" '.fcc-locked' \
 		"and the Admin link has a not-yet-usable state"
+	# The Username box and the IP box are the same width on every theme. Argon
+	# 24.10 stretches the field across the row and gives text inputs a width of
+	# their own; a flex-grow on this input beat that width and left the Username
+	# box 681px wide under a 256px IP box on 24.10 but 256px on 25.12.
+	assert_contains "$(cat "$_ts_css")" \
+		'.fcc-remote-row input[type="text"] { flex: 0 1 auto; }' \
+		"the Username box keeps the width its theme gives it"
 
 	# The client is checked on the router, and the page says which side is
 	# wrong. OpenWrt's Dropbear answers as /usr/bin/ssh through alternatives, so
