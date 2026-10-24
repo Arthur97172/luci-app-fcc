@@ -1424,6 +1424,30 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the controller routes it"
 	assert_not_contains "$(sed -n '/^mutating_actions()/,/^}/p' "$ROOT/tests/test_security.sh")" \
 		'act_remote_running' "and it is not listed as state-changing"
+
+	# The page is translated and remote.sh is not. A failure must not carry the
+	# script's English sentence into a Chinese interface, and ssh's own warning
+	# must not be the first line of every error.
+	assert_contains "$(cat "$_ts_js")" 'REMOTE_ERROR_TEXT' \
+		"the page translates the script's fixed sentences itself"
+	assert_contains "$(cat "$_ts_js")" 'remoteFailure' \
+		"every LAN failure goes through one translator"
+	assert_contains "$(cat "$_ts_js")" 'remoteCaught' \
+		"including a rejected request"
+	assert_contains "$(cat "$_ts_js")" 'no-systemctl' \
+		"a machine without systemctl is explained, not quoted"
+	assert_contains "$(cat "$_ts_js")" 'remoteOutput' \
+		"ssh's own warnings are filtered out of the diagnostics"
+	assert_contains "$(cat "$_ts_remote")" 'fcc_remote_output_filter' \
+		"the script drops them before anything is relayed"
+	assert_contains "$(cat "$_ts_remote")" 'fcc_remote_reason' \
+		"and sends a reason code the page can translate"
+	assert_not_contains \
+		"$(sed -n '/function checkRemoteRunning/,/function remoteBlocker/p' "$_ts_js")" \
+		'err.message' "the state check never shows a raw client message"
+	assert_not_contains \
+		"$(sed -n '/function remoteTest/,/function remoteControl/p' "$_ts_js")" \
+		'err.message' "nor does any LAN button"
 }
 
 # ---------------------------------------------------------------------------

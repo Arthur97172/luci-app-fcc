@@ -335,7 +335,8 @@ fcc_remote_tunnel_ensure() {
 	done
 
 	kill "$_te_started" 2>/dev/null
-	_te_why="$(tail -n 3 "$FCC_REMOTE_TUNNEL_LOG" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')"
+	_te_why="$(tail -n 3 "$FCC_REMOTE_TUNNEL_LOG" 2>/dev/null \
+		| fcc_remote_output_filter | tr '\n' ' ' | sed 's/  */ /g')"
 	[ -n "$_te_why" ] || _te_why="the tunnel did not start"
 	fcc_remote_error "$(printf '%s' "$_te_why" | sed 's/^ //; s/ $//')"
 	return 1
@@ -479,6 +480,32 @@ fcc_remote_ssh() {
 		-l "$_rs_user" "$_rs_host" "$1" 2>&1
 }
 
+# Drop the lines the local ssh client writes about itself.
+#
+# OpenSSH 9.9 and later print a three-line warning on every connection whose
+# server does not offer a post-quantum key exchange. Every line starts with
+# "**". It is about the client on this router and the version on the other
+# machine, not about the operation that was asked for — left in, it is the
+# first thing a failure shows and it buries the one line that matters.
+fcc_remote_output_filter() {
+	sed '/^\*\*/d'
+}
+
+# Why the answer was not usable, as one word the page can translate.
+#
+# The page is translated and the script is not, so a sentence that reaches it
+# from here arrives in English. The reason travels as a code and the page says
+# what it means in the interface language — and, for the two cases that are a
+# misconfiguration rather than a fault, which setting to change.
+fcc_remote_reason() {
+	case "$1" in
+		*"systemctl: not found"*)          printf 'no-systemctl' ;;
+		*"/etc/init.d/$2"*"not found"*)    printf 'no-init-script' ;;
+		*"No such file or directory"*)     printf 'no-init-script' ;;
+		*)                                 printf 'unreadable' ;;
+	esac
+}
+
 fcc_remote_test() {
 	fcc_remote_config_ok \
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
@@ -518,7 +545,7 @@ fcc_remote_test() {
 	if [ "$_tt_code" -eq 0 ]; then
 		case "$_tt_out" in
 			*fcc-ok*)
-				printf '{"ok":true,"output":%s}\n' "$(fcc_json_str "$(printf '%s' "$_tt_out" | tr '\n' ' ' | sed 's/  */ /g')")"
+				printf '{"ok":true,"output":%s}\n' "$(fcc_json_str "$(printf '%s' "$_tt_out" | fcc_remote_output_filter | tr '\n' ' ' | sed 's/  */ /g')")"
 				return 0 ;;
 		esac
 	fi
@@ -540,7 +567,7 @@ fcc_remote_test() {
 	fi
 
 	printf '{"ok":false,"output":%s,"exit":%s,"error":%s}\n' \
-		"$(fcc_json_str "$(printf '%s' "$_tt_out" | tr '\n' ' ' | sed 's/  */ /g')")" \
+		"$(fcc_json_str "$(printf '%s' "$_tt_out" | fcc_remote_output_filter | tr '\n' ' ' | sed 's/  */ /g')")" \
 		"$_tt_code" \
 		"$(fcc_json_str "the connection failed")"
 	return 0
@@ -597,13 +624,16 @@ fcc_remote_control() {
 	_cc_code=$?
 	if [ "$_cc_code" -eq 0 ]; then
 		_cc_ok=true
+		_cc_reason=""
 	else
 		_cc_ok=false
+		_cc_reason="$(fcc_remote_reason "$_cc_out" "$_cc_service")"
 	fi
-	printf '{"ok":%s,"op":%s,"output":%s,"exit":%s}\n' \
+	printf '{"ok":%s,"op":%s,"reason":%s,"output":%s,"exit":%s}\n' \
 		"$_cc_ok" \
 		"$(fcc_json_str "$_cc_op")" \
-		"$(fcc_json_str "$(printf '%s' "$_cc_out" | tr '\n' ' ' | sed 's/  */ /g')")" \
+		"$(fcc_json_str "$_cc_reason")" \
+		"$(fcc_json_str "$(printf '%s' "$_cc_out" | fcc_remote_output_filter | tr '\n' ' ' | sed 's/  */ /g')")" \
 		"$_cc_code"
 	# The JSON document already says whether the operation worked; a failing
 	# remote service should not also look like this script failed to answer.
@@ -727,7 +757,7 @@ fcc_remote_running() {
 	# One line, lower case, without the CR a Windows answer can leave behind —
 	# the same CR that made a start's answer unparsable before fcc_json_str
 	# escaped control characters.
-	_rn_word="$(printf '%s' "$_rn_out" | tr -d '\r' | tr 'A-Z' 'a-z' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+	_rn_word="$(printf '%s' "$_rn_out" | fcc_remote_output_filter | tr -d '\r' | tr 'A-Z' 'a-z' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 
 	_rn_known=0
 	_rn_running=false
@@ -750,14 +780,19 @@ fcc_remote_running() {
 	esac
 
 	if [ "$_rn_known" = "0" ]; then
-		printf '{"ok":false,"checked":false,"error":%s,"output":%s}\n' \
+		# Say why, without saying it in English. The page turns the reason into
+		# a sentence in the interface language and into the setting that has to
+		# change; the raw output is only there for a person who asks for it.
+		_rn_reason="$(fcc_remote_reason "$_rn_out" "$_rn_service")"
+		printf '{"ok":false,"checked":false,"reason":%s,"error":%s,"output":%s}\n' \
+			"$(fcc_json_str "$_rn_reason")" \
 			"$(fcc_json_str "the state of the remote server could not be read")" \
-			"$(fcc_json_str "$(printf '%s' "$_rn_out" | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
+			"$(fcc_json_str "$(printf '%s' "$_rn_out" | fcc_remote_output_filter | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
 		return 0
 	fi
 	printf '{"ok":true,"checked":true,"running":%s,"output":%s}\n' \
 		"$_rn_running" \
-		"$(fcc_json_str "$(printf '%s' "$_rn_out" | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
+		"$(fcc_json_str "$(printf '%s' "$_rn_out" | fcc_remote_output_filter | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
 	return 0
 }
 

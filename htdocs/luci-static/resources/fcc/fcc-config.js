@@ -219,6 +219,113 @@
 		server_error: ''
 	};
 
+	/* remote.sh is a shell script, and a shell script's sentences are not in the
+	 * translation catalogue. Shown as they arrive, a Chinese page carries
+	 * English failures — which is what made a state check on a machine without
+	 * systemctl read "the state of the remote server could not be read". Every
+	 * fixed sentence the script can return is translated here by its exact
+	 * text; a message with a variable in it is logged and replaced by the
+	 * caller's own fallback, and a reason code names the setting to change. */
+	var REMOTE_ERROR_TEXT = {
+		'remote control is not enabled':
+			FCC._('The LAN side is not the selected FCC Server.'),
+		'the remote configuration is incomplete':
+			FCC._('The LAN connection settings are incomplete.'),
+		'the SSH key has not been generated':
+			FCC._('The SSH key has not been generated yet.'),
+		'the remote host key has not been trusted':
+			FCC._('The remote host key has not been trusted yet.'),
+		'trust the remote host key first':
+			FCC._('The remote host key has not been trusted yet.'),
+		'invalid platform':
+			FCC._('The platform selected for the LAN machine is not valid.'),
+		'invalid fingerprint':
+			FCC._('The host key fingerprint is not valid.'),
+		'could not create a temporary directory':
+			FCC._('A temporary directory could not be created on this router.'),
+		'could not store the remote host key':
+			FCC._('The remote host key could not be stored.'),
+		'could not read the remote host key':
+			FCC._('The remote host key could not be read.'),
+		'could not read the existing SSH key':
+			FCC._('The existing SSH key could not be read.'),
+		'setsid is not available':
+			FCC._('This router has no setsid, so the LAN tunnel cannot be started.'),
+		'the state of the remote server could not be read':
+			FCC._('The LAN machine answered in a form that could not be read.'),
+		'ssh-keygen is required on this router to create the key (package openssh-keygen)':
+			FCC._('This router needs ssh-keygen to create the key (package openssh-keygen).'),
+		'ssh-keyscan is required on this router to read the remote host key (package openssh-client-utils)':
+			FCC._('This router needs ssh-keyscan to read the remote host key (package openssh-client-utils).'),
+		'ssh on this router is Dropbear, which cannot use these options; install the OpenSSH client (package openssh-client-utils) on the router':
+			FCC._('ssh on this router is Dropbear, which cannot use these options. Install the OpenSSH client (package openssh-client-utils) on the router.'),
+		'this router has no SSH client; install the OpenSSH client (package openssh-client-utils) on the router':
+			FCC._('ssh on this router is not a usable OpenSSH client. Install the OpenSSH client (package openssh-client-utils) on the router; the client on the remote machine is not used.'),
+		'ssh on this router is not OpenSSH; install the OpenSSH client (package openssh-client-utils) on the router':
+			FCC._('ssh on this router is not a usable OpenSSH client. Install the OpenSSH client (package openssh-client-utils) on the router; the client on the remote machine is not used.'),
+		'the connection failed':
+			FCC._('The connection failed.'),
+		'invalid operation':
+			FCC._('The operation failed.'),
+		'unknown remote command':
+			FCC._('The operation failed.')
+	};
+
+	/* The two failures that are a setting rather than a fault. Each sentence
+	 * names the field, because retrying is what a person does next and it
+	 * cannot help. */
+	var REMOTE_REASON_TEXT = {
+		'no-systemctl':
+			FCC._('The LAN machine has no systemctl. If it runs OpenWrt, set its platform to OpenWrt in Advanced settings.'),
+		'no-init-script':
+			FCC._('The service was not found on the LAN machine. Check the service name in Advanced settings.'),
+		'unreadable':
+			FCC._('The LAN machine answered in a form that could not be read.')
+	};
+
+	function remoteErrorText(text) {
+		var t = String(text == null ? '' : text)
+			.replace(/\s+/g, ' ')
+			.replace(/^ | $/g, '');
+		if (REMOTE_ERROR_TEXT[t]) { return REMOTE_ERROR_TEXT[t]; }
+		if (t.indexOf('could not generate the SSH key') === 0) {
+			return FCC._('The SSH key could not be generated.');
+		}
+		if (t) {
+			try { console.warn('remote.sh said: ' + text); } catch (e) { /* no console */ }
+		}
+		return '';
+	}
+
+	/* What ssh prints about itself is not about the operation: OpenSSH 9.9 and
+	 * later open every connection with a three-line post-quantum warning, and a
+	 * Windows answer can leave a CR behind. Neither belongs on the page. */
+	function remoteOutput(text) {
+		var kept = [];
+		String(text == null ? '' : text).replace(/\r/g, '').split(/\n/).forEach(function (line) {
+			if (!/^\*\*/.test(line) && line.replace(/\s+/g, '') !== '') { kept.push(line); }
+		});
+		var out = kept.join(' ').replace(/\s+/g, ' ').replace(/^ | $/g, '');
+		return out.length > 300 ? out.slice(0, 300) + '…' : out;
+	}
+
+	/* One sentence for a failed LAN operation. The reason, when the script sent
+	 * one, wins: it is the only case where the page can say what to do. The
+	 * script's own diagnostic follows in brackets only when nothing above
+	 * explained it, so the common failures carry no English at all. */
+	function remoteFailure(d, fallback) {
+		if (d && d.reason && REMOTE_REASON_TEXT[d.reason]) {
+			return REMOTE_REASON_TEXT[d.reason];
+		}
+		var text = remoteErrorText(d && d.error) || fallback;
+		var detail = remoteOutput(d && d.output);
+		return detail ? text + ' (' + detail + ')' : text;
+	}
+
+	function remoteCaught(err, fallback) {
+		return remoteErrorText(err && err.message) || fallback;
+	}
+
 	function remoteStatus() { return FCC.$('#fcc-remote-status'); }
 
 	/* Which panel is on screen. Both exist all the time: hiding the one not in
@@ -403,12 +510,12 @@
 			if (d && d.ok === true && d.checked === true) {
 				remote.server_running = d.running === true;
 			} else {
-				remote.server_error = (d && d.error) || FCC._('the machine did not answer');
+				remote.server_error = remoteFailure(d, FCC._('the machine did not answer'));
 			}
 			renderRemoteServerState();
 		}).catch(function (err) {
 			remote.server_pending = false;
-			remote.server_error = err.message;
+			remote.server_error = remoteCaught(err, FCC._('the machine did not answer'));
 			renderRemoteServerState();
 		});
 	}
@@ -552,7 +659,8 @@
 				 * was rather than leaving the page describing a mode that was
 				 * never saved. */
 				showRemoteMode(remote.target);
-				FCC.notice(remoteStatus(), 'fail', err.message);
+				FCC.notice(remoteStatus(), 'fail',
+					remoteCaught(err, FCC._('The mode could not be switched.')));
 			})
 			.then(function () { setModeBusy(false); });
 	}
@@ -572,7 +680,8 @@
 				return loadRemote().then(function () { return r; });
 			})
 			.catch(function (err) {
-				FCC.notice(remoteStatus(), 'fail', err.message);
+				FCC.notice(remoteStatus(), 'fail',
+					remoteCaught(err, FCC._('The LAN connection settings could not be saved.')));
 				return null;
 			});
 	}
@@ -605,12 +714,13 @@
 					FCC.notice(remoteStatus(), 'ok', FCC._('Connection works.'));
 				} else {
 					FCC.notice(remoteStatus(), 'fail',
-						d.error || d.output || FCC._('The connection failed.'));
+						remoteFailure(d, FCC._('The connection failed.')));
 				}
 				return loadRemote();
 			});
 		}).catch(function (err) {
-			FCC.notice(remoteStatus(), 'fail', err.message);
+			FCC.notice(remoteStatus(), 'fail',
+				remoteCaught(err, FCC._('The connection failed.')));
 		});
 	}
 
@@ -623,12 +733,14 @@
 					hideTrustPanel();
 					FCC.notice(remoteStatus(), 'ok', FCC._('The remote host key is now trusted.'));
 				} else {
-					FCC.notice(remoteStatus(), 'fail', d.error || FCC._('The host key could not be trusted.'));
+					FCC.notice(remoteStatus(), 'fail',
+						remoteFailure(d, FCC._('The host key could not be trusted.')));
 				}
 				return loadRemote();
 			})
 			.catch(function (err) {
-				FCC.notice(remoteStatus(), 'fail', err.message);
+				FCC.notice(remoteStatus(), 'fail',
+					remoteCaught(err, FCC._('The host key could not be trusted.')));
 			});
 	}
 
@@ -642,7 +754,8 @@
 			FCC.notice(remoteStatus(), 'ok', FCC._('The pinned host key was forgotten.'));
 			return loadRemote();
 		}).catch(function (err) {
-			FCC.notice(remoteStatus(), 'fail', err.message);
+			FCC.notice(remoteStatus(), 'fail',
+				remoteCaught(err, FCC._('The pinned host key could not be forgotten.')));
 		});
 	}
 
@@ -650,7 +763,8 @@
 		FCC.notice(remoteStatus(), '', '');
 		FCC.api('remote_keygen', {}, { method: 'POST' }).then(function (d) {
 			if (!d.ok) {
-				FCC.notice(remoteStatus(), 'fail', d.error || FCC._('The SSH key could not be created.'));
+				FCC.notice(remoteStatus(), 'fail',
+					remoteFailure(d, FCC._('The SSH key could not be created.')));
 				return;
 			}
 			remote.public_key = d.public_key || '';
@@ -663,7 +777,8 @@
 				: FCC._('A new SSH key was generated.'));
 			return loadRemote();
 		}).catch(function (err) {
-			FCC.notice(remoteStatus(), 'fail', err.message);
+			FCC.notice(remoteStatus(), 'fail',
+				remoteCaught(err, FCC._('The SSH key could not be created.')));
 		});
 	}
 
@@ -682,14 +797,15 @@
 				FCC.notice(remoteStatus(), 'ok', FCC._('Done.'));
 			} else {
 				FCC.notice(remoteStatus(), 'fail',
-					d.error || d.output || FCC._('The operation failed.'));
+					remoteFailure(d, FCC._('The operation failed.')));
 			}
 			/* Ask again rather than infer from the verb: the state line is the
 			 * one place that says what the remote machine is doing, and a stop
 			 * that was already stopped answers ok too. */
 			return checkRemoteRunning();
 		}).catch(function (err) {
-			FCC.notice(remoteStatus(), 'fail', err.message);
+			FCC.notice(remoteStatus(), 'fail',
+				remoteCaught(err, FCC._('The operation failed.')));
 		});
 	}
 
@@ -1200,7 +1316,8 @@
 		 * or anything about the remote host, and the LAN panel still has to be
 		 * drawn — disabled — on a device where nothing remote is configured. */
 		loadRemote().catch(function (err) {
-			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);
+			FCC.notice(FCC.$('#fcc-config-status'), 'fail',
+				remoteCaught(err, FCC._('The LAN connection state could not be read.')));
 		});
 	}
 

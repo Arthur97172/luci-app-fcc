@@ -31,6 +31,9 @@ msgid ""
 "WAN address."
 msgstr "私有 IPv4 地址。不接受主机名：主机名可能解析为 WAN 地址。"
 
+msgid "A temporary directory could not be created on this router."
+msgstr "无法在本机创建临时目录。"
+
 msgid ""
 "Add this key to the account's authorized_keys file, then test the connection "
 "again."
@@ -521,6 +524,26 @@ msgid ""
 "The LAN access rule was removed; the port is no longer opened by this app."
 msgstr "局域网访问规则已移除；本应用不再开放该端口。"
 
+msgid "The LAN connection settings are incomplete."
+msgstr "局域网连接设置不完整。"
+
+msgid "The LAN connection settings could not be saved."
+msgstr "局域网连接设置无法保存。"
+
+msgid "The LAN connection state could not be read."
+msgstr "无法读取局域网连接状态。"
+
+msgid "The LAN machine answered in a form that could not be read."
+msgstr "局域网主机的应答无法解析。"
+
+msgid ""
+"The LAN machine has no systemctl. If it runs OpenWrt, set its platform to "
+"OpenWrt in Advanced settings."
+msgstr "局域网主机没有 systemctl。如果它运行的是 OpenWrt，请在高级设置中把平台设为 OpenWrt。"
+
+msgid "The LAN side is not the selected FCC Server."
+msgstr "当前选择的 FCC Server 不是局域网。"
+
 msgid ""
 "The LuCI app version could not be checked — the router could not reach the "
 "version source."
@@ -528,6 +551,12 @@ msgstr "无法检查 LuCI 应用版本 —— 路由器无法访问版本源。"
 
 msgid "The SSH key could not be created."
 msgstr "无法创建 SSH 密钥。"
+
+msgid "The SSH key could not be generated."
+msgstr "无法生成 SSH 密钥。"
+
+msgid "The SSH key has not been generated yet."
+msgstr "尚未生成 SSH 密钥。"
 
 msgid "The address or SSH port changed — the pinned host key was forgotten."
 msgstr "地址或 SSH 端口已更改——已忘记固定的主机密钥。"
@@ -537,6 +566,9 @@ msgstr "浏览器阻止了新窗口。"
 
 msgid "The connection failed."
 msgstr "连接失败。"
+
+msgid "The existing SSH key could not be read."
+msgstr "无法读取现有的 SSH 密钥。"
 
 msgid "The existing key is shown below."
 msgstr "现有密钥显示在下方。"
@@ -549,6 +581,9 @@ msgstr "无法添加防火墙规则——服务器已绑定到所有网络接口
 msgid "The host key could not be trusted."
 msgstr "无法信任该主机密钥。"
 
+msgid "The host key fingerprint is not valid."
+msgstr "主机密钥指纹无效。"
+
 msgid ""
 "The install path changed — install the runtime at the new location to use it."
 msgstr "安装路径已更改 —— 请在新位置安装运行时后再使用。"
@@ -556,16 +591,34 @@ msgstr "安装路径已更改 —— 请在新位置安装运行时后再使用�
 msgid "The installer will add the missing packages before it starts:"
 msgstr "安装程序会先自动安装缺失的依赖包："
 
+msgid "The mode could not be switched."
+msgstr "无法切换模式。"
+
 msgid "The operation failed."
 msgstr "操作失败。"
 
+msgid "The pinned host key could not be forgotten."
+msgstr "无法忘记已固定的主机密钥。"
+
 msgid "The pinned host key was forgotten."
 msgstr "已忘记固定的主机密钥。"
+
+msgid "The platform selected for the LAN machine is not valid."
+msgstr "为局域网主机选择的平台无效。"
+
+msgid "The remote host key could not be read."
+msgstr "无法读取远程主机密钥。"
+
+msgid "The remote host key could not be stored."
+msgstr "无法保存远程主机密钥。"
 
 msgid ""
 "The remote host key has changed. If you did not expect that, stop and check "
 "the machine."
 msgstr "远程主机密钥已更改。如果这不是你预期的，请先停下并检查该机器。"
+
+msgid "The remote host key has not been trusted yet."
+msgstr "尚未信任远程主机密钥。"
 
 msgid ""
 "The remote host key is not trusted yet. Compare this fingerprint with the "
@@ -578,6 +631,11 @@ msgstr "尚未信任远程主机密钥。请在下方确认指纹。"
 msgid "The remote host key is now trusted."
 msgstr "现在已信任远程主机密钥。"
 
+msgid ""
+"The service was not found on the LAN machine. Check the service name in "
+"Advanced settings."
+msgstr "在局域网主机上找不到该服务。请在高级设置中检查服务名称。"
+
 msgid "They take effect when you choose Save & Apply."
 msgstr "选择“保存并应用”后生效。"
 
@@ -586,6 +644,9 @@ msgstr "此日志为空。"
 
 msgid "This router"
 msgstr "本机"
+
+msgid "This router has no setsid, so the LAN tunnel cannot be started."
+msgstr "本机没有 setsid，无法启动局域网隧道。"
 
 msgid ""
 "This router needs ssh-keygen to create the key (package openssh-keygen)."

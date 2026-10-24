@@ -79,8 +79,14 @@ if [ "${1:-}" = "-V" ]; then
 	exit 0
 fi
 printf 'ARG %s\n' "$@" >> "$SSH_LOG"
+# A real ssh writes its last words before it exits with the failure code, so
+# the canned one does too: the tests of the unreadable-answer path need both.
+if [ -n "${SSH_OUT+x}" ]; then
+	printf '%s\n' "$SSH_OUT"
+elif [ -z "${SSH_EXIT:-}" ]; then
+	printf 'fcc-ok\n'
+fi
 if [ -n "${SSH_EXIT:-}" ]; then exit "$SSH_EXIT"; fi
-printf '%s\n' "${SSH_OUT:-fcc-ok}"
 EOF
 
 	# ssh-keyscan: one ed25519 host key line, which is all scan_to keeps.
@@ -466,6 +472,56 @@ test_running_uses_the_openwrt_and_windows_presets() {
 	assert_contains "$out" '"running":true' "PowerShell prints Running"
 	assert_contains "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" 'Get-Service' \
 		"Windows is asked through PowerShell"
+	drop_sandbox
+}
+
+test_running_names_a_missing_systemctl() {
+	# The remote machine can be OpenWrt while the platform says Linux. Then
+	# systemctl does not exist, the answer is a shell error, and the page has
+	# to say which setting is wrong — in its own language. The reason travels
+	# as a code; the test is that the code is there to translate.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='ash: systemctl: not found' SSH_EXIT=127 run_remote running)" || true
+	assert_contains "$out" '"checked":false' "a shell error is not a state answer"
+	assert_contains "$out" '"reason":"no-systemctl"' \
+		"and the page is told that systemctl is missing"
+	drop_sandbox
+}
+
+test_running_names_a_missing_init_script() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='/etc/init.d/fcc: not found' SSH_EXIT=127 run_remote running)" || true
+	assert_contains "$out" '"reason":"no-init-script"' \
+		"a service that does not exist is named as the problem"
+	drop_sandbox
+}
+
+test_running_drops_the_ssh_clients_own_warnings() {
+	# OpenSSH 9.9 and later warn about post-quantum key exchange on every
+	# connection. Left in, the warning is the first line of every failure and
+	# the answer that matters is buried — and it is not about the operation.
+	fresh
+	ready_lan
+	out="$(SSH_OUT="$(printf '%s\n' \
+		'** WARNING: connection is not using a post-quantum key exchange algorithm.' \
+		'** This session may be vulnerable to "store now, decrypt later" attacks.' \
+		'** The server may need to be upgraded. See https://openssh.com/pq.html' \
+		'inactive')" run_remote running)" || true
+	assert_contains "$out" '"running":false' "the answer after the warning is still read"
+	assert_not_contains "$out" 'post-quantum' "the warning itself is not relayed"
+	assert_not_contains "$out" 'WARNING' "not even its first word"
+	drop_sandbox
+}
+
+test_control_names_a_missing_systemctl() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='ash: systemctl: not found' SSH_EXIT=127 run_remote control start)" || true
+	assert_contains "$out" '"ok":false' "a failed start is reported"
+	assert_contains "$out" '"reason":"no-systemctl"' \
+		"and the reason is a code the page can translate"
 	drop_sandbox
 }
 

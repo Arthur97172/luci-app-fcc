@@ -30,6 +30,9 @@ msgstr ""
 msgid "A private IPv4 address. Hostnames are not accepted: a name can resolve to a WAN address."
 msgstr ""
 
+msgid "A temporary directory could not be created on this router."
+msgstr ""
+
 msgid "Add this key to the account's authorized_keys file, then test the connection again."
 msgstr ""
 
@@ -450,10 +453,34 @@ msgstr ""
 msgid "The LAN access rule was removed; the port is no longer opened by this app."
 msgstr ""
 
+msgid "The LAN connection settings are incomplete."
+msgstr ""
+
+msgid "The LAN connection settings could not be saved."
+msgstr ""
+
+msgid "The LAN connection state could not be read."
+msgstr ""
+
+msgid "The LAN machine answered in a form that could not be read."
+msgstr ""
+
+msgid "The LAN machine has no systemctl. If it runs OpenWrt, set its platform to OpenWrt in Advanced settings."
+msgstr ""
+
+msgid "The LAN side is not the selected FCC Server."
+msgstr ""
+
 msgid "The LuCI app version could not be checked — the router could not reach the version source."
 msgstr ""
 
 msgid "The SSH key could not be created."
+msgstr ""
+
+msgid "The SSH key could not be generated."
+msgstr ""
+
+msgid "The SSH key has not been generated yet."
 msgstr ""
 
 msgid "The address or SSH port changed — the pinned host key was forgotten."
@@ -465,6 +492,9 @@ msgstr ""
 msgid "The connection failed."
 msgstr ""
 
+msgid "The existing SSH key could not be read."
+msgstr ""
+
 msgid "The existing key is shown below."
 msgstr ""
 
@@ -474,19 +504,40 @@ msgstr ""
 msgid "The host key could not be trusted."
 msgstr ""
 
+msgid "The host key fingerprint is not valid."
+msgstr ""
+
 msgid "The install path changed — install the runtime at the new location to use it."
 msgstr ""
 
 msgid "The installer will add the missing packages before it starts:"
 msgstr ""
 
+msgid "The mode could not be switched."
+msgstr ""
+
 msgid "The operation failed."
+msgstr ""
+
+msgid "The pinned host key could not be forgotten."
 msgstr ""
 
 msgid "The pinned host key was forgotten."
 msgstr ""
 
+msgid "The platform selected for the LAN machine is not valid."
+msgstr ""
+
+msgid "The remote host key could not be read."
+msgstr ""
+
+msgid "The remote host key could not be stored."
+msgstr ""
+
 msgid "The remote host key has changed. If you did not expect that, stop and check the machine."
+msgstr ""
+
+msgid "The remote host key has not been trusted yet."
 msgstr ""
 
 msgid "The remote host key is not trusted yet. Compare this fingerprint with the remote machine before trusting it."
@@ -498,6 +549,9 @@ msgstr ""
 msgid "The remote host key is now trusted."
 msgstr ""
 
+msgid "The service was not found on the LAN machine. Check the service name in Advanced settings."
+msgstr ""
+
 msgid "They take effect when you choose Save & Apply."
 msgstr ""
 
@@ -505,6 +559,9 @@ msgid "This log is empty."
 msgstr ""
 
 msgid "This router"
+msgstr ""
+
+msgid "This router has no setsid, so the LAN tunnel cannot be started."
 msgstr ""
 
 msgid "This router needs ssh-keygen to create the key (package openssh-keygen)."
