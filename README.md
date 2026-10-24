@@ -45,6 +45,22 @@ apk add --allow-untrusted luci-i18n-fcc-zh-cn-*.apk   # 中文界面需额外安
 英文界面随 `luci-app-fcc` 一起安装；简体中文目录在单独的 `luci-i18n-fcc-zh-cn` 包里，
 LuCI 界面语言为中文时会自动加载，无需配置、无需重启。两个包互相独立，可分别升级和卸载。
 
+### 从源码编译
+
+要把本包裁剪进固件或自行调整时，把它放进 OpenWrt 构建树，和其他包一起编译：
+
+```sh
+cd openwrt
+./scripts/feeds update -a
+./scripts/feeds install -a
+git clone https://github.com/Arthur97172/luci-app-fcc.git package/luci-app-fcc
+make menuconfig   # LuCI → Applications → luci-app-fcc
+make package/luci-app-fcc/compile V=s
+```
+
+产物在 `bin/packages/<架构>/` 下。同一份源码在 24.10 的构建树里得到 `.ipk`，在 25.12
+的构建树里得到 `.apk`；`VERSION` 与 `PKG_RELEASE` 决定包名中的版本号。
+
 ---
 
 ## 首次使用

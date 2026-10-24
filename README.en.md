@@ -50,6 +50,24 @@ which LuCI loads by itself whenever the interface language is Chinese — no
 configuration, no service restart. The two are independent and can be
 installed, upgraded and removed separately.
 
+### Build from source
+
+To trim the package into a firmware or change it locally, put the source in the
+OpenWrt build tree and compile it with the rest:
+
+```sh
+cd openwrt
+./scripts/feeds update -a
+./scripts/feeds install -a
+git clone https://github.com/Arthur97172/luci-app-fcc.git package/luci-app-fcc
+make menuconfig   # LuCI → Applications → luci-app-fcc
+make package/luci-app-fcc/compile V=s
+```
+
+The package lands under `bin/packages/<arch>/`. The same source produces an
+`.ipk` in a 24.10 tree and an `.apk` in a 25.12 one; `VERSION` and
+`PKG_RELEASE` give the version in the file name.
+
 ---
 
 ## First run
