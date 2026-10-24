@@ -1460,6 +1460,20 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the page says why the service name changed"
 	assert_contains "$(cat "$_ts_remote")" 'linux|openwrt|windows) _sv_name=fcc' \
 		"the script applies the same rule to stored UCI"
+
+	# The LAN panel describes the server the way the local one does. The remote
+	# machine runs this package too, so its status.sh is the document both
+	# panels render — one renderer, six lines, two sides.
+	assert_contains "$(cat "$_ts_remote")" 'fcc_remote_details' \
+		"the backend asks the LAN machine for its own status document"
+	assert_contains "$(cat "$_ts_remote")" '"details":{' \
+		"and folds it into the running answer"
+	assert_contains "$(cat "$_ts_js")" 'renderServerRows' \
+		"the local and LAN panels share one set of rows"
+	assert_contains "$(cat "$_ts_js")" 'remote.server_details' \
+		"the LAN panel renders the document when one arrives"
+	assert_contains "$(cat "$_ts_view")" '<div id="fcc-remote-server-state"' \
+		"the LAN state is a container now — a table cannot live in a paragraph"
 }
 
 # ---------------------------------------------------------------------------

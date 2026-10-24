@@ -721,6 +721,52 @@ fcc_remote_status() {
 }
 
 # ---------------------------------------------------------------------------
+# What the LAN machine says about the server it runs
+# ---------------------------------------------------------------------------
+
+# status.sh is installed by this same package, and its JSON is the document the
+# local panel already renders. So a machine that runs luci-app-fcc can describe
+# its server with the same six lines this router shows for its own, and the LAN
+# panel reads like the local one instead of a single sentence. A machine
+# without it — a plain Linux host running only the FCC runtime, or an OpenWrt
+# carrying an older package — sends nothing here, and the page keeps the
+# one-line state rather than a table of dashes.
+FCC_REMOTE_DETAIL_DOC=""
+
+fcc_remote_detail_field() {
+	printf '%s' "$FCC_REMOTE_DETAIL_DOC" | jsonfilter -e "$1" 2>/dev/null
+}
+
+fcc_remote_details() {
+	case "$(fcc_remote_platform)" in
+		openwrt|linux) : ;;
+		*) return 0 ;;
+	esac
+	# jsonfilter is libubox's, and every OpenWrt image has it. Where it is
+	# missing the state answer stands alone, which is still the truth.
+	fcc_remote_has jsonfilter || return 0
+
+	# The helper is asked for only if it is there: test -x is the whole of the
+	# remote side of this, so a machine that never had the package installed
+	# answers with an empty line and no error worth showing.
+	_dt_doc="$(fcc_remote_ssh \
+		'[ -x /usr/libexec/fcc/status.sh ] && /usr/libexec/fcc/status.sh' \
+		2>/dev/null | fcc_remote_output_filter)"
+	case "$_dt_doc" in
+		'{'*) : ;;
+		*) return 0 ;;
+	esac
+	FCC_REMOTE_DETAIL_DOC="$_dt_doc"
+	printf ',"details":{"version":%s,"pid":%s,"uptime":%s,"memory_rss_kb":%s,"bind":%s,"port":%s}' \
+		"$(fcc_json_str_or_null "$(fcc_remote_detail_field '@.fcc.version')")" \
+		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.pid')")" \
+		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.uptime')")" \
+		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.memory_rss_kb')")" \
+		"$(fcc_json_str_or_null "$(fcc_remote_detail_field '@.server.bind')")" \
+		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.port')")"
+}
+
+# ---------------------------------------------------------------------------
 # Is the remote server running?
 # ---------------------------------------------------------------------------
 #
@@ -733,6 +779,7 @@ fcc_remote_status() {
 # is switched off is not the same thing as a server that was stopped, and
 # calling both "stopped" would make the one-server rule look satisfied when
 # nothing had been checked.
+
 fcc_remote_running() {
 	fcc_remote_config_ok \
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
@@ -800,9 +847,15 @@ fcc_remote_running() {
 			"$(fcc_json_str "$(printf '%s' "$_rn_out" | fcc_remote_output_filter | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
 		return 0
 	fi
-	printf '{"ok":true,"checked":true,"running":%s,"output":%s}\n' \
+	# The details are asked for only once the answer is "running": a stopped
+	# machine has no pid or uptime to describe, and a check that already failed
+	# should not cost a second connection.
+	_rn_details=""
+	[ "$_rn_running" = "true" ] && _rn_details="$(fcc_remote_details)"
+	printf '{"ok":true,"checked":true,"running":%s,"output":%s%s}\n' \
 		"$_rn_running" \
-		"$(fcc_json_str "$(printf '%s' "$_rn_out" | fcc_remote_output_filter | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")"
+		"$(fcc_json_str "$(printf '%s' "$_rn_out" | fcc_remote_output_filter | tr -d '\r' | tr '\n' ' ' | sed 's/  */ /g')")" \
+		"$_rn_details"
 	return 0
 }
 

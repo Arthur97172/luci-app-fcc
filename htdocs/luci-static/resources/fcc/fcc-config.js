@@ -106,6 +106,29 @@
 
 	/* --------------------------------------------------------- server state */
 
+	/* The lines under a server's state dot, shared by the local panel and the
+	 * LAN one. Both sides answer with the same document — the LAN machine's
+	 * status.sh is this package's own — so a server reads the same way
+	 * whichever machine is running it. A field the answer does not carry is a
+	 * dash, which is what a stopped server's pid is. */
+	function renderServerRows(box, s, version) {
+		var rows = [
+			[FCC._('Version'), version || '—'],
+			[FCC._('PID'), s.pid != null ? String(s.pid) : '—'],
+			[FCC._('Uptime'), s.uptime != null ? FCC.fmtDuration(s.uptime) : '—'],
+			[FCC._('Memory (RSS)'), s.memory_rss_kb != null ? FCC.fmtKB(s.memory_rss_kb) : '—'],
+			[FCC._('Listening on'), (s.bind || '—') + ':' + (s.port != null ? s.port : '—')]
+		];
+		box.appendChild(FCC.el('table', { class: 'fcc-table' },
+			rows.map(function (r) {
+				return FCC.el('tr', {}, [
+					FCC.el('th', { text: r[0] }),
+					FCC.el('td', { class: 'fcc-mono', text: r[1] })
+				]);
+			})
+		));
+	}
+
 	/* Every panel on this page is filled from the one batched status call, so
 	 * the renderers take that document rather than each fetching their own —
 	 * three panels polling separately would cost the router three processes per
@@ -121,21 +144,7 @@
 				text: s.running ? FCC._('Running') : FCC._('Stopped')
 			})
 		]));
-		var rows = [
-			[FCC._('Version'), f.version || '—'],
-			[FCC._('PID'), s.running ? String(s.pid) : '—'],
-			[FCC._('Uptime'), s.running ? FCC.fmtDuration(s.uptime) : '—'],
-			[FCC._('Memory (RSS)'), s.running ? FCC.fmtKB(s.memory_rss_kb) : '—'],
-			[FCC._('Listening on'), (s.bind || '—') + ':' + (s.port || '—')]
-		];
-		box.appendChild(FCC.el('table', { class: 'fcc-table' },
-			rows.map(function (r) {
-				return FCC.el('tr', {}, [
-					FCC.el('th', { text: r[0] }),
-					FCC.el('td', { class: 'fcc-mono', text: r[1] })
-				]);
-			})
-		));
+		renderServerRows(box, s, f.version);
 	}
 
 	/* Section 12: stopping the server has to say so before it happens, because
@@ -215,6 +224,10 @@
 		 * could not reach the machine. A false here is an answer from the
 		 * remote service manager, not a default. */
 		server_running: null,
+		/* The LAN machine's own status.sh document — version, pid, uptime,
+		 * RSS, bind and port — when it runs this package. null when the
+		 * machine answered the state question only. */
+		server_details: null,
 		server_pending: false,
 		server_error: ''
 	};
@@ -478,8 +491,22 @@
 			return;
 		}
 		if (remote.server_running === true) {
-			box.className = 'fcc-key-state on';
-			box.textContent = FCC._('The LAN FCC Server is running.');
+			/* The remote answers with its own status.sh document when it runs
+			 * this package; without one there is nothing to show but the
+			 * state, and a table of dashes would look like a server that
+			 * reports nothing. */
+			if (!remote.server_details) {
+				box.className = 'fcc-key-state on';
+				box.textContent = FCC._('The LAN FCC Server is running.');
+				return;
+			}
+			box.className = '';
+			box.innerHTML = '';
+			box.appendChild(FCC.el('div', {}, [
+				FCC.el('span', { class: 'fcc-dot on' }),
+				FCC.el('strong', { text: FCC._('Running') })
+			]));
+			renderServerRows(box, remote.server_details, remote.server_details.version);
 			return;
 		}
 		if (remote.server_running === false) {
@@ -501,6 +528,7 @@
 	 * a machine it is not using. */
 	function checkRemoteRunning() {
 		remote.server_running = null;
+		remote.server_details = null;
 		remote.server_error = '';
 		remote.server_pending = remote.target === 'lan' && remote.ready === true;
 		renderRemoteServerState();
@@ -509,6 +537,7 @@
 			remote.server_pending = false;
 			if (d && d.ok === true && d.checked === true) {
 				remote.server_running = d.running === true;
+				remote.server_details = d.details || null;
 			} else {
 				remote.server_error = remoteFailure(d, FCC._('the machine did not answer'));
 			}

@@ -78,7 +78,20 @@ if [ "${1:-}" = "-V" ]; then
 	printf '%s\n' "${SSH_VERSION:-OpenSSH_9.6p1, OpenSSL 3.1}" >&2
 	exit 0
 fi
+printf 'CALL\n' >> "$SSH_LOG"
 printf 'ARG %s\n' "$@" >> "$SSH_LOG"
+# Two different questions arrive over the same client: the state check and
+# the details fetch that asks the remote status.sh for its document. The last
+# argument is the remote command, so the answer is chosen by whether it names
+# status.sh; tests that never set SSH_DETAIL_OUT are answered as before.
+for last in "$@"; do :; done
+case "${last:-}" in
+	*status.sh*)
+		if [ -n "${SSH_DETAIL_OUT+x}" ]; then
+			printf '%s\n' "$SSH_DETAIL_OUT"
+			exit 0
+		fi ;;
+esac
 # A real ssh writes its last words before it exits with the failure code, so
 # the canned one does too: the tests of the unreadable-answer path need both.
 if [ -n "${SSH_OUT+x}" ]; then
@@ -87,6 +100,31 @@ elif [ -z "${SSH_EXIT:-}" ]; then
 	printf 'fcc-ok\n'
 fi
 if [ -n "${SSH_EXIT:-}" ]; then exit "$SSH_EXIT"; fi
+EOF
+
+	# jsonfilter: libubox's field extractor, which remote.sh uses to read the
+	# status document. The stand-in understands the expressions the script
+	# writes — @.<object>.<field> — over a document whose objects are flat,
+	# which is what status.sh produces. A path that names nothing prints
+	# nothing and exits 1, as the real tool does.
+	cat > "$BIN/jsonfilter" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-e) expr="$2"; shift 2 ;;
+		*) shift ;;
+	esac
+done
+doc="$(cat)"
+doc="$(printf '%s' "$doc" | tr -d '\n')"
+path="${expr#@.}"
+section="${path%%.*}"
+field="${path#*.}"
+obj="$(printf '%s' "$doc" | sed -n "s/.*\"$section\"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p")"
+[ -n "$obj" ] || exit 1
+val="$(printf '%s' "$obj" | sed -n "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^,\"}]*\)\"\{0,1\}.*/\1/p")"
+[ -n "$val" ] || exit 1
+printf '%s\n' "$val"
 EOF
 
 	# ssh-keyscan: one ed25519 host key line, which is all scan_to keeps.
@@ -128,7 +166,7 @@ printf 'PRIVATE KEY\n' > "$file"
 printf '%s\n' "${KEYGEN_PUB:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY luci-app-fcc}" > "$file.pub"
 EOF
 
-	chmod +x "$BIN/uci" "$BIN/ssh" "$BIN/ssh-keyscan" "$BIN/ssh-keygen"
+	chmod +x "$BIN/uci" "$BIN/ssh" "$BIN/ssh-keyscan" "$BIN/ssh-keygen" "$BIN/jsonfilter"
 }
 
 drop_sandbox() {
@@ -143,6 +181,18 @@ fresh() {
 }
 
 uci_set() { printf '%s' "$2" > "$UCI/$1"; }
+
+# The remote command of one ssh call in the current test. The fake client
+# writes a CALL line before each call's arguments, so the last argument of
+# call $1 is what was asked — which stays true when a later call (the details
+# fetch that follows a running answer) is made as well.
+ssh_command() {
+	awk -v want="${1:-1}" '
+		/^CALL$/ { n++; next }
+		n == want { cmd = substr($0, 5) }
+		END { if (cmd != "") print cmd }
+	' "$TMP/ssh.log"
+}
 
 # Make one helper unreachable the way a router without the package would be:
 # the binary is moved out of $BIN instead of deleted, so the sandbox still
@@ -430,7 +480,7 @@ test_running_reports_an_active_linux_service() {
 	assert_contains "$out" '"ok":true' "the check answered"
 	assert_contains "$out" '"checked":true' "and it is an answer rather than a guess"
 	assert_contains "$out" '"running":true' "an active service is running"
-	assert_eq "systemctl is-active fcc" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+	assert_eq "systemctl is-active fcc" "$(ssh_command 1)" \
 		"systemd is asked with is-active"
 	drop_sandbox
 }
@@ -464,7 +514,7 @@ test_running_uses_the_openwrt_and_windows_presets() {
 	uci_set remote_platform openwrt
 	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
 	assert_contains "$out" '"running":true' "rc.common exits 0 when the service runs"
-	assert_eq "/etc/init.d/fcc status" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+	assert_eq "/etc/init.d/fcc status" "$(ssh_command 1)" \
 		"OpenWrt is asked through its init script"
 
 	uci_set remote_platform windows
@@ -515,6 +565,50 @@ test_running_drops_the_ssh_clients_own_warnings() {
 	drop_sandbox
 }
 
+test_running_reports_the_lan_servers_details() {
+	# The LAN panel shows the same six lines the local one does: status.sh is
+	# installed on that machine by this same package, so its document is the
+	# answer and the page keeps one renderer for both sides.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(SSH_DETAIL_OUT='{"luci_fcc": {"version": "1.0.3"}, "fcc": {"installed": true, "version": "6.16.17"}, "server": {"running": true, "pid": 28483, "uptime": 151, "memory_rss_kb": 188000, "port": 8082, "bind": "127.0.0.1"}}' \
+		run_remote running)" || true
+	assert_contains "$out" '"running":true' "the state is still answered"
+	assert_contains "$out" '"details":{' "with the document's fields beside it"
+	assert_contains "$out" '"version":"6.16.17"' "the runtime version is the remote's own"
+	assert_contains "$out" '"pid":28483' "the pid is a number, not a string"
+	assert_contains "$out" '"uptime":151' "uptime arrives in seconds"
+	assert_contains "$out" '"memory_rss_kb":188000' "with the RSS the local panel shows"
+	assert_contains "$out" '"bind":"127.0.0.1"' "and the address it listens on"
+	assert_contains "$out" '"port":8082' "on the port it was asked to use"
+	drop_sandbox
+}
+
+test_running_without_the_helper_keeps_the_one_line_answer() {
+	# A Linux host running only the FCC runtime has no status.sh. The state is
+	# still known; the six lines are not, and an object full of nulls would
+	# render as a table of dashes that says less than the sentence.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='active' SSH_DETAIL_OUT='' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the state is still answered"
+	assert_not_contains "$out" '"details"' "and nothing is invented for it"
+	drop_sandbox
+}
+
+test_a_stopped_server_is_not_asked_for_details() {
+	# One connection is enough to know a server is down, and there is no pid or
+	# uptime to describe. The second command must not be sent.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	SSH_EXIT=3 run_remote running >/dev/null 2>&1 || true
+	assert_not_contains "$(cat "$TMP/ssh.log")" 'status.sh' \
+		"a stopped machine is not asked for its status document"
+	drop_sandbox
+}
+
 test_the_platform_name_in_the_service_field_is_corrected() {
 	# The service field sits under the platform select, and the platform name
 	# had been typed into it. No init script is called OpenWrt; a stored value
@@ -526,7 +620,7 @@ test_the_platform_name_in_the_service_field_is_corrected() {
 	uci_set remote_service OpenWrt
 	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
 	assert_contains "$out" '"running":true' "the check uses the real service"
-	assert_eq "/etc/init.d/fcc status" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+	assert_eq "/etc/init.d/fcc status" "$(ssh_command 1)" \
 		"not /etc/init.d/OpenWrt"
 	assert_contains "$(run_remote status)" '"service":"fcc"' \
 		"and the page is told the name that is actually used"
