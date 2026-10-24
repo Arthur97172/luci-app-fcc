@@ -1000,6 +1000,22 @@ form = {}
 written = {}
 ctrl.act_remote_running()
 print("running=" .. body())
+
+-- The platform name typed into the service field is stored as the default, and
+-- the answer says so; a real name is left alone.
+store.remote_service = nil
+form = { host = "192.168.5.3", user = "root", ssh_port = "22",
+         admin_port = "8082", platform = "openwrt", service = "OpenWrt" }
+written = {}; commits = 0
+ctrl.act_remote_set()
+print("svcreset=" .. body())
+print("stored_service=" .. tostring(store.remote_service))
+
+form.service = "MyService"
+written = {}
+ctrl.act_remote_set()
+print("svcok=" .. body())
+print("stored_ok=" .. tostring(store.remote_service))
 LUA
 
 	_ts_out="$(FCC_TEST_ROOT="$ROOT" \
@@ -1054,6 +1070,17 @@ LUA
 		"the LAN running check relays the remote answer: [$_ts_run]"
 	assert_contains "$_ts_run" '"checked":true' \
 		"including the difference between an answer and a failed check"
+
+	_ts_reset="$(printf '%s\n' "$_ts_out" | sed -n 's/^svcreset=//p')"
+	assert_contains "$_ts_reset" '"service_reset":true' \
+		"the platform name typed into the service field is reported: [$_ts_reset]"
+	assert_contains "$_ts_out" "stored_service=fcc" \
+		"and the default is stored instead"
+	_ts_svcok="$(printf '%s\n' "$_ts_out" | sed -n 's/^svcok=//p')"
+	assert_contains "$_ts_svcok" '"service_reset":false' \
+		"a real service name is left alone: [$_ts_svcok]"
+	assert_contains "$_ts_out" "stored_ok=MyService" \
+		"and stored as it was typed"
 }
 
 test_the_menu_survives_a_lost_config_file() {

@@ -603,6 +603,17 @@ function act_remote_set()
 	local service = util.valid_remote_service(http.formvalue("service") or "fcc")
 	if not service then return fail("invalid service name") end
 
+	-- The service field is directly under the platform select, and the platform
+	-- name has been typed into it. Stored as it is, every state check and every
+	-- start asks the remote machine for /etc/init.d/OpenWrt and fails — a
+	-- confusing answer to a one-word mistake. Keep the default and tell the
+	-- page, which refills the field from the stored value.
+	local service_reset = false
+	if util.service_is_a_platform_name(service) then
+		service = "fcc"
+		service_reset = true
+	end
+
 	local old_host  = c:get("fcc", "main", "remote_host") or ""
 	local old_user  = c:get("fcc", "main", "remote_user") or ""
 	local old_sport = tostring(c:get("fcc", "main", "remote_ssh_port") or "22")
@@ -635,7 +646,8 @@ function act_remote_set()
 	end
 
 	json_out('{"ok":true,"changed":' .. (changed and "true" or "false") ..
-		',"trust_reset":' .. (host_changed and "true" or "false") .. '}')
+		',"trust_reset":' .. (host_changed and "true" or "false") ..
+		',"service_reset":' .. (service_reset and "true" or "false") .. '}')
 end
 
 --- Switch the FCC Server section between this router and the LAN.

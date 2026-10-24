@@ -539,7 +539,9 @@ msgstr "局域网主机的应答无法解析。"
 msgid ""
 "The LAN machine has no systemctl. If it runs OpenWrt, set its platform to "
 "OpenWrt in Advanced settings."
-msgstr "局域网主机没有 systemctl。如果它运行的是 OpenWrt，请在高级设置中把平台设为 OpenWrt。"
+msgstr ""
+"局域网主机没有 systemctl。如果它运行的是 OpenWrt，请在高级设置中把平台设为 "
+"OpenWrt。"
 
 msgid "The LAN side is not the selected FCC Server."
 msgstr "当前选择的 FCC Server 不是局域网。"
@@ -630,6 +632,11 @@ msgstr "尚未信任远程主机密钥。请在下方确认指纹。"
 
 msgid "The remote host key is now trusted."
 msgstr "现在已信任远程主机密钥。"
+
+msgid ""
+"The service name was the platform name. It is now fcc — change it if the "
+"init script has another name."
+msgstr "服务名填写的是平台名称，现已改为 fcc——如果 init 脚本用别的名字，请改过来。"
 
 msgid ""
 "The service was not found on the LAN machine. Check the service name in "

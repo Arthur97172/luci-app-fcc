@@ -515,6 +515,30 @@ test_running_drops_the_ssh_clients_own_warnings() {
 	drop_sandbox
 }
 
+test_the_platform_name_in_the_service_field_is_corrected() {
+	# The service field sits under the platform select, and the platform name
+	# had been typed into it. No init script is called OpenWrt; a stored value
+	# like that is the mistake, and the script has to read the default instead
+	# of asking the remote machine for /etc/init.d/OpenWrt.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	uci_set remote_service OpenWrt
+	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
+	assert_contains "$out" '"running":true' "the check uses the real service"
+	assert_eq "/etc/init.d/fcc status" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+		"not /etc/init.d/OpenWrt"
+	assert_contains "$(run_remote status)" '"service":"fcc"' \
+		"and the page is told the name that is actually used"
+
+	uci_set remote_platform linux
+	uci_set remote_service Windows
+	out="$(SSH_OUT='Stopped' run_remote running)" || true
+	assert_eq "systemctl is-active fcc" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+		"the same rule applies to every platform word"
+	drop_sandbox
+}
+
 test_control_names_a_missing_systemctl() {
 	fresh
 	ready_lan

@@ -203,7 +203,17 @@ fcc_remote_user()   { fcc_uci_get main remote_user ''; }
 fcc_remote_sport()  { fcc_uci_get main remote_ssh_port 22; }
 fcc_remote_aport()  { fcc_uci_get main remote_admin_port 8082; }
 fcc_remote_platform() { fcc_uci_get main remote_platform linux; }
-fcc_remote_service() { fcc_uci_get main remote_service fcc; }
+fcc_remote_service() {
+	_sv_name="$(fcc_uci_get main remote_service fcc)"
+	# The platform name in the service field is a mistyped form, not a service:
+	# no init script is called linux, OpenWrt or Windows. Stored UCI from before
+	# the page guarded the write is corrected here too, so an already
+	# misconfigured router starts working without another save.
+	case "$(printf '%s' "$_sv_name" | tr 'A-Z' 'a-z')" in
+		linux|openwrt|windows) _sv_name=fcc ;;
+	esac
+	printf '%s' "$_sv_name"
+}
 fcc_remote_fingerprint() { fcc_uci_get main remote_fingerprint ''; }
 
 fcc_remote_config_ok() {

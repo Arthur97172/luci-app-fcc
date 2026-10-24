@@ -1448,6 +1448,18 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	assert_not_contains \
 		"$(sed -n '/function remoteTest/,/function remoteControl/p' "$_ts_js")" \
 		'err.message' "nor does any LAN button"
+
+	# The platform name typed into the service field is a one-word mistake that
+	# made every check ask for /etc/init.d/OpenWrt. It is corrected on write,
+	# on read, and the page says why the field changed.
+	assert_contains "$(cat "$ROOT/luasrc/fcc/util.lua")" 'service_is_a_platform_name' \
+		"one predicate decides what a platform word is"
+	assert_contains "$(cat "$_ts_ctl")" 'service_reset' \
+		"the save stores the default and reports the correction"
+	assert_contains "$(cat "$_ts_js")" 'r.service_reset' \
+		"the page says why the service name changed"
+	assert_contains "$(cat "$_ts_remote")" 'linux|openwrt|windows) _sv_name=fcc' \
+		"the script applies the same rule to stored UCI"
 }
 
 # ---------------------------------------------------------------------------

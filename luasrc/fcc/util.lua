@@ -608,6 +608,18 @@ function valid_remote_platform(p)
 	return p
 end
 
+--- Did the platform name get typed into the service field?
+-- The platform select and the service field sit next to each other in Advanced
+-- settings, and the platform name has been entered in the second. No init
+-- script is called linux, OpenWrt or Windows, so the value is the mistake, not
+-- a service: the controller stores the default instead and says so, and
+-- remote.sh applies the same rule when it reads the configuration — which
+-- covers a router whose UCI already holds the word.
+function service_is_a_platform_name(s)
+	if type(s) ~= "string" then return false end
+	return REMOTE_PLATFORMS[s:lower()] == true
+end
+
 --- An ssh-keygen SHA256 fingerprint, e.g. SHA256:47DEQpj8HBSa+/TImW+5JCeu...
 function valid_fingerprint(f)
 	if type(f) ~= "string" then return nil end

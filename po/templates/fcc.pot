@@ -549,6 +549,9 @@ msgstr ""
 msgid "The remote host key is now trusted."
 msgstr ""
 
+msgid "The service name was the platform name. It is now fcc — change it if the init script has another name."
+msgstr ""
+
 msgid "The service was not found on the LAN machine. Check the service name in Advanced settings."
 msgstr ""
 

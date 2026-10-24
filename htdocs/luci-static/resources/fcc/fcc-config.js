@@ -677,6 +677,15 @@
 					FCC.notice(remoteStatus(), 'warn',
 						FCC._('The address or SSH port changed — the pinned host key was forgotten.'));
 				}
+				/* The service field sits under the platform select, and the
+				 * platform name had been typed into it. The controller kept the
+				 * default, and the fields below were refilled from the fresh
+				 * status: say why, so the correction does not look like the
+				 * field losing what was typed. */
+				if (r.service_reset) {
+					FCC.notice(remoteStatus(), 'warn',
+						FCC._('The service name was the platform name. It is now fcc — change it if the init script has another name.'));
+				}
 				return loadRemote().then(function () { return r; });
 			})
 			.catch(function (err) {
