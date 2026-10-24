@@ -22,11 +22,15 @@
 	     printing the name again directly under it read as a second, smaller
 	     tab rather than as a heading. -->
 	<div class="cbi-map-descr">
-		<%:An interactive terminal running a coding agent on this router. Sessions keep running after you close this page, and reattaching to one restores its screen.%>
+		<%:An interactive terminal running a coding agent. Sessions keep running after you close this page, and reattaching to one restores its screen.%>
 	</div>
 
 	<div class="fcc-toolbar">
-		<label for="fcc-agent-select" class="fcc-muted"><%:Agent%></label>
+		<!-- Which machine the dropdown and the New session button act on follows
+		     the Configuration tab's switch; fcc-terminal.js rewrites this text
+		     when the page loads and whenever the mode changes. The static text is
+		     the local form, because this router is the default. -->
+		<label for="fcc-agent-select" id="fcc-agent-label" class="fcc-muted"><%:Agent [This router]%></label>
 		<select id="fcc-agent-select" class="cbi-input-select"></select>
 		<button id="fcc-term-create" class="cbi-button cbi-button-apply"><%:New session%></button>
 		<button id="fcc-term-popout" class="cbi-button cbi-button-action"><%:Open in browser%></button>
@@ -57,6 +61,7 @@
 
 	<div class="fcc-note">
 		<%:Sessions are hosted by tmux on the router, so they survive a page reload or a browser restart. Closing a session from its tab ends the agent process.%>
+		<%:On the LAN side the agent itself runs on the other machine, over SSH.%>
 	</div>
 </div>
 

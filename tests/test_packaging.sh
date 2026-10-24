@@ -575,6 +575,55 @@ test_the_console_toolbar_is_ordered_and_has_no_cleanup_button() {
 	fi
 }
 
+test_the_console_follows_the_configured_side() {
+	# The Web Console has no switch of its own. It follows the Configuration
+	# tab's [This router] [LAN] setting, and this check pins the three pieces
+	# that make that visible: the label the dropdown carries, the per-tab badge
+	# that says where an *existing* session runs, and the backend routes the
+	# page reads the setting from.
+	_view="$ROOT/luasrc/view/fcc/console.htm"
+	_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-terminal.js"
+	_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
+	_ctrl="$ROOT/luasrc/controller/fcc.lua"
+	_sess="$ROOT/root/usr/libexec/fcc/session.sh"
+
+	assert_contains "$(cat "$_view")" 'id="fcc-agent-label"' \
+		"the agent dropdown has a label the script can rewrite"
+	assert_contains "$(cat "$_view")" '<%:Agent [This router]%>' \
+		"whose static text is the default, this router"
+	assert_not_contains "$(cat "$_view")" 'running a coding agent on this router' \
+		"the page description no longer claims the agent runs here"
+	assert_contains "$(cat "$_view")" '<%:On the LAN side the agent itself runs on the other machine, over SSH.%>' \
+		"and it says where the agent runs in LAN mode"
+
+	assert_contains "$(cat "$_js")" "FCC.api('console'" \
+		"the page asks for the console state rather than only an agent list"
+	assert_contains "$(cat "$_js")" "FCC.api('console_target'" \
+		"and polls the target, so a switch made elsewhere is noticed"
+	assert_contains "$(cat "$_js")" "FCC._('Agent [LAN]')" \
+		"the label has a LAN form"
+	assert_contains "$(cat "$_js")" "FCC._('Agent [This router]')" \
+		"and a local one"
+	assert_contains "$(cat "$_js")" "s.target === 'lan'" \
+		"each tab is badged by the session's own target"
+	assert_contains "$(cat "$_css")" '.fcc-term-tab .fcc-badge' \
+		"the tab badge has a size of its own"
+
+	assert_contains "$(cat "$_ctrl")" 'console = "act_console"' \
+		"the console route is registered"
+	assert_contains "$(cat "$_ctrl")" 'console_target = "act_console_target"' \
+		"and so is the target poll"
+
+	# One place decides. The pane is built from UCI, not from anything the
+	# caller sent, so a console page left open on the other side cannot create
+	# a session on the wrong machine.
+	_create="$(sed -n '/^cmd_create()/,/^}/p' "$_sess")"
+	assert_contains "$_create" 'fcc_uci_get main control_target local' \
+		"the create reads the target from UCI"
+	assert_contains "$_create" 'target_file "$_cr_name"' \
+		"the session records where it runs"
+}
+
 test_the_runtime_help_is_one_warning() {
 	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
 	_ts_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"

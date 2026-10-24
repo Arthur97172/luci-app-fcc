@@ -50,6 +50,12 @@ require_tmux() {
 
 out_file()  { printf '%s/%s.out'  "$SESSDIR" "$1"; }
 base_file() { printf '%s/%s.base' "$SESSDIR" "$1"; }
+# Which machine the session's agent runs on: `local`, or `lan` for a pane that
+# is an ssh client to the machine the Configuration tab points at. Written once
+# when the session is created, because the target can change afterwards while
+# the session keeps running where it started — the tab badge has to describe
+# the session, not the page's current setting.
+target_file() { printf '%s/%s.target' "$SESSDIR" "$1"; }
 # A pending close armed by the standalone browser window, and the counter that
 # tells a closed window apart from a reloaded one. See cmd_close_later().
 closing_file() { printf '%s/%s.closing' "$SESSDIR" "$1"; }
@@ -135,59 +141,101 @@ cmd_create() {
 	{ [ "$_cr_cols" -ge 20 ] && [ "$_cr_cols" -le 500 ]; } || _cr_cols=80
 	{ [ "$_cr_rows" -ge 5 ]  && [ "$_cr_rows" -le 300 ]; } || _cr_rows=24
 
-	# Section 3.6.10: a session may only be created once the runtime is in place,
-	# an agent is installed, and the server it talks to is up. Enforced here
-	# rather than only in the UI because the launcher would otherwise start, fail
-	# to reach the server, and leave the user looking at a dead terminal with no
-	# explanation.
-	#
-	# The runtime is asked for first because it is the outer prerequisite: with
-	# no runtime there is no launcher and no agent CLI either, so "agent not
-	# installed" would name the wrong thing to install.
-	if [ -z "$(fcc_find_server_exe 2>/dev/null || true)" ]; then
-		fcc_die "the FCC runtime is not installed — install it first"; return 1
-	fi
+	# Which machine the agent runs on is read from UCI here, not taken from the
+	# caller. The Configuration tab's switch is the one place that decides it, a
+	# page left open on the other side must not create a session on the wrong
+	# machine, and the console's own label is a description of this value rather
+	# than the value itself.
+	_cr_target="$(fcc_uci_get main control_target local)"
+	[ "$_cr_target" = "lan" ] || _cr_target=local
 
-	# "Is this agent installed?" is asked of the agent's own CLI, never of the
-	# launcher — see fcc_agent_installed() in common.sh for why the two are not
-	# the same question.
-	#
-	# This used to be a bare `command -v "$_cr_launcher"`, and that is a question
-	# about *this process's PATH*, not about the router. The launcher lives in
-	# <root>/bin, which reaches only a shell that has applied
-	# session_env_exports() below — that is, the agent's own shell inside tmux.
-	# The shell rpcd forks to run this script has never applied it, so the probe
-	# answered "not installed" for every agent on every router, and no session
-	# could be created at all. It was the sixth copy of a question common.sh
-	# already answers correctly (§104.17).
-	fcc_agent_installed "$_cr_agent" "$ROOT" || {
-		fcc_die "agent '$_cr_agent' is not installed — install it in Configuration → Agents"; return 1; }
+	if [ "$_cr_target" = "lan" ]; then
+		# The pane is an ssh client to the LAN machine, where fcc-env applies that
+		# machine's runtime environment and execs the launcher. Everything the
+		# transport does — pipe-pane, the offset, resize, close — is unchanged,
+		# and this router never needs the runtime or the agent's CLI itself: the
+		# checks below would answer about the wrong machine.
+		#
+		# remote.sh owns the connection (key, pinned host, fixed options) and
+		# refuses with a reason code the page translates. The reason is passed
+		# through untouched: the controller relays it as the create's answer.
+		_cr_launcher="$(fcc_agent_command "$_cr_agent")"
+		_cr_libdir="${FCC_LIBDIR:-/usr/libexec/fcc}"
+		if _cr_launch="$("$_cr_libdir/remote.sh" session-command "$_cr_agent" 2>/dev/null)"; then
+			[ -n "$_cr_launch" ] || {
+				printf '{"ok":false,"reason":"no-ssh-command"}\n'; return 1; }
+		else
+			# remote.sh's own refusal document, relayed as it stands. Not
+			# ${_cr_launch:-{...}}: an expansion ends at the first `}`, so the
+			# default's brace would be printed as a stray character after a
+			# document that was there all along.
+			if [ -n "$_cr_launch" ]; then
+				printf '%s\n' "$_cr_launch"
+			else
+				printf '{"ok":false,"reason":"lan-unavailable"}\n'
+			fi
+			return 1
+		fi
+		# The terminal's environment, not the runtime's: HOME, the XDG directories
+		# and PATH belong to the machine the launcher runs on, and fcc-env applies
+		# them there. Only what describes this pty travels over ssh.
+		_cr_cmd="export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; exec $_cr_launch"
+	else
+		# Section 3.6.10: a session may only be created once the runtime is in
+		# place, an agent is installed, and the server it talks to is up. Enforced
+		# here rather than only in the UI because the launcher would otherwise
+		# start, fail to reach the server, and leave the user looking at a dead
+		# terminal with no explanation.
+		#
+		# The runtime is asked for first because it is the outer prerequisite:
+		# with no runtime there is no launcher and no agent CLI either, so "agent
+		# not installed" would name the wrong thing to install.
+		if [ -z "$(fcc_find_server_exe 2>/dev/null || true)" ]; then
+			fcc_die "the FCC runtime is not installed — install it first"; return 1
+		fi
 
-	# The launcher is what the pane execs, so it is resolved to an absolute path
-	# rather than looked up in PATH. _cr_launcher keeps the bare name: it is what
-	# the reply reports and what the log records, and the name is the contract.
-	_cr_launcher="$(fcc_agent_command "$_cr_agent")"
-	_cr_launcher_exe="$(fcc_agent_launcher_path "$_cr_agent")" || {
-		fcc_die "the launcher for '$_cr_agent' ('$_cr_launcher') is missing from the runtime"; return 1; }
+		# "Is this agent installed?" is asked of the agent's own CLI, never of the
+		# launcher — see fcc_agent_installed() in common.sh for why the two are
+		# not the same question.
+		#
+		# This used to be a bare `command -v "$_cr_launcher"`, and that is a
+		# question about *this process's PATH*, not about the router. The launcher
+		# lives in <root>/bin, which reaches only a shell that has applied
+		# session_env_exports() below — that is, the agent's own shell inside
+		# tmux. The shell rpcd forks to run this script has never applied it, so
+		# the probe answered "not installed" for every agent on every router, and
+		# no session could be created at all. It was the sixth copy of a question
+		# common.sh already answers correctly (§104.17).
+		fcc_agent_installed "$_cr_agent" "$ROOT" || {
+			fcc_die "agent '$_cr_agent' is not installed — install it in Configuration → Agents"; return 1; }
 
-	if [ -z "$(fcc_server_pid 2>/dev/null || true)" ]; then
-		fcc_die "the FCC server is not running — start it first"; return 1
+		# The launcher is what the pane execs, so it is resolved to an absolute
+		# path rather than looked up in PATH. _cr_launcher keeps the bare name: it
+		# is what the reply reports and what the log records, and the name is the
+		# contract.
+		_cr_launcher="$(fcc_agent_command "$_cr_agent")"
+		_cr_launcher_exe="$(fcc_agent_launcher_path "$_cr_agent")" || {
+			fcc_die "the launcher for '$_cr_agent' ('$_cr_launcher') is missing from the runtime"; return 1; }
+
+		if [ -z "$(fcc_server_pid 2>/dev/null || true)" ]; then
+			fcc_die "the FCC server is not running — start it first"; return 1
+		fi
+
+		# The launcher itself connects to the FCC server. $_cr_launcher_exe and
+		# $ROOT are both validated values, never user input, so the command string
+		# cannot be injected into.
+		#
+		# The `;` is load-bearing and belongs here rather than at the end of
+		# session_env_exports(). That function renders `export` lines for a shell
+		# to read, and `$(...)` eats the newline after the last of them — so
+		# without a separator of its own the concatenation below would end
+		# `... LC_ALL=C.UTF-8 exec /opt/fcc/bin/fcc-claude`, and `exec` would be
+		# one more word for `export`. That is not hypothetical: it is what the pane
+		# reported the first time the exports became multi-line.
+		_cr_cmd="$(session_env_exports); exec $_cr_launcher_exe"
 	fi
 
 	_cr_name="$(next_session_name "$_cr_agent")" || { fcc_die "no free session slot"; return 1; }
-
-	# The launcher itself connects to the FCC server. $_cr_launcher_exe and $ROOT
-	# are both validated values, never user input, so the command string cannot
-	# be injected into.
-	#
-	# The `;` is load-bearing and belongs here rather than at the end of
-	# session_env_exports(). That function renders `export` lines for a shell to
-	# read, and `$(...)` eats the newline after the last of them — so without a
-	# separator of its own the concatenation below would end
-	# `... LC_ALL=C.UTF-8 exec /opt/fcc/bin/fcc-claude`, and `exec` would be one
-	# more word for `export`. That is not hypothetical: it is what the pane
-	# reported the first time the exports became multi-line.
-	_cr_cmd="$(session_env_exports); exec $_cr_launcher_exe"
 
 	# The pane is created holding `cat`, which waits on stdin and prints nothing,
 	# and the agent is started afterwards by respawning it. Passing the command to
@@ -211,6 +259,7 @@ cmd_create() {
 	# the agent starts: the placeholder has written nothing.
 	: > "$(out_file "$_cr_name")"
 	printf '0' > "$(base_file "$_cr_name")"
+	printf '%s' "$_cr_target" > "$(target_file "$_cr_name")"
 	tmux pipe-pane -t "$_cr_name" -o "cat >> '$(out_file "$_cr_name")'" 2>/dev/null
 
 	if ! tmux respawn-pane -k -t "$_cr_name" "$_cr_cmd" 2>/dev/null; then
@@ -218,10 +267,11 @@ cmd_create() {
 		fcc_die "failed to start the agent in its session"; return 1
 	fi
 
-	fcc_log "fcc-terminal.log" "session created: $_cr_name (agent=$_cr_agent ${_cr_cols}x${_cr_rows})"
-	printf '{"name": %s, "agent": %s, "launcher": %s, "cols": %s, "rows": %s}\n' \
+	fcc_log "fcc-terminal.log" "session created: $_cr_name (agent=$_cr_agent target=$_cr_target ${_cr_cols}x${_cr_rows})"
+	printf '{"name": %s, "agent": %s, "launcher": %s, "target": %s, "cols": %s, "rows": %s}\n' \
 		"$(fcc_json_str "$_cr_name")" "$(fcc_json_str "$_cr_agent")" \
-		"$(fcc_json_str "$_cr_launcher")" "$_cr_cols" "$_cr_rows"
+		"$(fcc_json_str "$_cr_launcher")" "$(fcc_json_str "$_cr_target")" \
+		"$_cr_cols" "$_cr_rows"
 }
 
 cmd_list() {
@@ -242,11 +292,17 @@ cmd_list() {
 			_ls_rss="$(fcc_proc_rss_kb "$_ls_spid")"
 		fi
 		_ls_exit=""; [ "$_ls_dead" = true ] && _ls_exit="$(session_exit_code "$_ls_sname" 2>/dev/null || true)"
+		# A session made before this sidecar existed has no file, and every one of
+		# those was a local session: local is the only answer that cannot be
+		# wrong about an unknown session.
+		_ls_target="$(cat "$(target_file "$_ls_sname")" 2>/dev/null || true)"
+		case "$_ls_target" in lan) : ;; *) _ls_target=local ;; esac
 		[ "$_ls_first" -eq 1 ] || printf ','
 		_ls_first=0
-		printf '\n  {"name": %s, "agent": %s, "display_name": %s, "pid": %s, "created": %s, "uptime": %s, "memory_rss_kb": %s, "dead": %s, "exit_code": %s}' \
+		printf '\n  {"name": %s, "agent": %s, "display_name": %s, "target": %s, "pid": %s, "created": %s, "uptime": %s, "memory_rss_kb": %s, "dead": %s, "exit_code": %s}' \
 			"$(fcc_json_str "$_ls_sname")" "$(fcc_json_str "$_ls_agent")" \
 			"$(fcc_json_str "$(fcc_agent_name "$_ls_agent")")" \
+			"$(fcc_json_str "$_ls_target")" \
 			"$(fcc_json_num_or_null "$_ls_spid")" \
 			"$(fcc_json_num_or_null "$_ls_screated")" \
 			"$(fcc_json_num_or_null "$_ls_up")" \
@@ -373,6 +429,7 @@ cmd_close() {
 	# Never touch anything outside the fcc-* namespace.
 	tmux kill-session -t "$_cl_name" 2>/dev/null
 	rm -f "$(out_file "$_cl_name")" "$(base_file "$_cl_name")" \
+		"$(target_file "$_cl_name")" \
 		"$(closing_file "$_cl_name")" "$(gen_file "$_cl_name")"
 	fcc_log "fcc-terminal.log" "session closed: $_cl_name"
 }
@@ -404,6 +461,7 @@ cmd_close_all() {
 			_ca_n=$(( _ca_n + 1 ))
 		fi
 		rm -f "$(out_file "$_ca_s")" "$(base_file "$_ca_s")" \
+			"$(target_file "$_ca_s")" \
 			"$(closing_file "$_ca_s")" "$(gen_file "$_ca_s")"
 	done
 	fcc_log "fcc-terminal.log" "session closed: all ($_ca_n)"
@@ -468,7 +526,7 @@ cmd_reap() {
 
 		tmux kill-session -t "$_rp_name" 2>/dev/null
 		rm -f "$(out_file "$_rp_name")" "$(base_file "$_rp_name")" \
-			"$_rp_f" "$(gen_file "$_rp_name")"
+			"$(target_file "$_rp_name")" "$_rp_f" "$(gen_file "$_rp_name")"
 		fcc_log "fcc-terminal.log" "session closed: $_rp_name (its browser window was closed)"
 	done
 }
@@ -481,14 +539,15 @@ cmd_cleanup() {
 	for _cu_s in $_cu_dead; do
 		fcc_valid_session "$_cu_s" || continue
 		tmux kill-session -t "$_cu_s" 2>/dev/null
-		rm -f "$(out_file "$_cu_s")" "$(base_file "$_cu_s")"
+		rm -f "$(out_file "$_cu_s")" "$(base_file "$_cu_s")" "$(target_file "$_cu_s")"
 	done
 	# Remove orphaned capture files whose session no longer exists.
 	for _cu_f in "$SESSDIR"/fcc-*.out; do
 		[ -e "$_cu_f" ] || continue
 		_cu_s="$(basename "$_cu_f" .out)"
 		fcc_valid_session "$_cu_s" || { rm -f "$_cu_f"; continue; }
-		session_exists "$_cu_s" || rm -f "$_cu_f" "$(base_file "$_cu_s")"
+		session_exists "$_cu_s" \
+			|| rm -f "$_cu_f" "$(base_file "$_cu_s")" "$(target_file "$_cu_s")"
 	done
 }
 

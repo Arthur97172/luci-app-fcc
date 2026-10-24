@@ -62,8 +62,17 @@ msgstr "高级设置"
 msgid "Agent"
 msgstr "智能体"
 
+msgid "Agent [LAN]"
+msgstr "智能体[局域网]"
+
+msgid "Agent [This router]"
+msgstr "智能体[本机]"
+
 msgid "Agent exited unexpectedly."
 msgstr "智能体意外退出。"
+
+msgid "Agent list unavailable"
+msgstr "智能体列表不可用"
 
 msgid "Agents"
 msgstr "智能体"
@@ -75,12 +84,11 @@ msgid "All unsaved terminal state will be lost."
 msgstr "所有未保存的终端状态都将丢失。"
 
 msgid ""
-"An interactive terminal running a coding agent on this router. Sessions keep "
-"running after you close this page, and reattaching to one restores its "
-"screen."
+"An interactive terminal running a coding agent. Sessions keep running after "
+"you close this page, and reattaching to one restores its screen."
 msgstr ""
-"在此路由器上直接运行智能体的交互式终端。关闭本页面后会话仍会继续运行，重新连"
-"接即可恢复会话记录。"
+"运行智能体的交互式终端。关闭本页面后会话仍会继续运行，重新连接即可恢复会话记"
+"录。"
 
 msgid "Architecture"
 msgstr "架构"
@@ -349,6 +357,9 @@ msgstr "未安装"
 msgid "Now"
 msgstr "当前"
 
+msgid "On the LAN side the agent itself runs on the other machine, over SSH."
+msgstr "局域网模式下，智能体本身通过 SSH 在另一台机器上运行。"
+
 msgid ""
 "Only one FCC Server runs at a time. Switching to a side stops the other one."
 msgstr "同一时间只运行一个 FCC Server。切换到另一侧时会停止原来那一侧的服务。"
@@ -410,6 +421,14 @@ msgstr "运行中"
 
 msgid "Running checks…"
 msgstr "正在运行检查…"
+
+msgid "Runs on"
+msgstr "运行于"
+
+msgid ""
+"SSH has not been set up for the LAN machine yet. Generate its key in "
+"Configuration → FCC Server."
+msgstr "尚未为局域网主机设置 SSH。请在“配置管理 → FCC Server”中生成密钥。"
 
 msgid "SSH key configured"
 msgstr "SSH 密钥已配置"
@@ -511,6 +530,14 @@ msgstr "终端连接已断开，正在重新连接…"
 msgid "Test connection"
 msgstr "测试连接"
 
+msgid "That agent is not one this package knows."
+msgstr "该智能体不在本软件包已知的列表中。"
+
+msgid ""
+"The FCC Server on the LAN machine is not running. Start it on the "
+"Configuration tab."
+msgstr "局域网主机上的 FCC Server 未运行。请在“配置管理”标签页启动它。"
+
 msgid "The LAN FCC Server is not running."
 msgstr "局域网的 FCC Server 未运行。"
 
@@ -536,12 +563,37 @@ msgstr "无法读取局域网连接状态。"
 msgid "The LAN machine answered in a form that could not be read."
 msgstr "局域网主机的应答无法解析。"
 
+msgid "The LAN machine answered with something unexpected."
+msgstr "局域网主机返回了无法识别的内容。"
+
+msgid ""
+"The LAN machine could not be reached. Check that it is on and that SSH is "
+"enabled."
+msgstr "无法连接到局域网主机。请确认它已开机，并且已启用 SSH。"
+
+msgid ""
+"The LAN machine does not run luci-app-fcc, so its agents cannot be listed."
+msgstr "局域网主机没有运行 luci-app-fcc，因此无法列出它的智能体。"
+
 msgid ""
 "The LAN machine has no systemctl. If it runs OpenWrt, set its platform to "
 "OpenWrt in Advanced settings."
 msgstr ""
 "局域网主机没有 systemctl。如果它运行的是 OpenWrt，请在高级设置中把平台设为 "
 "OpenWrt。"
+
+msgid ""
+"The LAN machine is not configured yet. Set it up in Configuration → FCC "
+"Server."
+msgstr "局域网主机尚未配置。请在“配置管理 → FCC Server”中完成设置。"
+
+msgid ""
+"The LAN machine’s host key has not been trusted yet. Trust it in "
+"Configuration → FCC Server."
+msgstr "尚未信任局域网主机的主机密钥。请在“配置管理 → FCC Server”中信任它。"
+
+msgid "The LAN machine’s state could not be read."
+msgstr "无法读取局域网主机的状态。"
 
 msgid "The LAN side is not the selected FCC Server."
 msgstr "当前选择的 FCC Server 不是局域网。"
@@ -636,7 +688,8 @@ msgstr "现在已信任远程主机密钥。"
 msgid ""
 "The service name was the platform name. It is now fcc — change it if the "
 "init script has another name."
-msgstr "服务名填写的是平台名称，现已改为 fcc——如果 init 脚本用别的名字，请改过来。"
+msgstr ""
+"服务名填写的是平台名称，现已改为 fcc——如果 init 脚本用别的名字，请改过来。"
 
 msgid ""
 "The service was not found on the LAN machine. Check the service name in "
@@ -652,8 +705,18 @@ msgstr "此日志为空。"
 msgid "This router"
 msgstr "本机"
 
+msgid ""
+"This router has no OpenSSH client. Install the openssh-client-utils package "
+"on this router."
+msgstr "本机没有 OpenSSH 客户端。请在本机安装 openssh-client-utils 软件包。"
+
 msgid "This router has no setsid, so the LAN tunnel cannot be started."
 msgstr "本机没有 setsid，无法启动局域网隧道。"
+
+msgid ""
+"This router is missing its SSH helper, so the LAN machine cannot be reached. "
+"Reinstall luci-app-fcc."
+msgstr "本机缺少 SSH 辅助脚本，无法连接局域网主机。请重新安装 luci-app-fcc。"
 
 msgid ""
 "This router needs ssh-keygen to create the key (package openssh-keygen)."

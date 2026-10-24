@@ -48,7 +48,16 @@ msgstr ""
 msgid "Agent"
 msgstr ""
 
+msgid "Agent [LAN]"
+msgstr ""
+
+msgid "Agent [This router]"
+msgstr ""
+
 msgid "Agent exited unexpectedly."
+msgstr ""
+
+msgid "Agent list unavailable"
 msgstr ""
 
 msgid "Agents"
@@ -60,7 +69,7 @@ msgstr ""
 msgid "All unsaved terminal state will be lost."
 msgstr ""
 
-msgid "An interactive terminal running a coding agent on this router. Sessions keep running after you close this page, and reattaching to one restores its screen."
+msgid "An interactive terminal running a coding agent. Sessions keep running after you close this page, and reattaching to one restores its screen."
 msgstr ""
 
 msgid "Architecture"
@@ -294,6 +303,9 @@ msgstr ""
 msgid "Now"
 msgstr ""
 
+msgid "On the LAN side the agent itself runs on the other machine, over SSH."
+msgstr ""
+
 msgid "Only one FCC Server runs at a time. Switching to a side stops the other one."
 msgstr ""
 
@@ -343,6 +355,12 @@ msgid "Running"
 msgstr ""
 
 msgid "Running checks…"
+msgstr ""
+
+msgid "Runs on"
+msgstr ""
+
+msgid "SSH has not been set up for the LAN machine yet. Generate its key in Configuration → FCC Server."
 msgstr ""
 
 msgid "SSH key configured"
@@ -441,6 +459,12 @@ msgstr ""
 msgid "Test connection"
 msgstr ""
 
+msgid "That agent is not one this package knows."
+msgstr ""
+
+msgid "The FCC Server on the LAN machine is not running. Start it on the Configuration tab."
+msgstr ""
+
 msgid "The LAN FCC Server is not running."
 msgstr ""
 
@@ -465,7 +489,25 @@ msgstr ""
 msgid "The LAN machine answered in a form that could not be read."
 msgstr ""
 
+msgid "The LAN machine answered with something unexpected."
+msgstr ""
+
+msgid "The LAN machine could not be reached. Check that it is on and that SSH is enabled."
+msgstr ""
+
+msgid "The LAN machine does not run luci-app-fcc, so its agents cannot be listed."
+msgstr ""
+
 msgid "The LAN machine has no systemctl. If it runs OpenWrt, set its platform to OpenWrt in Advanced settings."
+msgstr ""
+
+msgid "The LAN machine is not configured yet. Set it up in Configuration → FCC Server."
+msgstr ""
+
+msgid "The LAN machine’s host key has not been trusted yet. Trust it in Configuration → FCC Server."
+msgstr ""
+
+msgid "The LAN machine’s state could not be read."
 msgstr ""
 
 msgid "The LAN side is not the selected FCC Server."
@@ -564,7 +606,13 @@ msgstr ""
 msgid "This router"
 msgstr ""
 
+msgid "This router has no OpenSSH client. Install the openssh-client-utils package on this router."
+msgstr ""
+
 msgid "This router has no setsid, so the LAN tunnel cannot be started."
+msgstr ""
+
+msgid "This router is missing its SSH helper, so the LAN machine cannot be reached. Reinstall luci-app-fcc."
 msgstr ""
 
 msgid "This router needs ssh-keygen to create the key (package openssh-keygen)."

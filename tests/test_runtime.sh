@@ -1682,6 +1682,163 @@ test_the_runtime_environment_has_one_definition() {
 		'fcc_agent_installed codex "$FCC_DEFAULT_BASE/fcc"'
 }
 
+# ---------------------------------------------------------------------------
+# A session created while the Configuration tab points at the LAN machine
+#
+# The pane is an ssh client, and nothing about a LAN session is decided on this
+# side: the agent runs there, so the local "runtime installed / agent installed
+# / server running" checks would answer about the wrong machine. What this
+# side does keep is a record of where each session runs, because the setting
+# can change while sessions from the other side are still alive.
+#
+# remote.sh is the only part replaced here. It owns the connection, so its own
+# behaviour is tested in tests/test_remote.sh; what is tested here is what
+# session.sh does with the line it returns.
+# ---------------------------------------------------------------------------
+
+make_lan_libexec() {
+	rm -rf "$SANDBOX/lan-libexec"
+	cp -R "$LIBEXEC" "$SANDBOX/lan-libexec"
+	cat > "$SANDBOX/lan-libexec/remote.sh" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+	session-command)
+		if [ -n "${LAN_REMOTE_FAIL:-}" ]; then
+			printf '%s\n' "$LAN_REMOTE_FAIL"
+			exit 1
+		fi
+		printf '%s\n' "${LAN_REMOTE_CMD:-ssh -tt -i /etc/fcc/ssh/id_ed25519 -l fcc 192.168.5.20 /usr/bin/fcc-env fcc-claude}"
+		exit 0 ;;
+esac
+exit 2
+EOF
+	chmod +x "$SANDBOX/lan-libexec/remote.sh"
+}
+
+# session.sh with the uci shim in front (so control_target can be set) and the
+# LAN copy of the library behind.
+lan_script() { # lan_script <args...>
+	UCI_SHIM_DIR="$SANDBOX/uci" \
+	PATH="$SANDBOX/bin:$PATH" \
+	FCC_LIBDIR="$SANDBOX/lan-libexec" \
+	FCC_AGENTS_CONF="$AGENTS_CONF" \
+	FCC_VERSION_FILE="$ROOT/VERSION" \
+	FCC_DEFAULT_BASE="$SANDBOX/opt" \
+	sh "$LIBEXEC/session.sh" "$@" 2>&1
+}
+
+test_a_lan_session_is_an_ssh_pane_and_says_where_it_runs() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — a LAN session is still a pane"
+		return 0
+	fi
+	make_uci_shim
+	make_lan_libexec
+	printf 'lan' > "$SANDBOX/uci/fcc.main.control_target"
+
+	_lc_out="$(lan_script create claude 90 28)"
+	_lc_name="$(printf '%s' "$_lc_out" | sed -n 's/.*"name": "\([^"]*\)".*/\1/p')"
+	assert_ne "" "$_lc_name" "a LAN session is created: [$_lc_out]"
+	assert_contains "$_lc_out" '"target": "lan"' "and reports which machine it runs on"
+	assert_contains "$_lc_out" '"launcher": "fcc-claude"' \
+		"with the agent's launcher, not the ssh line, as its name"
+
+	# Nothing local was installed in this sandbox — no runtime, no agent CLI,
+	# no server — so reaching this point at all is the proof that the LAN branch
+	# does not run the local checks.
+	assert_eq "lan" "$(cat "$SANDBOX/opt/fcc/sessions/$_lc_name.target" 2>/dev/null)" \
+		"the sidecar records the target the session was created with"
+
+	_lc_cmd="$(tmux display-message -p -t "$_lc_name" '#{pane_start_command}' 2>/dev/null)"
+	assert_contains "$_lc_cmd" 'exec ssh -tt' "the pane is the ssh client"
+	assert_contains "$_lc_cmd" '/usr/bin/fcc-env fcc-claude' \
+		"running the agent on the far side through fcc-env"
+	assert_contains "$_lc_cmd" 'TERM=xterm-256color' \
+		"with the terminal described for this pty"
+	assert_not_contains "$_lc_cmd" "$SANDBOX/opt" \
+		"and none of this router's runtime environment, which belongs to the other machine"
+
+	assert_contains "$(lan_script list)" "\"target\": \"lan\"" \
+		"the session list carries the target for the page's badge"
+
+	lan_script close "$_lc_name" >/dev/null
+	assert_no "closing removes the sidecar with the session" \
+		test -f "$SANDBOX/opt/fcc/sessions/$_lc_name.target"
+}
+
+test_a_lan_refusal_is_relayed_to_the_page_unchanged() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — session creation needs a real pane"
+		return 0
+	fi
+	make_uci_shim
+	make_lan_libexec
+	printf 'lan' > "$SANDBOX/uci/fcc.main.control_target"
+
+	# The reason codes are the page's vocabulary; the script must not rewrite
+	# them into prose, because prose is what the catalogue cannot translate.
+	_lf_doc='{"ok":false,"reason":"no-host-key","error":"the remote host key has not been trusted"}'
+	_lf_out="$(LAN_REMOTE_FAIL="$_lf_doc" lan_script create claude 80 24; true)"
+	assert_eq "$_lf_doc" "$_lf_out" "the refusal reaches the caller exactly as written"
+
+	_lf_before="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c '^fcc-claude-')"
+	LAN_REMOTE_FAIL="$_lf_doc" lan_script create claude 80 24 >/dev/null 2>&1 || true
+	assert_eq "$_lf_before" \
+		"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c '^fcc-claude-')" \
+		"a refused create leaves no session behind"
+}
+
+test_closing_all_sessions_removes_every_sidecar() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — there would be no sessions to close"
+		return 0
+	fi
+	# A sidecar left behind is not harmless: session names are reused, so the
+	# next session in that slot would inherit the old one's badge and claim to
+	# run on a machine it has never seen.
+	mkdir -p "$SANDBOX/opt/fcc/sessions"
+	for _ca_n in 301 302 303; do
+		tmux new-session -d -s "fcc-claude-$_ca_n" 'cat' 2>/dev/null
+		printf 'lan' > "$SANDBOX/opt/fcc/sessions/fcc-claude-$_ca_n.target"
+	done
+
+	sh_script session.sh close-all >/dev/null
+
+	for _ca_n in 301 302 303; do
+		assert_no "the sidecar of fcc-claude-$_ca_n is gone" \
+			test -f "$SANDBOX/opt/fcc/sessions/fcc-claude-$_ca_n.target"
+	done
+}
+
+test_a_session_without_a_sidecar_is_reported_as_this_router() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — the list reads tmux's own sessions"
+		return 0
+	fi
+	# Sessions created before the sidecar existed have none, and every one of
+	# those was local: local is the only answer that cannot be wrong.
+	mkdir -p "$SANDBOX/opt/fcc/sessions"
+	tmux new-session -d -s fcc-claude-201 'cat' 2>/dev/null
+	tmux new-session -d -s fcc-claude-202 'cat' 2>/dev/null
+	printf 'lan' > "$SANDBOX/opt/fcc/sessions/fcc-claude-202.target"
+	printf 'nonsense' > "$SANDBOX/opt/fcc/sessions/fcc-claude-201.target"
+
+	_ts_list="$(sh_script session.sh list)"
+	assert_contains "$_ts_list" '"name": "fcc-claude-201", "agent": "claude", "display_name": "Claude Code", "target": "local"' \
+		"an unreadable sidecar falls back to this router"
+	assert_contains "$_ts_list" '"name": "fcc-claude-202", "agent": "claude", "display_name": "Claude Code", "target": "lan"' \
+		"and a LAN session keeps saying so after a reload"
+
+	tmux kill-session -t fcc-claude-201 2>/dev/null
+	tmux kill-session -t fcc-claude-202 2>/dev/null
+	rm -f "$SANDBOX/opt/fcc/sessions/fcc-claude-201.target" \
+		"$SANDBOX/opt/fcc/sessions/fcc-claude-202.target"
+}
+
 test_old_backups_are_pruned_to_the_most_recent_n() {
 	setup_sandbox
 	_bt_root="$SANDBOX/opt/fcc/backup"

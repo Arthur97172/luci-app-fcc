@@ -33,27 +33,168 @@
 		polling: false,
 		pollAbort: null,
 		agents: [],
+		console: null,      // last answer from api/console
+		consoleAt: 0,       // when that answer arrived, for the stale re-read
+		target: null,       // 'local' | 'lan', as last read from UCI
 		listTimer: null
 	};
 
 	// Which banner is on screen, so re-rendering an identical one is skipped.
 	var banner = null;
 
-	/* ------------------------------------------------------------ session list */
+	// The text renderConsoleNotice() last wrote into #fcc-term-status, so it
+	// can take back its own message without erasing anyone else's.
+	var consoleNotice = '';
 
-	function loadAgents() {
-		return FCC.api('agents', {}, { method: 'GET' }).then(function (data) {
+	/* --------------------------------------------------------------- the target */
+
+	/*
+	 * What the toolbar and the terminal are acting on.
+	 *
+	 * The Configuration tab's [This router] [LAN] switch is the only place the
+	 * question is decided, and the backend reads the same UCI value when a pane
+	 * is made — so this page follows that setting rather than offering a second
+	 * switch that could disagree with it. All this side does is describe it.
+	 */
+
+	/*
+	 * Each reason code remote.sh can emit, as the sentence a user can act on.
+	 * Written out one by one rather than kept in a lookup table because the
+	 * catalogue is built from the text inside FCC._(...) calls: a table of bare
+	 * strings would translate at script load, before the page's catalogue is
+	 * certain to be in place, and the strings would never reach an extractor.
+	 */
+	function consoleReason(r) {
+		r = r || {};
+		switch (r.reason) {
+		case 'not-configured':
+			return FCC._('The LAN machine is not configured yet. Set it up in Configuration → FCC Server.');
+		case 'no-key':
+			return FCC._('SSH has not been set up for the LAN machine yet. Generate its key in Configuration → FCC Server.');
+		case 'no-host-key':
+			return FCC._('The LAN machine’s host key has not been trusted yet. Trust it in Configuration → FCC Server.');
+		case 'no-ssh-client':
+			return FCC._('This router has no OpenSSH client. Install the openssh-client-utils package on this router.');
+		case 'unreachable':
+			return FCC._('The LAN machine could not be reached. Check that it is on and that SSH is enabled.');
+		case 'no-agent-tools':
+			return FCC._('The LAN machine does not run luci-app-fcc, so its agents cannot be listed.');
+		case 'unreadable':
+			return FCC._('The LAN machine answered with something unexpected.');
+		case 'invalid-agent':
+			return FCC._('That agent is not one this package knows.');
+		case 'lan-unavailable':
+			/* session.sh's own code: remote.sh is missing or not executable,
+			 * which is a broken install rather than anything the user set. */
+			return FCC._('This router is missing its SSH helper, so the LAN machine cannot be reached. Reinstall luci-app-fcc.');
+		}
+		return FCC._('The LAN machine’s state could not be read.') +
+			(r.error ? ' (' + r.error + ')' : '');
+	}
+
+	/* Not a reason code: the LAN machine answered, and its FCC server is down.
+	 * Starting an agent there would work, but it would have nothing to talk to. */
+	function serverStoppedNotice() {
+		return FCC._('The FCC Server on the LAN machine is not running. Start it on the Configuration tab.');
+	}
+
+	function loadConsole() {
+		return FCC.api('console', {}, { method: 'GET' }).then(function (r) {
+			state.console = r || {};
+			state.consoleAt = Date.now();
+			state.target = (r && r.target === 'lan') ? 'lan' : 'local';
+			renderAgentLabel();
+			var data = (r && r.agents) || {};
 			state.agents = Object.keys(data).map(function (id) {
 				return { id: id, name: data[id].name, installed: data[id].installed };
 			});
 			renderAgentSelect();
-		}).catch(function () { /* the console still works with existing sessions */ });
+			renderConsoleNotice();
+		}).catch(function () {
+			/* The console still works with existing sessions. Count the attempt as
+			 * the last read so the stale check does not retry it on every tick. */
+			state.consoleAt = Date.now();
+		});
+	}
+
+	function renderAgentLabel() {
+		var label = FCC.$('#fcc-agent-label');
+		if (!label) { return; }
+		label.textContent = state.target === 'lan'
+			? FCC._('Agent [LAN]')
+			: FCC._('Agent [This router]');
+	}
+
+	/**
+	 * The one thing standing between the page and a working session, if any.
+	 *
+	 * A LAN target adds two answers of its own: the target may be unreachable or
+	 * half-configured (in which case there is no agent list at all), or it may
+	 * answer while its FCC server is stopped — the agents exist, and a session
+	 * would start one that cannot connect to anything.
+	 */
+	function renderConsoleNotice() {
+		var box = FCC.$('#fcc-term-status');
+		if (!box || !state.console) { return; }
+
+		var kind = '', text = '';
+		if (state.console.ok === false) {
+			kind = 'fail';
+			text = consoleReason(state.console);
+		} else if (state.target === 'lan' && state.console.running === false) {
+			kind = 'warn';
+			text = serverStoppedNotice();
+		}
+
+		if (!kind) {
+			/* Nothing to say. Clear the line only if it still holds what this
+			 * function put there; a message an action just wrote (a session
+			 * that failed to start, say) is not this function's to erase. */
+			if (consoleNotice && box.textContent === consoleNotice) {
+				FCC.notice(box, '', '');
+			}
+			consoleNotice = '';
+			return;
+		}
+
+		FCC.notice(box, kind, text);
+		consoleNotice = text;
+	}
+
+	/**
+	 * Notice a mode switch made in the Configuration tab.
+	 *
+	 * Reading UCI is cheap and reading the other machine's agents is not, so the
+	 * poll only compares the target. A change is what triggers the one SSH round
+	 * trip, which keeps an idle console tab from asking the LAN machine anything.
+	 *
+	 * The answer goes stale all the same: the LAN machine's server may be started
+	 * or stopped from the Configuration tab, or the machine may come back after
+	 * being unreachable. So one re-read a minute keeps the notice honest without
+	 * turning the poll into a stream of SSH connections.
+	 */
+	function refreshTarget() {
+		return FCC.api('console_target', {}, { method: 'GET' }).then(function (r) {
+			var t = (r && r.target === 'lan') ? 'lan' : 'local';
+			if (t !== state.target || Date.now() - state.consoleAt > 60000) {
+				loadConsole();
+			}
+		}).catch(function () { /* try again on the next tick */ });
 	}
 
 	function renderAgentSelect() {
 		var sel = FCC.$('#fcc-agent-select');
 		if (!sel) { return; }
+		/* The console re-reads its state every minute, and a rebuild that reset
+		 * the choice would undo what the user just picked. */
+		var chosen = sel.value;
 		sel.innerHTML = '';
+		if (state.console && state.console.ok === false) {
+			/* "Unavailable" alone would be a key another package can claim for
+			 * something else entirely; the label names what is unavailable. */
+			sel.appendChild(FCC.el('option', { value: '', text: FCC._('Agent list unavailable') }));
+			return;
+		}
 		var installed = state.agents.filter(function (a) { return a.installed; });
 		var list = installed.length ? installed : state.agents;
 		if (!list.length) {
@@ -66,6 +207,12 @@
 				text: a.name + (a.installed ? '' : ' (' + FCC._('not installed') + ')')
 			}));
 		});
+		/* Only restore the choice if it survived: assigning a value no option
+		 * carries would select nothing at all, where leaving the default stands
+		 * shows the first entry. */
+		if (chosen && list.some(function (a) { return a.id === chosen; })) {
+			sel.value = chosen;
+		}
 	}
 
 	function loadSessions() {
@@ -96,12 +243,19 @@
 					closeSession(s.name);
 				}
 			});
+			/* Each tab says which machine its agent runs on. The dropdown's
+			 * label describes the next session; a tab has to describe its own,
+			 * and a session made before a mode change keeps running where it
+			 * was made — so the two can legitimately differ. */
+			var where = (s.target === 'lan') ? FCC._('LAN') : FCC._('This router');
 			var tab = FCC.el('button', {
 				class: 'fcc-term-tab' + (s.name === state.active ? ' active' : ''),
-				onclick: function () { attach(s.name); }
+				onclick: function () { attach(s.name); },
+				title: FCC._('Runs on') + ': ' + where
 			}, [
 				FCC.el('span', { class: 'fcc-dot ' + (s.uptime !== null ? 'on' : 'off') }),
 				FCC.el('span', { text: s.name }),
+				FCC.el('span', { class: 'fcc-badge', text: where }),
 				close
 			]);
 			box.appendChild(tab);
@@ -398,6 +552,13 @@
 
 		FCC.api('session_create', { agent: agent, cols: cols, rows: rows }, { method: 'POST' })
 			.then(function (r) {
+				/* A LAN refusal arrives as a body with ok:false, not as an HTTP
+				 * error: the reason codes are the only part worth translating,
+				 * and the shell's own sentence for them is English. */
+				if (r && r.ok === false) {
+					FCC.notice(FCC.$('#fcc-term-status'), 'fail', consoleReason(r));
+					return;
+				}
 				clearBanner();
 				FCC.notice(FCC.$('#fcc-term-status'), '', '');
 				return loadSessions().then(function () { attach(r.name); });
@@ -504,6 +665,7 @@
 
 		FCC.api('session_create', { agent: agent, cols: 80, rows: 24 }, { method: 'POST' })
 			.then(function (r) {
+				if (r && r.ok === false) { abort(consoleReason(r)); return; }
 				loadSessions();
 				go(r.name);
 			})
@@ -532,13 +694,16 @@
 		}
 
 		ensureTerm();
-		loadAgents();
+		loadConsole();
 		loadSessions().then(function () {
 			// Re-attach to the most recent session after a page reload.
 			if (state.sessions.length) { attach(state.sessions[0].name); }
 		});
 
-		state.listTimer = setInterval(loadSessions, 10000);
+		// The existing ten-second tick refreshes the session list, and costs one
+		// more UCI read to see whether the Configuration tab was switched while
+		// this page was open. A change is the only thing that costs an SSH trip.
+		state.listTimer = setInterval(function () { loadSessions(); refreshTarget(); }, 10000);
 		window.addEventListener('beforeunload', function () {
 			// The tmux session deliberately keeps running; only the polling stops.
 			stopPolling();

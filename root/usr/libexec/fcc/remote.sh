@@ -173,18 +173,25 @@ fcc_remote_client() {
 	esac
 }
 
-fcc_remote_client_error() {
+fcc_remote_client_message() {
 	# One sentence, naming the side that has to change. openssh-client-utils is
 	# the package that pulls in ssh (openssh-client), ssh-keygen
 	# (openssh-keygen) and ssh-keyscan, which is the whole set this feature uses.
+	# It is a function of its own because two answers carry it: the error the
+	# Configuration page shows, and the reason code the Web Console turns into a
+	# sentence in the interface language.
 	case "$(fcc_remote_client)" in
 		dropbear)
-			fcc_remote_error "ssh on this router is Dropbear, which cannot use these options; install the OpenSSH client (package openssh-client-utils) on the router" ;;
+			printf '%s' "ssh on this router is Dropbear, which cannot use these options; install the OpenSSH client (package openssh-client-utils) on the router" ;;
 		none)
-			fcc_remote_error "this router has no SSH client; install the OpenSSH client (package openssh-client-utils) on the router" ;;
+			printf '%s' "this router has no SSH client; install the OpenSSH client (package openssh-client-utils) on the router" ;;
 		*)
-			fcc_remote_error "ssh on this router is not OpenSSH; install the OpenSSH client (package openssh-client-utils) on the router" ;;
+			printf '%s' "ssh on this router is not OpenSSH; install the OpenSSH client (package openssh-client-utils) on the router" ;;
 	esac
+}
+
+fcc_remote_client_error() {
+	fcc_remote_error "$(fcc_remote_client_message)"
 }
 
 fcc_remote_has() {
@@ -514,6 +521,134 @@ fcc_remote_reason() {
 		*"No such file or directory"*)     printf 'no-init-script' ;;
 		*)                                 printf 'unreadable' ;;
 	esac
+}
+
+# ---------------------------------------------------------------------------
+# The Web Console on the LAN machine
+# ---------------------------------------------------------------------------
+#
+# The console is one terminal in both modes: a tmux session on *this* router, a
+# pipe-pane capture, an absolute offset. What differs is the process in the
+# pane. Locally it is the launcher; here it is an ssh client that runs the
+# launcher on the other machine with the same runtime environment (`fcc-env
+# <launcher>`), so the entire transport — offsets, scrollback trimming, resize,
+# close, the standalone window — is reused unchanged, and nothing new listens on
+# any port.
+#
+# Two questions have to be answered before a pane can be made. Which agents can
+# a session start over there (fcc_remote_console), and what exactly does one
+# session run (fcc_remote_session_command). Both answer with a reason code
+# rather than a sentence when they refuse, because the page is translated and
+# this script is not: the page says what a code means in the interface
+# language.
+
+fcc_remote_console_error() {
+	# fcc_remote_console_error <reason> <message>
+	printf '{"ok":false,"reason":%s,"error":%s}\n' \
+		"$(fcc_json_str "$1")" "$(fcc_json_str "$2")"
+}
+
+# The remote's own status document, guarded so a machine that never had the
+# package answers with an empty line instead of an error. It is the same
+# document the LAN server panel renders, and it is the only honest source of
+# "which agents are installed over there": whether an agent's CLI resolves
+# depends on that machine's runtime environment, which nothing here can see.
+FCC_REMOTE_CONSOLE_CMD='[ -x /usr/libexec/fcc/status.sh ] && /usr/libexec/fcc/status.sh'
+
+# The four checks every ssh verb makes, in the order that names the setting a
+# user has to change first. Each one prints its refusal and returns; the caller
+# only has to `return 1`.
+fcc_remote_console_ready() {
+	[ "$(fcc_remote_target)" = "lan" ] \
+		|| { fcc_remote_console_error "not-configured" "remote control is not enabled"; return 1; }
+	fcc_remote_config_ok \
+		|| { fcc_remote_console_error "not-configured" "the remote configuration is incomplete"; return 1; }
+	fcc_remote_key_ready \
+		|| { fcc_remote_console_error "no-key" "the SSH key has not been generated"; return 1; }
+	[ -s "$FCC_REMOTE_KNOWN" ] \
+		|| { fcc_remote_console_error "no-host-key" "the remote host key has not been trusted"; return 1; }
+	[ "$(fcc_remote_client)" = "openssh" ] \
+		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
+	return 0
+}
+
+fcc_remote_console() {
+	fcc_remote_console_ready || return 1
+
+	_cn_host="$(fcc_remote_host)"
+	_cn_out="$(fcc_remote_ssh "$FCC_REMOTE_CONSOLE_CMD")"
+	_cn_code=$?
+	# Blank lines and trailing spaces are not meaningful in JSON, and dropping
+	# them here keeps the `{` test below honest. The document itself is passed
+	# through untouched: the controller decodes it and lifts the two fields the
+	# console needs, so no part of it is ever re-assembled by a shell.
+	_cn_doc="$(printf '%s\n' "$_cn_out" | fcc_remote_output_filter \
+		| sed -e 's/[[:space:]]*$//' -e '/^$/d')"
+
+	case "$_cn_doc" in
+		'{'*)
+			printf '{"ok":true,"host":%s,"status":%s}\n' \
+				"$(fcc_json_str "$_cn_host")" "$_cn_doc"
+			return 0 ;;
+	esac
+
+	# 255 is ssh's own "I could not get there": a refused connection, a wrong
+	# key, a host key that no longer matches. The text that came with it names
+	# which, and it is carried as the error for the log.
+	if [ "$_cn_code" -eq 255 ]; then
+		_cn_why="$(printf '%s' "$_cn_doc" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
+		[ -n "$_cn_why" ] || _cn_why="the LAN machine could not be reached"
+		fcc_remote_console_error "unreachable" "$_cn_why"
+		return 1
+	fi
+	# ssh answered, and the guard printed nothing: the remote has no status.sh,
+	# which is what a machine without this package looks like.
+	if [ -z "$_cn_doc" ]; then
+		fcc_remote_console_error "no-agent-tools" \
+			"the LAN machine does not answer with an agent list"
+		return 1
+	fi
+	fcc_remote_console_error "unreadable" \
+		"the LAN machine answered with something that is not a status document"
+	return 1
+}
+
+fcc_remote_session_command() {
+	# fcc_remote_session_command <agent> -> the command a pane runs, one line.
+	#
+	# On stdout: nothing the user typed. The agent id is checked against the
+	# registry, the host and user are validated before they are stored, and the
+	# key path and ssh binary are this package's own — so the line is several
+	# validated words, not a string that needs escaping to be safe.
+	_sc_agent="${1:-}"
+	fcc_valid_agent "$_sc_agent" \
+		|| { fcc_remote_console_error "invalid-agent" "unknown agent"; return 2; }
+	fcc_remote_console_ready || return 1
+
+	_sc_ssh="$(command -v ssh 2>/dev/null)" \
+		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
+	fcc_remote_openssh "$_sc_ssh" \
+		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
+
+	_sc_launcher="$(fcc_agent_command "$_sc_agent")"
+	# -tt: the pane already has a pty, and forcing the allocation makes ssh hand
+	#     one to the far side too — an agent draws a full-screen interface and
+	#     behaves differently without it.
+	# ServerAlive*: an interactive session outlives the network it started on.
+	#     These end it, rather than leaving it holding an offset nobody reads.
+	# LogLevel=ERROR: the post-quantum warning OpenSSH 9.9 prints on every
+	#     connection would otherwise be painted into the scrollback above the
+	#     agent's opening screen. remote.sh's own verbs filter that line; a
+	#     terminal cannot.
+	# fcc-env applies the remote runtime environment before the launcher runs,
+	#     exactly as session_env_exports() does on this router, so the launcher
+	#     finds the agent's CLI. The absolute path is the one this package
+	#     installs, and a machine that got this far has it.
+	printf '%s %s -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -tt -i %s -p %s -l %s %s /usr/bin/fcc-env %s\n' \
+		"$(fcc_shquote "$_sc_ssh")" "$FCC_REMOTE_SSH_OPTS" \
+		"$(fcc_shquote "$FCC_REMOTE_KEY")" "$(fcc_remote_sport)" \
+		"$(fcc_remote_user)" "$(fcc_remote_host)" \
+		"$_sc_launcher"
 }
 
 fcc_remote_test() {
@@ -878,6 +1013,11 @@ case "${1:-}" in
 		fcc_remote_control "$@" ;;
 	tunnel-ensure)
 		fcc_remote_tunnel_ensure ;;
+	console)
+		fcc_remote_console ;;
+	session-command)
+		shift
+		fcc_remote_session_command "${1:-}" ;;
 	tunnel-stop)
 		fcc_remote_tunnel_stop
 		printf '{"ok":true}\n' ;;

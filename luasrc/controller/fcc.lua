@@ -57,6 +57,7 @@ function index()
 		session_close = "act_session_close", session_cleanup = "act_session_cleanup",
 		session_close_all = "act_session_close_all",
 		session_close_later = "act_session_close_later",
+		console = "act_console", console_target = "act_console_target",
 		server = "act_server",
 		install_runtime = "act_install_runtime",
 		reinstall_runtime = "act_reinstall_runtime",
@@ -778,6 +779,63 @@ function act_sessions()
 	relay("session", { "list" })
 end
 
+--- Which machine the console is controlling, as the Configuration tab set it.
+---
+--- Read-only and local: no SSH, no backend script, one UCI read. The page polls
+--- it beside the session list so a switch made in another tab is noticed within
+--- a few seconds, and only a *change* costs the one SSH round trip that fetches
+--- the other machine's agents.
+function act_console_target()
+	local target = "local"
+	local host = ""
+	local c = cfg_cursor()
+	if c then
+		if c:get("fcc", "main", "control_target") == "lan" then target = "lan" end
+		host = c:get("fcc", "main", "remote_host") or ""
+	end
+	json_out('{"target":' .. util.json_encode(target) ..
+		',"host":' .. util.json_encode(host) .. '}')
+end
+
+--- The agents a new session could start, on whichever machine is targeted.
+---
+--- Local mode is the question this page has always asked: agent.sh's registry
+--- and state. LAN mode cannot answer it here — whether an agent's CLI resolves
+--- depends on the other machine's runtime environment — so the remote is asked
+--- for its own status document and the two fields the console needs are lifted
+--- out of it. A refusal carries a reason code rather than a sentence, since the
+--- page is translated and the script is not.
+function act_console()
+	local target = "local"
+	local c = cfg_cursor()
+	if c and c:get("fcc", "main", "control_target") == "lan" then target = "lan" end
+
+	if target == "local" then
+		local out = run("agent", { "list" })
+		if not looks_like_json(out) then out = "{}" end
+		return json_out('{"ok":true,"target":"local","agents":' .. util.trim(out) .. '}')
+	end
+
+	local out = util.trim(run("remote", { "console" }))
+	local d = util.json_decode(out)
+	if type(d) ~= "table" then
+		return json_out('{"ok":false,"target":"lan","reason":"unreadable","error":'
+			.. util.json_encode(out:sub(1, 300)) .. '}')
+	end
+	if d.ok ~= true then
+		return json_out('{"ok":false,"target":"lan","reason":'
+			.. util.json_encode(d.reason or "unreadable") ..
+			',"error":' .. util.json_encode(d.error or "") .. '}')
+	end
+	local status = type(d.status) == "table" and d.status or {}
+	local server = type(status.server) == "table" and status.server or {}
+	local running = (server.running == true)
+	local list = type(status.agents) == "table" and status.agents or {}
+	json_out('{"ok":true,"target":"lan","host":' .. util.json_encode(d.host or "") ..
+		',"running":' .. (running and "true" or "false") ..
+		',"agents":' .. util.json_encode(list) .. '}')
+end
+
 function act_session_create()
 	if not require_post() then return end
 	local id = util.valid_agent(http.formvalue("agent"))
@@ -786,7 +844,15 @@ function act_session_create()
 	local rows = util.valid_int(http.formvalue("rows") or "24", 5, 300) or 24
 	local out, code = run("session", { "create", id, tostring(cols), tostring(rows) })
 	if code ~= 0 then
-		return fail(util.trim(out) ~= "" and util.trim(out) or "could not create the session")
+		-- A LAN refusal is a reason code the page translates. Relaying it as an
+		-- error string would put the code in front of the user; relaying it as a
+		-- document lets the page say what it means, in the interface language.
+		local text = util.trim(out)
+		local d = looks_like_json(text) and util.json_decode(text) or nil
+		if type(d) == "table" and d.ok == false and d.reason then
+			return json_out(text)
+		end
+		return fail(text ~= "" and text or "could not create the session")
 	end
 	json_out(out)
 end

@@ -205,6 +205,7 @@ run_remote() {
 	PATH="$BIN:$SYSBIN" \
 	UCI_DIR="$UCI" \
 	FCC_LIBDIR="$LIBDIR" \
+	FCC_AGENTS_CONF="${AGENTS_CONF:-$ROOT/root/usr/share/luci-app-fcc/agents.conf}" \
 	FCC_REMOTE_DIR="$SSH_DIR" \
 	FCC_REMOTE_KEY="$SSH_DIR/id_ed25519" \
 	FCC_REMOTE_KNOWN="$SSH_DIR/known_hosts" \
@@ -837,6 +838,166 @@ test_the_uci_defaults_match_the_script_defaults() {
 		"the script agrees on the SSH port"
 	assert_contains "$(sed -n '/fcc_remote_aport()/,+1p' "$SCRIPT")" '8082' \
 		"and on the Admin port"
+}
+
+# ---------------------------------------------------------------------------
+# The Web Console
+#
+# The console does not keep a second copy of the LAN settings or a second way
+# to reach the machine: it asks this script for the remote's own status
+# document (which is what lists that machine's agents) and for the ssh command
+# a tmux pane should run. Both answers are JSON because the controller runs
+# them through util.exec_argv, which throws stderr away — a refusal that only
+# reached stderr would look like silence.
+# ---------------------------------------------------------------------------
+
+# A status document of the shape status.sh prints on the LAN machine.
+LAN_DOC='{"luci_fcc": {"version": "1.0.4"}, "fcc": {"installed": true, "version": "6.16.17"}, "server": {"running": true, "pid": 28483, "port": 8082, "bind": "127.0.0.1"}, "agents": {"claude": {"name": "Claude Code", "installed": true, "running": false}, "dsh": {"name": "DeepSeek Harness", "installed": false, "running": false}}}'
+
+test_console_answers_with_the_lan_agents() {
+	fresh
+	ready_lan
+	out="$(SSH_DETAIL_OUT="$LAN_DOC" run_remote console)" || true
+	assert_contains "$out" '"ok":true' "the console open is answered, not refused"
+	assert_contains "$out" '"host":"192.168.5.20"' "the answer names the machine it describes"
+	assert_contains "$out" '"agents": {' "the remote's agent map is passed through"
+	assert_contains "$out" '"name": "Claude Code"' \
+		"with the entries that machine reported"
+	assert_contains "$out" '"running": true' "and the server state the page warns about"
+	assert_eq '[ -x /usr/libexec/fcc/status.sh ] && /usr/libexec/fcc/status.sh' \
+		"$(ssh_command 1)" "asked for the remote's own status document"
+	drop_sandbox
+}
+
+test_console_refuses_a_target_that_is_not_configured() {
+	# Nothing ready: the page has to be told which step is missing rather than
+	# be handed an empty agent list, which would read as "nothing installed".
+	fresh
+	out="$(run_remote console)" || true
+	assert_contains "$out" '"ok":false' "opening the console on a bare target fails"
+	assert_contains "$out" '"reason":"not-configured"' "naming the missing configuration"
+	assert_not_contains "$(cat "$TMP/ssh.log" 2>/dev/null)" 'CALL' \
+		"and no connection is attempted"
+	drop_sandbox
+}
+
+test_console_names_each_missing_piece() {
+	# Each refusal is a different repair, so each has its own reason code: key,
+	# pinned host, and the client on this router.
+	fresh
+	ready_lan
+	rm -f "$SSH_DIR/id_ed25519"
+	out="$(run_remote console)" || true
+	assert_contains "$out" '"reason":"no-key"' "a missing key is its own reason"
+
+	fresh
+	ready_lan
+	: > "$SSH_DIR/known_hosts"
+	out="$(run_remote console)" || true
+	assert_contains "$out" '"reason":"no-host-key"' \
+		"an untrusted host key is its own reason"
+
+	fresh
+	ready_lan
+	hide_tool ssh
+	out="$(run_remote console)" || true
+	assert_contains "$out" '"reason":"no-ssh-client"' \
+		"a missing client is its own reason"
+	assert_contains "$out" 'openssh-client-utils' \
+		"and still names the package that provides it"
+	drop_sandbox
+}
+
+test_console_does_not_take_an_unreachable_answer_for_a_state() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='ssh: connect to host 192.168.5.20 port 22: Connection refused' \
+		SSH_EXIT=255 run_remote console)" || true
+	assert_contains "$out" '"reason":"unreachable"' "ssh's own failure is named as such"
+	assert_contains "$out" 'Connection refused' "with the words that say why"
+	drop_sandbox
+}
+
+test_console_reports_a_machine_without_the_helper() {
+	# ssh answered and the guard printed nothing: that machine has no
+	# status.sh, which is what a host without this package looks like.
+	fresh
+	ready_lan
+	out="$(SSH_DETAIL_OUT='' run_remote console)" || true
+	assert_contains "$out" '"reason":"no-agent-tools"' \
+		"a machine without the package is named"
+	drop_sandbox
+
+	# And an answer that is not a document at all is not read as one.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='hello' run_remote console)" || true
+	assert_contains "$out" '"reason":"unreadable"' \
+		"anything else is unreadable, not a status"
+	drop_sandbox
+}
+
+test_console_drops_the_clients_own_warnings() {
+	# OpenSSH 9.9 prints a post-quantum note on every connection. The document
+	# follows it, and the page's decoder must still see a document.
+	fresh
+	ready_lan
+	out="$(SSH_DETAIL_OUT='** WARNING: connection is not using a post-quantum key exchange
+** The server may need to be upgraded. See https://openssh.com/pq.html
+'"$LAN_DOC" run_remote console)" || true
+	assert_contains "$out" '"ok":true' "the document after the warning is read"
+	assert_not_contains "$out" 'post-quantum' "and the warning itself is not relayed"
+	drop_sandbox
+}
+
+test_session_command_is_one_line_a_pane_can_run() {
+	# The pane runs this exact line, so the test pins it word by word: the
+	# shared options, the two interactive-only ones, a forced pty, the key, the
+	# port, the user, the host, and the launcher reached through fcc-env.
+	fresh
+	ready_lan
+	out="$(run_remote session-command claude)" || true
+	assert_eq "'$BIN/ssh' \
+-o BatchMode=yes \
+-o ConnectTimeout=8 \
+-o ConnectionAttempts=1 \
+-o IdentitiesOnly=yes \
+-o PreferredAuthentications=publickey \
+-o StrictHostKeyChecking=yes \
+-o UserKnownHostsFile=$SSH_DIR/known_hosts \
+-o ServerAliveInterval=15 \
+-o ServerAliveCountMax=3 \
+-o LogLevel=ERROR \
+-tt \
+-i '$SSH_DIR/id_ed25519' \
+-p 22 \
+-l fcc \
+192.168.5.20 \
+/usr/bin/fcc-env fcc-claude" "$out" \
+		"the pane command is the key-only ssh call that runs the agent"
+
+	out="$(run_remote session-command dsh)" || true
+	assert_contains "$out" 'fcc-env fcc-dsh' \
+		"the launcher comes from this package's agent registry"
+	assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" \
+		"and the whole command is one line"
+	drop_sandbox
+}
+
+test_session_command_refuses_what_it_cannot_safely_run() {
+	# The line is executed by a shell, so the agent id is checked against the
+	# registry before anything is printed.
+	fresh
+	ready_lan
+	out="$(run_remote session-command 'x; rm -rf /')" || true
+	assert_contains "$out" '"ok":false' "an unknown id is refused"
+	assert_contains "$out" '"reason":"invalid-agent"' "as an unknown agent"
+
+	fresh
+	out="$(run_remote session-command claude)" || true
+	assert_contains "$out" '"reason":"not-configured"' \
+		"and a bare target is refused before the ssh line is built"
+	drop_sandbox
 }
 
 tests_main

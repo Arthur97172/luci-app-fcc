@@ -358,6 +358,15 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 
 .fcc-term-tab .fcc-close:hover { color: var(--fcc-fail); }
 
+/* Which machine a tab's agent runs on. Dimmer than the name, because it is a
+ * place, not an identity, and a row of tabs should still read as names. */
+.fcc-term-tab .fcc-badge {
+	padding: 0 .45em;
+	font-size: .72em;
+	line-height: 1.5;
+	color: var(--fcc-text-dim);
+}
+
 /* -------------------------------------------------------------------- log */
 pre.fcc-log {
 	max-height: 22em;

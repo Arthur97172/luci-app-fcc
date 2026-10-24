@@ -1083,6 +1083,212 @@ LUA
 		"and stored as it was typed"
 }
 
+test_the_console_follows_the_configuration_tab() {
+	# The Web Console has no switch of its own: it describes whichever machine
+	# the Configuration tab targets, and the LAN answers have to survive the
+	# trip through the controller — a reason code is only useful to the page if
+	# the page receives the code rather than a sentence around it.
+	if [ -z "$LUA" ]; then
+		skip "no Lua interpreter available"
+		return
+	fi
+
+	_cc_dir="$(mktemp -d)"
+	mkdir -p "$_cc_dir/libexec"
+	# agent.sh list — the local mode answer, already a document.
+	cat > "$_cc_dir/libexec/agent.sh" <<'SH'
+#!/bin/sh
+[ "${1:-}" = "list" ] || exit 2
+printf '{"claude": {"name": "Claude Code", "installed": true, "running": false}}\n'
+SH
+	# remote.sh console — the LAN mode answer, read from a file the test writes
+	# between calls, plus a marker so the local case can prove it never ran.
+	cat > "$_cc_dir/libexec/remote.sh" <<'SH'
+#!/bin/sh
+[ "${1:-}" = "console" ] || exit 2
+: > "$CONSOLE_DIR/called"
+cat "$CONSOLE_DIR/answer"
+SH
+	printf '%s\n' '{"ok":true,"host":"192.168.5.3","status":{"server":{"running":true},"agents":{"claude":{"name":"Claude Code","installed":true}}}}' \
+		> "$_cc_dir/answer"
+	# session.sh create — a LAN refusal, as session.sh relays it.
+	cat > "$_cc_dir/libexec/session.sh" <<'SH'
+#!/bin/sh
+[ "${1:-}" = "create" ] || exit 2
+printf '%s\n' '{"ok":false,"reason":"unreachable","error":"ssh: connect to host 192.168.5.3 port 22: No route to host"}'
+exit 1
+SH
+	chmod +x "$_cc_dir/libexec/agent.sh" "$_cc_dir/libexec/remote.sh" \
+		"$_cc_dir/libexec/session.sh"
+
+	_cc_p="$(mktemp)"
+	cat > "$_cc_p" <<'LUA'
+local ROOT = assert(os.getenv("FCC_TEST_ROOT"))
+
+table.insert(package.loaders, 1, function(name)
+	local rel
+	if name == "luci.controller.fcc" then
+		rel = "/luasrc/controller/fcc.lua"
+	else
+		local short = name:match("^luci%.fcc%.([a-z_]+)$")
+		if short then rel = "/luasrc/fcc/" .. short .. ".lua" end
+	end
+	if not rel then return nil end
+	local fh = io.open(ROOT .. rel, "r")
+	if not fh then return nil end
+	local src = fh:read("*a"); fh:close()
+	return assert(loadstring(src, "@" .. rel))
+end)
+
+package.preload["nixio.fs"] = function()
+	return { access = function(p)
+		local f = io.open(p, "r"); if f then f:close() return true end
+		return os.rename(p, p) ~= nil or nil
+	end }
+end
+
+local store = { control_target = "local", remote_host = "192.168.5.3" }
+package.preload["luci.model.uci"] = function()
+	return { cursor = function()
+		return {
+			get = function(_, cfg, sec, opt) return store[opt] end,
+			set = function() end,
+			commit = function() end,
+		}
+	end }
+end
+
+local form, written = {}, {}
+package.preload["luci.http"] = function()
+	return {
+		prepare_content = function() end,
+		write     = function(t) written[#written + 1] = t end,
+		status    = function() end,
+		getenv    = function(k) if k == "REQUEST_METHOD" then return "POST" end end,
+		formvalue = function(k) return form[k] end,
+	}
+end
+
+local util = require "luci.fcc.util"
+-- The router parses with luci.jsonc, which a development host may not have.
+-- Only the decoding library is stood in for; the handler under test is the real
+-- one, and every document it emits is encoded with the real json_encode.
+util.json_decode = function(s)
+	if type(s) ~= "string" then return nil end
+	if s:find('"status"', 1, true) then
+		return { ok = true, host = "192.168.5.3",
+		         status = { server = { running = true },
+		                    agents = { claude = { name = "Claude Code", installed = true } } } }
+	end
+	if s:find('"reason":"no-host-key"', 1, true) then
+		return { ok = false, reason = "no-host-key", error = "the remote host key has not been trusted" }
+	end
+	return nil
+end
+
+local ctrl = require "luci.controller.fcc"
+local function body() return table.concat(written) end
+
+-- What the stand-in remote.sh answers on the next console call.
+local function answer(s)
+	local fh = assert(io.open(os.getenv("CONSOLE_DIR") .. "/answer", "w"))
+	fh:write(s, "\n"); fh:close()
+end
+
+-- This router: the agent list comes from here, and nothing is asked of the LAN.
+-- The marker is what makes that second half a check rather than a belief.
+form = {}
+written = {}
+ctrl.act_console()
+print("local=" .. body())
+print("local_calls=" .. (io.open(os.getenv("CONSOLE_DIR") .. "/called") and "yes" or "no"))
+
+-- The LAN machine, as the console page asks about it.
+store.control_target = "lan"
+form = {}
+written = {}
+ctrl.act_console()
+print("lan=" .. body())
+
+-- The target alone, which is what the page polls while it is open.
+written = {}
+ctrl.act_console_target()
+print("target=" .. body())
+
+-- A target that cannot be used answers with the reason code, not with prose.
+answer('{"ok":false,"reason":"no-host-key","error":"the remote host key has not been trusted"}')
+written = {}
+ctrl.act_console()
+print("refused=" .. body())
+
+-- And an answer that is not a document at all is not mistaken for one.
+answer('hello')
+written = {}
+ctrl.act_console()
+print("garbage=" .. body())
+print("calls=" .. (io.open(os.getenv("CONSOLE_DIR") .. "/called") and "yes" or "no"))
+
+-- A session created in LAN mode fails with a reason the page translates.
+store.control_target = "lan"
+form = { agent = "claude", cols = "80", rows = "24" }
+written = {}
+ctrl.act_session_create()
+print("create=" .. body())
+LUA
+
+	_cc_out="$(CONSOLE_DIR="$_cc_dir" \
+		FCC_TEST_ROOT="$ROOT" \
+		FCC_LIBEXEC="$_cc_dir/libexec" \
+		FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
+		FCC_VERSION_FILE="$ROOT/VERSION" \
+		PATH="/usr/bin:/bin" "$LUA" "$_cc_p" 2>&1)"
+	rm -f "$_cc_p"
+
+	_cc_local="$(printf '%s\n' "$_cc_out" | sed -n 's/^local=//p')"
+	assert_contains "$_cc_local" '"ok":true' \
+		"this router's console opens: [$_cc_local]"
+	assert_contains "$_cc_local" '"target":"local"' "and says which machine it describes"
+	assert_contains "$_cc_local" '"claude"' "with this router's agents"
+
+	_cc_lan="$(printf '%s\n' "$_cc_out" | sed -n 's/^lan=//p')"
+	assert_contains "$_cc_lan" '"target":"lan"' "the LAN console says so: [$_cc_lan]"
+	assert_contains "$_cc_lan" '"host":"192.168.5.3"' "names the machine"
+	assert_contains "$_cc_lan" '"running":true' \
+		"lifts the server state the page warns about out of the document"
+	assert_contains "$_cc_lan" '"claude"' "and the agents that machine reports"
+	# The document's other sections are not the page's business; sending them
+	# would put the remote's whole system report into every page load.
+	assert_not_contains "$_cc_lan" '"status"' \
+		"the rest of the remote document is not passed on"
+
+	_cc_target="$(printf '%s\n' "$_cc_out" | sed -n 's/^target=//p')"
+	assert_contains "$_cc_target" '"target":"lan"' \
+		"the poll answers with the target alone: [$_cc_target]"
+	assert_contains "$_cc_target" '"host":"192.168.5.3"' "and the machine it names"
+
+	_cc_refused="$(printf '%s\n' "$_cc_out" | sed -n 's/^refused=//p')"
+	assert_contains "$_cc_refused" '"reason":"no-host-key"' \
+		"a refused console relays its reason code: [$_cc_refused]"
+	assert_contains "$_cc_refused" '"error":"the remote host key has not been trusted"' \
+		"with the script's own words kept for the log"
+
+	_cc_garbage="$(printf '%s\n' "$_cc_out" | sed -n 's/^garbage=//p')"
+	assert_contains "$_cc_garbage" '"reason":"unreadable"' \
+		"an answer that is not a document is refused as unreadable: [$_cc_garbage]"
+
+	assert_contains "$_cc_out" "local_calls=no" \
+		"this router's console never asks the LAN machine anything"
+	assert_contains "$_cc_out" "calls=yes" \
+		"and the LAN cases did reach the remote script"
+
+	_cc_create="$(printf '%s\n' "$_cc_out" | sed -n 's/^create=//p')"
+	assert_contains "$_cc_create" '"reason":"unreachable"' \
+		"a failed LAN create relays the reason code: [$_cc_create]"
+	assert_contains "$_cc_create" '"ok":false' "in a document, not as an error string"
+
+	rm -rf "$_cc_dir"
+}
+
 test_the_menu_survives_a_lost_config_file() {
 	# A package manager whose conffile handling goes wrong can leave the package
 	# installed with /etc/config/fcc gone — that is what happened on the test
