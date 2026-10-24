@@ -823,10 +823,12 @@ fcc_remote_console() {
 	_cn_out="$(fcc_remote_ssh "$(fcc_remote_console_cmd)")"
 	_cn_code=$?
 	# Blank lines and trailing spaces are not meaningful in JSON, and dropping
-	# them here keeps the `{` test below honest. The document itself is passed
+	# them here keeps the `{` test below honest. A Windows answer arrives with
+	# CRLF line endings, and the CR is not part of the word it ends — the bare
+	# parser reads "running\r" as neither state. The document itself is passed
 	# through untouched: the controller decodes it and lifts the two fields the
 	# console needs, so no part of it is ever re-assembled by a shell.
-	_cn_doc="$(printf '%s\n' "$_cn_out" | fcc_remote_output_filter \
+	_cn_doc="$(printf '%s\n' "$_cn_out" | fcc_remote_output_filter | tr -d '\r' \
 		| sed -e 's/[[:space:]]*$//' -e '/^$/d')"
 
 	case "$_cn_doc" in

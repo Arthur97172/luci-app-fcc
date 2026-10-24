@@ -1180,6 +1180,20 @@ agent codex missing' run_remote console)" || true
 	drop_sandbox
 }
 
+test_console_reads_a_windows_answer_that_arrived_with_crlf() {
+	# PowerShell writes CRLF, and the CR belongs to the line ending, not to the
+	# word: "running\r" is not either state, and the server would read stopped.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT="$(printf 'server running\r\nagent claude installed\r')" \
+		run_remote console)" || true
+	assert_contains "$out" '"running":true' "the CR is not part of the state word"
+	assert_contains "$out" '"claude":{"name":"Claude Code","installed":true}' \
+		"nor of the agent's"
+	drop_sandbox
+}
+
 test_session_command_on_windows_runs_the_launcher_through_powershell() {
 	fresh
 	ready_lan
