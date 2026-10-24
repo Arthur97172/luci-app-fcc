@@ -293,9 +293,13 @@ of bytes dropped. Keystrokes travel as base64, are decoded to bytes, and are
 re-encoded as hex for `tmux send-keys -H` — the value handed to tmux is never
 attacker-controlled text.
 
-The cost is one long-poll round trip of input latency, with the poll interval
-capped at 25 seconds server-side. For an interactive coding agent that is not
-noticeable; for a full-screen TUI redraw it can be.
+The cost is one long-poll round trip of echo latency: the server looks at the
+session's output file every 0.2 seconds, with the poll interval capped at 25
+seconds server-side. BusyBox's `sleep` takes whole seconds, so the fast tick is
+coreutils' `timeout`; a machine without it falls back to the old one-second
+tick — still usable, but a keypress can take a second to show. For an
+interactive coding agent that is not noticeable; for a full-screen TUI redraw it
+can be.
 
 **Open in browser** on the toolbar puts the current session in a window of its
 own. **Closing that window ends the session**; reloading it does not, because the

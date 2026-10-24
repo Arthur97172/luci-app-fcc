@@ -344,18 +344,43 @@ cmd_output() {
 	[ -r "$_ou_f" ] || : > "$_ou_f"
 	[ -r "$_ou_b" ] || printf '0' > "$_ou_b"
 
+	# How often the wait looks for new bytes, in tenths of a second. The
+	# browser learns that the pane wrote something only when this call
+	# returns, so a one-second tick showed a typed character up to a second
+	# after the key was pressed — the console felt slow to take input while
+	# nothing on the machine was actually busy. BusyBox's sleep takes whole
+	# seconds, but coreutils' timeout takes fractions; where one is there the
+	# wait looks five times a second, and where it is not the one-second tick
+	# stays. The price is one fork per tick while a console is open, which
+	# the router can afford and a one-second echo it cannot.
+	_ou_tick=2
+	timeout 0.2 true >/dev/null 2>&1 || _ou_tick=10
 	_ou_waited=0
 	while :; do
 		_ou_base="$(cat "$_ou_b" 2>/dev/null || echo 0)"
 		case "$_ou_base" in ''|*[!0-9]*) _ou_base=0 ;; esac
-		_ou_sz="$(wc -c < "$_ou_f" 2>/dev/null | tr -d ' ')"
+		# The leading spaces wc pads with are stripped in the shell rather
+		# than by a second fork per tick.
+		_ou_sz="$(wc -c < "$_ou_f" 2>/dev/null)"
+		_ou_sz="${_ou_sz##* }"
 		case "$_ou_sz" in ''|*[!0-9]*) _ou_sz=0 ;; esac
 		_ou_abs=$(( _ou_base + _ou_sz ))
-		if [ "$_ou_abs" -gt "$_ou_off" ] || [ "$_ou_waited" -ge "$_ou_wait" ] || ! session_live "$_ou_name"; then
+		if [ "$_ou_abs" -gt "$_ou_off" ]; then
 			break
 		fi
-		sleep 1
-		_ou_waited=$(( _ou_waited + 1 ))
+		[ "$_ou_waited" -ge $(( _ou_wait * 10 )) ] && break
+		# A pane that died ends the wait, but asking tmux five times a second
+		# costs more than the freshness is worth: the first pass always asks,
+		# and after that once a second is enough.
+		if [ $(( _ou_waited % 10 )) -eq 0 ] && ! session_live "$_ou_name"; then
+			break
+		fi
+		if [ "$_ou_tick" -eq 10 ]; then
+			sleep 1
+		else
+			timeout 0.2 sleep 1 2>/dev/null
+		fi
+		_ou_waited=$(( _ou_waited + _ou_tick ))
 	done
 
 	_ou_reset=false
