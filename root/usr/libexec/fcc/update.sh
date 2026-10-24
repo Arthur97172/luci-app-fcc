@@ -167,10 +167,13 @@ cmd_runtime() {
 	_cru_set="$(installed_agents | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
 	fcc_log "$LOG" "runtime update requested (installed=${_cru_before:-unknown}, agents='${_cru_set:-<defaults>}')"
 
+	# --from-update tells install.sh that the update lock it will find is this
+	# process's own, so its "an update is already running" guard does not stop
+	# the child of the update it is meant to protect against.
 	if [ -n "$_cru_set" ]; then
-		"${FCC_LIBDIR:-/usr/libexec/fcc}/install.sh" runtime --agents "$_cru_set"
+		"${FCC_LIBDIR:-/usr/libexec/fcc}/install.sh" runtime --agents "$_cru_set" --from-update
 	else
-		"${FCC_LIBDIR:-/usr/libexec/fcc}/install.sh" runtime
+		"${FCC_LIBDIR:-/usr/libexec/fcc}/install.sh" runtime --from-update
 	fi
 	_cru_rc=$?
 	fcc_lock_release "$_cru_lock"

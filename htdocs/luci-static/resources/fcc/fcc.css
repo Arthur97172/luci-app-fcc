@@ -36,12 +36,15 @@
  * own: a rule above them says the block is a part of this section while the
  * heading still names what the buttons do. */
 .fcc-update-block {
-	margin-top: 1em;
-	padding-top: .2em;
+	/* The rule is the whole separation: the warning above it and the heading
+	 * below it carry no extra margin of their own, so the line reads as a
+	 * divider rather than as the middle of a blank band. */
+	margin-top: .35em;
+	padding-top: 0;
 	border-top: 1px solid var(--fcc-border);
 }
 
-.fcc-update-block h4 { margin: .6em 0 .3em; }
+.fcc-update-block h4 { margin: .3em 0 .3em; }
 
 /* Basic Information's System and FCC sections are a grid of cards and nothing
  * else, so they were the only blocks on any page with no line of space under
@@ -113,7 +116,7 @@
  * is used in other pages where the theme's spacing is what is wanted. */
 .fcc-help > p { margin: .45em 0; }
 .fcc-help > p:first-child { margin-top: 0; }
-.fcc-help > p:last-child { margin-bottom: .6em; }
+.fcc-help > p:last-child { margin-bottom: 0; }
 .fcc-mono  { font-family: monospace; }
 .fcc-right { text-align: right; }
 .fcc-nowrap { white-space: nowrap; }

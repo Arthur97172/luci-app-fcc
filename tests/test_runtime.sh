@@ -5490,6 +5490,62 @@ test_install_runtime_takes_the_whole_registry() {
 		"and answer with a report rather than a usage error"
 }
 
+# ---------------------------------------------------------------------------
+# An update's own lock does not refuse the update
+# ---------------------------------------------------------------------------
+#
+# update.sh takes fcc-update.lock and then runs `install.sh runtime` for the
+# sequence both paths share (section 23). install.sh refuses to start while an
+# update holds that lock — right for an install someone else started, wrong for
+# the child of the update itself, which is alive for the whole handoff. Every
+# "Update FCC" therefore died with "an update is already running" and the
+# version never moved: 2026-10-24, 6.16.17 -> 6.16.19 reported as available,
+# the log said rc=1 (6.16.17 -> 6.16.17).
+test_an_update_is_not_refused_by_its_own_lock() {
+	setup_sandbox
+	make_uci_shim
+
+	# A lock held by a live process — this test. A dead one would be reclaimed
+	# and the assertions would pass for the wrong reason.
+	_tr_ld="$(sh_common 'fcc_lock_dir')"
+	mkdir -p "$_tr_ld/fcc-update.lock"
+	printf '%s' "$$" > "$_tr_ld/fcc-update.lock/pid"
+
+	# The seam is the precheck: it runs after the lock guard and before the
+	# backup, the download and the installer, so a stub that reports and fails
+	# answers "did the guard let this through" without running an install.
+	_tr_guard='precheck_ok() { printf "REACHED\n"; return 1; }
+		precheck_packages() { :; }'
+
+	# Someone else's update lock still stops an install. The flag below is the
+	# update's own handoff, not a way around the lock.
+	_tr_out="$(sh_install "$_tr_guard
+		cmd_runtime runtime" 2>&1)"
+	assert_contains "$_tr_out" 'an update is already running' \
+		"an install refuses to run under a live update lock"
+	assert_not_contains "$_tr_out" 'REACHED' \
+		"and never reaches the install sequence"
+
+	# The same lock, handed over by the update that owns it.
+	_tr_out="$(sh_install "$_tr_guard
+		cmd_runtime runtime --from-update" 2>&1)"
+	assert_contains "$_tr_out" 'REACHED' \
+		"--from-update lets the update's own handoff through"
+	assert_not_contains "$_tr_out" 'an update is already running' \
+		"with no refusal"
+
+	rm -rf "$_tr_ld/fcc-update.lock"
+
+	# And update.sh says so on both invocations — the agent set it preserved,
+	# and the no-opinion path when nothing is installed yet.
+	assert_contains "$(cat "$LIBEXEC/update.sh")" \
+		'install.sh" runtime --agents "$_cru_set" --from-update' \
+		"the update hands the flag on with the preserved agent set"
+	assert_contains "$(cat "$LIBEXEC/update.sh")" \
+		'install.sh" runtime --from-update' \
+		"and in the path with no agent set"
+}
+
 # Cline has no musl build, and an install that includes it would fail there and
 # stop upstream at that step — taking the FCC package and the PATH setup with
 # it (§79). Measured on the 24.10.8 test router, 2026-10-21: npm installs the

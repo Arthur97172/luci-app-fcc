@@ -126,8 +126,9 @@ any time; changing the install path does not move an existing runtime.
 
 **4. Update.** *Configuration* → **FCC Runtime** → **Check for updates** →
 **Update FCC**. The check runs only when that button is pressed; opening or
-returning to the tab does not reach the network. **Clear update record** removes
-the version table and upgrade command and disables **Update FCC**. The update
+returning to the tab does not reach the network. **Clear record**, after
+**Uninstall completely**, removes both the version table and the job record —
+progress bar and log — and disables **Update FCC**. The update
 itself is a sequence: it checks free space, warns about open console sessions,
 saves the current state, stops the server, reinstalls, verifies the binary,
 restarts, and confirms the server is answering before reporting success.
@@ -146,18 +147,20 @@ untouched either way.
 The **FCC Server** section of the *Configuration* page carries a
 `[This router] [LAN]` switch. On `[LAN]` the same four buttons — **Start**,
 **Stop**, **Restart** and **Open FCC Admin** — drive the FCC server on one other
-machine: Windows, Linux or OpenWrt, one at a time.
+machine: Windows, Linux, macOS or OpenWrt, one at a time.
 
 1. With **IP address** and **Username** filled in, press **Generate and
    configure key**. The router creates an Ed25519 key pair under `/etc/fcc/ssh/`
    and shows the public half; add it to the remote account's authorized_keys
    file — the page names the exact path for the platform you chose:
    `/home/<account>/.ssh/authorized_keys` on Linux (`/root/.ssh/authorized_keys`
-   for root), `/etc/dropbear/authorized_keys` for OpenWrt's Dropbear, and on
-   Windows `C:\ProgramData\ssh\administrators_authorized_keys` for an
-   administrator or `C:\Users\<account>\.ssh\authorized_keys` for a standard
-   account. No password is stored or asked for: the connection offers this key
-   and nothing else (`PreferredAuthentications=publickey`, `BatchMode=yes`,
+   for root), `/Users/<account>/.ssh/authorized_keys` on macOS (where Remote
+   Login also has to be switched on in System Settings → General → Sharing),
+   `/etc/dropbear/authorized_keys` for OpenWrt's Dropbear, and on Windows
+   `C:\ProgramData\ssh\administrators_authorized_keys` for an administrator or
+   `C:\Users\<account>\.ssh\authorized_keys` for a standard account. No password
+   is stored or asked for: the connection offers this key and nothing else
+   (`PreferredAuthentications=publickey`, `BatchMode=yes`,
    `IdentitiesOnly=yes`).
 2. Press **Test connection**. The first time, the remote host key's fingerprint
    is shown and has to be confirmed; once confirmed it is stored in UCI and
@@ -169,6 +172,15 @@ machine: Windows, Linux or OpenWrt, one at a time.
    Windows runs PowerShell's `Start-Service` / `Stop-Service` /
    `Restart-Service`. A service name may contain only letters, digits and
    `.` `-` `_`.
+
+A **Linux or macOS machine carrying only the upstream install**
+(`curl -fsSL .../install.sh | sh`) has no service unit and no `fcc-env`: there
+is nothing there to start or stop, so the four buttons say exactly that — always
+on macOS, and on Linux when `systemctl` has no `fcc.service` — instead of
+guessing a command. The **Web Console** is unaffected: in LAN mode it asks that
+machine's own shell, lists its agents and can start them there. On Linux the
+server state is asked of `systemctl` first and, when there is no such unit, read
+from the process list, so a hand-started server is not reported as stopped.
 
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.

@@ -599,8 +599,13 @@ function valid_remote_service(s)
 	return valid_remote_word(s)
 end
 
---- The three command presets remote.sh knows how to run.
-local REMOTE_PLATFORMS = { linux = true, openwrt = true, windows = true }
+--- The command presets remote.sh knows how to run.
+--
+-- `linux` and `macos` mean a machine that carries only the upstream install:
+-- launchers and agent CLIs under the account's home, no service unit, and no
+-- fcc-env. `openwrt` means one that runs this package, with procd's init
+-- script. `windows` is the PowerShell service preset.
+local REMOTE_PLATFORMS = { linux = true, macos = true, openwrt = true, windows = true }
 
 function valid_remote_platform(p)
 	if type(p) ~= "string" then return nil end

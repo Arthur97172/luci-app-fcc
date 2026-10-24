@@ -113,7 +113,7 @@ fcc_remote_valid_service() {
 
 fcc_remote_valid_platform() {
 	case "$1" in
-		linux|openwrt|windows) return 0 ;;
+		linux|macos|openwrt|windows) return 0 ;;
 	esac
 	return 1
 }
@@ -213,11 +213,11 @@ fcc_remote_platform() { fcc_uci_get main remote_platform linux; }
 fcc_remote_service() {
 	_sv_name="$(fcc_uci_get main remote_service fcc)"
 	# The platform name in the service field is a mistyped form, not a service:
-	# no init script is called linux, OpenWrt or Windows. Stored UCI from before
-	# the page guarded the write is corrected here too, so an already
+	# no init script is called linux, macOS, OpenWrt or Windows. Stored UCI from
+	# before the page guarded the write is corrected here too, so an already
 	# misconfigured router starts working without another save.
 	case "$(printf '%s' "$_sv_name" | tr 'A-Z' 'a-z')" in
-		linux|openwrt|windows) _sv_name=fcc ;;
+		linux|macos|openwrt|windows) _sv_name=fcc ;;
 	esac
 	printf '%s' "$_sv_name"
 }
@@ -518,6 +518,11 @@ fcc_remote_reason() {
 	case "$1" in
 		*"systemctl: not found"*)          printf 'no-systemctl' ;;
 		*"/etc/init.d/$2"*"not found"*)    printf 'no-init-script' ;;
+		# systemd's own words for a name that is not one of its units. On a
+		# Linux machine running only free-claude-code there is no fcc.service
+		# to start, and "check the service name" would send the user looking
+		# for a setting that does not exist.
+		*"could not be found"*)            printf 'no-service' ;;
 		*"No such file or directory"*)     printf 'no-init-script' ;;
 		*)                                 printf 'unreadable' ;;
 	esac
@@ -541,6 +546,12 @@ fcc_remote_reason() {
 # rather than a sentence when they refuse, because the page is translated and
 # this script is not: the page says what a code means in the interface
 # language.
+#
+# The machine over there is one of two kinds. OpenWrt runs this same package,
+# so it answers with its own status document and runs the launcher through
+# fcc-env. A Linux or macOS machine is usually nothing but the upstream install
+# — `curl -fsSL .../install.sh | sh` — which has no status.sh, no fcc-env and
+# no service unit; its own shell is asked instead.
 
 fcc_remote_console_error() {
 	# fcc_remote_console_error <reason> <message>
@@ -554,6 +565,107 @@ fcc_remote_console_error() {
 # "which agents are installed over there": whether an agent's CLI resolves
 # depends on that machine's runtime environment, which nothing here can see.
 FCC_REMOTE_CONSOLE_CMD='[ -x /usr/libexec/fcc/status.sh ] && /usr/libexec/fcc/status.sh'
+
+# ---------------------------------------------------------------------------
+# A Linux or macOS machine that runs only the upstream install
+# ---------------------------------------------------------------------------
+#
+# Upstream installs free-claude-code with `uv tool install`, which writes the
+# launchers into the account's own bin directory, and lets each agent's own
+# installer put its CLI somewhere else under $HOME. It installs no service
+# unit. Nothing from this package is on such a machine, so there is no
+# status.sh to ask and no fcc-env to apply: the remote's own shell answers.
+#
+# Everything below is one POSIX script run through `sh -c`, because the
+# account's login shell may be zsh or fish and only `sh -c` is the same
+# everywhere. The one thing the script must add is PATH — sshd gives a
+# non-interactive command none of the directories the installers wrote to, and
+# a launcher that is not on PATH exits 127 before the agent starts. The list
+# is fcc_runtime_bin_dirs() seen from the far side, plus what npm and Homebrew
+# use, in the form that side's shell expands: $HOME there, not here.
+
+FCC_REMOTE_BARE_PATH='$HOME/.local/bin:${XDG_BIN_HOME:-$HOME/.local/bin}:$HOME/.cargo/bin:$HOME/.opencode/bin:$HOME/.local/share/pi-node/current/bin:$HOME/.grok/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin'
+
+fcc_remote_bare_agents() {
+	# id:launcher pairs from the registry — the two names the far side has to
+	# resolve before a pane there can start anything.
+	fcc_agents_each | awk -F'|' 'NF >= 3 && $1 != "" { printf "%s:%s\n", $1, $3 }'
+}
+
+fcc_remote_bare_server_script() {
+	# One line of POSIX sh that prints "server running" or "server stopped".
+	#
+	# The process list is the only way to see a server a person started by hand,
+	# and on these platforms that is how it is started — the upstream install
+	# has no unit, and a systemd unit that does not exist reads "inactive"
+	# while the server is up. pgrep is on both Linux and macOS; ps is the
+	# fallback for a minimal image. The brackets keep the pattern from matching
+	# this very command line, which sshd hands to the shell as an argument:
+	# written plainly, every probe would answer "running".
+	printf '%s' 'if command -v pgrep >/dev/null 2>&1; then if pgrep -f "[f]cc-server" >/dev/null 2>&1; then echo server running; else echo server stopped; fi; else if ps -ef 2>/dev/null | grep "[f]cc-server" >/dev/null 2>&1; then echo server running; else echo server stopped; fi; fi'
+}
+
+fcc_remote_bare_server_cmd() {
+	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_server_script)")"
+}
+
+fcc_remote_bare_probe_script() {
+	# The server state and every agent in the registry, one answer per line. An
+	# agent counts as installed only when both its launcher and the CLI behind
+	# it resolve: the launcher alone says the FCC runtime is there, and the CLI
+	# alone says the launcher would have nothing to exec.
+	_bp_pairs="$(fcc_remote_bare_agents | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+	printf '%s' "PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; $(fcc_remote_bare_server_script); for p in $_bp_pairs; do a=\${p%%:*}; l=\${p#*:}; if command -v \"\$a\" >/dev/null 2>&1 && command -v \"\$l\" >/dev/null 2>&1; then echo \"agent \$a installed\"; else echo \"agent \$a missing\"; fi; done"
+}
+
+fcc_remote_bare_probe_cmd() {
+	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_probe_script)")"
+}
+
+fcc_remote_console_cmd() {
+	# What the console asks the remote for. OpenWrt answers with this package's
+	# own status document, and nothing else exists there. A Linux or macOS
+	# machine is asked for the same document first — a Linux host carrying the
+	# package answers with it — and falls through to the bare probe when it
+	# does not, in one connection either way.
+	case "$(fcc_remote_platform)" in
+		linux|macos)
+			printf 'sh -c %s' "$(fcc_shquote "if [ -x /usr/libexec/fcc/status.sh ]; then /usr/libexec/fcc/status.sh; else $(fcc_remote_bare_probe_script); fi")" ;;
+		*)
+			printf '%s' "$FCC_REMOTE_CONSOLE_CMD" ;;
+	esac
+}
+
+fcc_remote_console_bare() {
+	# fcc_remote_console_bare <host> <lines> -> the document the controller
+	# lifts from, or 1 when the lines held no answer at all.
+	#
+	# The agent names come from this router's registry, not from the far side,
+	# and an id that is not in it is dropped: the remote's words are used as
+	# the answer to a question, never as JSON.
+	_cbb_host="$1"
+	_cbb_run=false
+	_cbb_agents=""
+	_cbb_seen=0
+	while IFS=' ' read -r _cbb_kind _cbb_id _cbb_state; do
+		case "$_cbb_kind" in
+			server)
+				_cbb_seen=1
+				[ "$_cbb_id" = "running" ] && _cbb_run=true ;;
+			agent)
+				fcc_valid_agent "$_cbb_id" || continue
+				_cbb_seen=1
+				_cbb_inst=false
+				[ "$_cbb_state" = "installed" ] && _cbb_inst=true
+				_cbb_agents="$_cbb_agents${_cbb_agents:+,}\"$_cbb_id\":{\"name\":$(fcc_json_str "$(fcc_agent_name "$_cbb_id")"),\"installed\":$_cbb_inst}" ;;
+		esac
+	done <<EOF
+$2
+EOF
+	[ "$_cbb_seen" = "1" ] || return 1
+	printf '{"ok":true,"host":%s,"status":{"server":{"running":%s},"agents":{%s}}}\n' \
+		"$(fcc_json_str "$_cbb_host")" "$_cbb_run" "$_cbb_agents"
+}
 
 # The four checks every ssh verb makes, in the order that names the setting a
 # user has to change first. Each one prints its refusal and returns; the caller
@@ -576,7 +688,7 @@ fcc_remote_console() {
 	fcc_remote_console_ready || return 1
 
 	_cn_host="$(fcc_remote_host)"
-	_cn_out="$(fcc_remote_ssh "$FCC_REMOTE_CONSOLE_CMD")"
+	_cn_out="$(fcc_remote_ssh "$(fcc_remote_console_cmd)")"
 	_cn_code=$?
 	# Blank lines and trailing spaces are not meaningful in JSON, and dropping
 	# them here keeps the `{` test below honest. The document itself is passed
@@ -601,6 +713,11 @@ fcc_remote_console() {
 		fcc_remote_console_error "unreachable" "$_cn_why"
 		return 1
 	fi
+	# A machine without the package answers in lines rather than a document.
+	case "$(fcc_remote_platform)" in
+		linux|macos)
+			fcc_remote_console_bare "$_cn_host" "$_cn_doc" && return 0 ;;
+	esac
 	# ssh answered, and the guard printed nothing: the remote has no status.sh,
 	# which is what a machine without this package looks like.
 	if [ -z "$_cn_doc" ]; then
@@ -631,6 +748,38 @@ fcc_remote_session_command() {
 		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
 
 	_sc_launcher="$(fcc_agent_command "$_sc_agent")"
+	# What the far side runs. OpenWrt carries this package, so its runtime
+	# environment is applied there by fcc-env. A Linux or macOS machine carries
+	# only the upstream install: the launcher is resolved from the same PATH the
+	# probe uses, and the pane gets a shell command rather than two words —
+	# `export ...; exec ...` is passed quoted, so ssh receives it as one
+	# argument and the far side's shell expands $HOME and $PATH there.
+	case "$(fcc_remote_platform)" in
+		linux|macos)
+			# Asked before the pane starts: a session whose launcher is gone
+			# would open a terminal that dies on its first word. The answer is
+			# the same probe the console read, so the two cannot disagree.
+			_sc_out="$(fcc_remote_ssh "$(fcc_remote_bare_probe_cmd)")"
+			_sc_code=$?
+			if [ "$_sc_code" -eq 255 ]; then
+				_sc_why="$(printf '%s' "$_sc_out" | fcc_remote_output_filter \
+					| tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
+				[ -n "$_sc_why" ] || _sc_why="the LAN machine could not be reached"
+				fcc_remote_console_error "unreachable" "$_sc_why"
+				return 1
+			fi
+			case "$_sc_out" in
+				*"agent $_sc_agent installed"*) : ;;
+				*)
+					fcc_remote_console_error "no-agent-tools" \
+						"the LAN machine does not have $_sc_launcher with its client"
+					return 1 ;;
+			esac
+			_sc_remote="$(fcc_shquote "export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher")" ;;
+		*)
+			_sc_remote="/usr/bin/fcc-env $_sc_launcher" ;;
+	esac
+
 	# -tt: the pane already has a pty, and forcing the allocation makes ssh hand
 	#     one to the far side too — an agent draws a full-screen interface and
 	#     behaves differently without it.
@@ -640,15 +789,11 @@ fcc_remote_session_command() {
 	#     connection would otherwise be painted into the scrollback above the
 	#     agent's opening screen. remote.sh's own verbs filter that line; a
 	#     terminal cannot.
-	# fcc-env applies the remote runtime environment before the launcher runs,
-	#     exactly as session_env_exports() does on this router, so the launcher
-	#     finds the agent's CLI. The absolute path is the one this package
-	#     installs, and a machine that got this far has it.
-	printf '%s %s -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -tt -i %s -p %s -l %s %s /usr/bin/fcc-env %s\n' \
+	printf '%s %s -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -tt -i %s -p %s -l %s %s %s\n' \
 		"$(fcc_shquote "$_sc_ssh")" "$FCC_REMOTE_SSH_OPTS" \
 		"$(fcc_shquote "$FCC_REMOTE_KEY")" "$(fcc_remote_sport)" \
 		"$(fcc_remote_user)" "$(fcc_remote_host)" \
-		"$_sc_launcher"
+		"$_sc_remote"
 }
 
 fcc_remote_test() {
@@ -752,6 +897,13 @@ fcc_remote_control() {
 	case "$_cc_platform" in
 		linux)
 			_cc_remote="systemctl $_cc_op $_cc_service" ;;
+		macos)
+			# No preset exists to run. The upstream install has no launchd job,
+			# and inventing one here would start a server this router cannot
+			# supervise. The answer is the reason code the page translates.
+			printf '{"ok":false,"op":%s,"reason":"no-service","output":"","exit":0}\n' \
+				"$(fcc_json_str "$_cc_op")"
+			return 0 ;;
 		openwrt)
 			_cc_remote="/etc/init.d/$_cc_service $_cc_op" ;;
 		windows)
@@ -934,6 +1086,10 @@ fcc_remote_running() {
 		linux)
 			# is-active prints one word and exits 0 only for "active".
 			_rn_cmd="systemctl is-active $_rn_service" ;;
+		macos)
+			# macOS has no unit to ask about: the server is whatever the
+			# account started.
+			_rn_cmd="$(fcc_remote_bare_server_cmd)" ;;
 		openwrt)
 			# rc.common is procd's init framework; its status verb answers with
 			# the exit code (0 running, 3 not) rather than a word.
@@ -955,9 +1111,22 @@ fcc_remote_running() {
 	_rn_running=false
 	case "$_rn_platform" in
 		linux)
+			# Exit 4 is systemd's "no such unit", and the word that comes with
+			# it is "inactive" — which must not be read as a stopped server,
+			# because on a machine that runs only the upstream install there is
+			# no unit and the server may well be up. That case is answered
+			# from the process list below.
+			if [ "$_rn_code" -ne 4 ]; then
+				case "$_rn_word" in
+					active) _rn_running=true; _rn_known=1 ;;
+					inactive|failed|activating|deactivating|reloading|unknown) _rn_known=1 ;;
+				esac
+			fi ;;
+		macos)
+			# The probe answers with the kind and the state together.
 			case "$_rn_word" in
-				active) _rn_running=true; _rn_known=1 ;;
-				inactive|failed|activating|deactivating|reloading|unknown) _rn_known=1 ;;
+				'server running') _rn_running=true; _rn_known=1 ;;
+				'server stopped') _rn_known=1 ;;
 			esac ;;
 		windows)
 			case "$_rn_word" in
@@ -970,6 +1139,23 @@ fcc_remote_running() {
 				3) _rn_known=1 ;;
 			esac ;;
 	esac
+
+	# A Linux machine can also be a host running only free-claude-code, with no
+	# unit to ask about. The process list is then the honest answer — the same
+	# question macOS asked from the start — and the service check's own words
+	# stay in the answer for the case where neither can tell.
+	if [ "$_rn_known" = "0" ] && [ "$_rn_platform" = "linux" ] \
+		&& [ "$_rn_code" -ne 255 ]; then
+		_rn_probe="$(fcc_remote_ssh "$(fcc_remote_bare_server_cmd)")"
+		_rn_pword="$(printf '%s' "$_rn_probe" | fcc_remote_output_filter | tr -d '\r' | tr 'A-Z' 'a-z' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+		# The probe is the same one the console reads, so it says "server
+		# running" rather than one word: the console needs the kind and the
+		# state, and this is that line.
+		case "$_rn_pword" in
+			'server running') _rn_running=true; _rn_known=1 ;;
+			'server stopped') _rn_known=1 ;;
+		esac
+	fi
 
 	if [ "$_rn_known" = "0" ]; then
 		# Say why, without saying it in English. The page turns the reason into

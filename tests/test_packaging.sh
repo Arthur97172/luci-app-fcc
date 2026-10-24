@@ -699,9 +699,9 @@ test_settings_offer_save_and_reset_and_the_runtime_clears_its_record() {
 	# record it clears is produced.
 	_ts_after_purge="$(sed -n '/id="fcc-runtime-purge"/,/<\/div>/p' "$_ts_view")"
 	assert_contains "$_ts_after_purge" 'id="fcc-runtime-clear"' \
-		"Clear install record follows Uninstall completely"
-	assert_contains "$_ts_view_text" '<%:Clear install record%>' \
-		"and says what it clears"
+		"Clear record follows Uninstall completely"
+	assert_contains "$_ts_view_text" '<%:Clear record%>' \
+		"and is the one button that clears both records"
 	assert_contains "$_ts_view_text" 'id="fcc-runtime-status"' \
 		"the runtime section has its own place to answer a click"
 
@@ -729,17 +729,20 @@ test_settings_offer_save_and_reset_and_the_runtime_clears_its_record() {
 	assert_contains "$_ts_js_text" 'Changes discarded. The saved settings are shown.' \
 		"telling the user the edits are gone"
 
-	# Clearing the install record is page-local, like every other Clear here,
-	# and refused while the job that owns the log is still running.
-	assert_contains "$_ts_js_text" 'function clearInstallRecord()' \
-		"Clear install record is its own action"
+	# Clearing the record is page-local, like every other Clear here, and
+	# refused while the job that owns the log is still running. One button
+	# empties both leftovers — the job panel and the version table.
+	assert_contains "$_ts_js_text" 'function clearRecord()' \
+		"Clear record is its own action"
 	assert_contains "$_ts_js_text" 'if (jobTimer) {' \
 		"it refuses while a job is running"
 	assert_contains "$_ts_js_text" 'panel.style.display = '"'"'none'"'"';' \
 		"and otherwise hides the job panel"
 	assert_contains "$_ts_js_text" "pre.textContent = '';" \
 		"empties the log on the page"
-	assert_contains "$_ts_js_text" "FCC.\$('#fcc-runtime-clear').addEventListener('click', clearInstallRecord)" \
+	assert_contains "$_ts_js_text" 'clearUpdateRecord();' \
+		"and puts the update block back to its unchecked state"
+	assert_contains "$_ts_js_text" "FCC.\$('#fcc-runtime-clear').addEventListener('click', clearRecord)" \
 		"the button is wired"
 }
 
@@ -1376,6 +1379,8 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"a Windows administrator account uses the ProgramData file"
 	assert_contains "$(cat "$_ts_js")" "'C:\\\\Users\\\\'" \
 		"and a standard Windows account keeps it under its profile"
+	assert_contains "$(cat "$_ts_js")" "'/Users/'" \
+		"macOS keeps it under /Users, the same file Remote Login reads"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-trust-fingerprint"' \
 		"the fingerprint to confirm has its own element"
 
@@ -1397,6 +1402,18 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	assert_contains "$(cat "$_ts_js")" "'/etc/init.d/' + service + ' ' + verb" \
 		"OpenWrt is its init script"
 	assert_contains "$(cat "$_ts_js")" "'Start-Service'" "Windows is PowerShell"
+	# macOS has no service at all — the upstream install writes no launchd job —
+	# so the preview says that rather than naming a command that cannot run.
+	assert_contains "$(cat "$_ts_js")" 'macOS has no fcc service' \
+		"macOS previews a sentence instead of a preset"
+	assert_contains "$(cat "$_ts_view")" 'value="macos"' \
+		"and macOS is one of the platform options"
+
+	# The backend accepts the same four names, because a select's value is
+	# stored UCI and the script is what acts on it.
+	assert_contains "$(cat "$ROOT/root/usr/libexec/fcc/remote.sh")" \
+		'linux|macos|openwrt|windows) return 0' \
+		"the backend's platform list matches the select"
 
 	# The buttons are disabled until the key, the trust and the OpenSSH client
 	# are all in place — the same `ready` flag the backend computes.
@@ -1514,7 +1531,7 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the save stores the default and reports the correction"
 	assert_contains "$(cat "$_ts_js")" 'r.service_reset' \
 		"the page says why the service name changed"
-	assert_contains "$(cat "$_ts_remote")" 'linux|openwrt|windows) _sv_name=fcc' \
+	assert_contains "$(cat "$_ts_remote")" 'linux|macos|openwrt|windows) _sv_name=fcc' \
 		"the script applies the same rule to stored UCI"
 
 	# The LAN panel describes the server the way the local one does. The remote
@@ -1578,7 +1595,7 @@ test_basic_information_controls_are_manual_and_named() {
 	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-info-log').textContent = ''" \
 		"and empties the pane rather than any file"
 
-	# Refresh is gone; Clear update record takes its place after Update FCC.
+	# Refresh is gone; the block's toolbar is Check for updates and Update FCC.
 	assert_not_contains "$(cat "$_ts_info")" 'fcc-info-refresh' \
 		"the update section no longer has a Refresh button"
 	assert_not_contains "$(cat "$_ts_js")" 'fcc-info-refresh' \
@@ -1607,8 +1624,10 @@ test_basic_information_controls_are_manual_and_named() {
 	assert_contains "$_ts_updates" 'id="fcc-update-run"' \
 		"Update FCC is in the update toolbar"
 	_ts_after_update="$(sed -n '/id="fcc-update-run"/,/<\/div>/p' "$_ts_config")"
-	assert_contains "$_ts_after_update" 'id="fcc-update-clear"' \
-		"and Clear update record follows it"
+	# The update toolbar has the two buttons that act on the update; the third
+	# one was a Clear that duplicated the runtime toolbar's, so it is gone.
+	assert_not_contains "$_ts_after_update" 'id="fcc-update-clear"' \
+		"and no Clear button follows it any more"
 
 	# No check on load. The init body must not call the checker; the block
 	# starts in the same state the clear button restores.
@@ -1649,9 +1668,9 @@ test_basic_information_controls_are_manual_and_named() {
 	assert_contains "$(cat "$_ts_js_config")" \
 		"FCC.\$('#fcc-update-check').addEventListener('click', checkUpdates)" \
 		"Check for updates is wired"
-	assert_contains "$(cat "$_ts_js_config")" \
-		"FCC.\$('#fcc-update-clear').addEventListener('click', clearUpdateRecord)" \
-		"Clear update record is wired"
+	assert_not_contains "$(cat "$_ts_js_config")" \
+		'fcc-update-clear' \
+		"nothing still binds a second Clear button"
 }
 
 test_malformed_response_is_translated() {

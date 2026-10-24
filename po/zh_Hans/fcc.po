@@ -149,14 +149,11 @@ msgstr "清空检查日志"
 msgid "Clear information"
 msgstr "清空信息"
 
-msgid "Clear install record"
-msgstr "清除安装记录"
-
 msgid "Clear log"
 msgstr "清空日志"
 
-msgid "Clear update record"
-msgstr "清除更新记录"
+msgid "Clear record"
+msgstr "清除记录"
 
 msgid "Close session"
 msgstr "关闭会话"
@@ -285,9 +282,6 @@ msgstr "请先安装一个智能体（配置管理 → 智能体）。"
 msgid "Install path"
 msgstr "安装路径"
 
-msgid "Install record cleared."
-msgstr "安装记录已清除。"
-
 msgid "Installation is blocked until the failed checks pass."
 msgstr "在未通过的检查项通过之前，安装已被阻止。"
 
@@ -381,6 +375,17 @@ msgstr "端口"
 
 msgid "Reconnect"
 msgstr "重新连接"
+
+msgid "Record cleared."
+msgstr "记录已清除。"
+
+msgid ""
+"Remote Login must be enabled on that Mac in System Settings → General → "
+"Sharing. The directory must be 700 and the file 600, and neither may be "
+"writable by anyone else."
+msgstr ""
+"须在那台 Mac 的“系统设置 → 通用 → 共享”中启用“远程登录”。目录权限须为 700、文"
+"件须为 600，且不能允许其他用户写入。"
 
 msgid "Remote platform"
 msgstr "远程平台"
@@ -574,6 +579,13 @@ msgstr "无法连接到局域网主机。请确认它已开机，并且已启用
 msgid ""
 "The LAN machine does not run luci-app-fcc, so its agents cannot be listed."
 msgstr "局域网主机没有运行 luci-app-fcc，因此无法列出它的智能体。"
+
+msgid ""
+"The LAN machine has no fcc service; start the FCC Server on that machine "
+"itself. The Web Console can still run its agents there."
+msgstr ""
+"局域网主机没有 fcc 服务；请在那台机器上直接启动 FCC Server。网页控制台仍可在"
+"那里运行它的智能体。"
 
 msgid ""
 "The LAN machine has no systemctl. If it runs OpenWrt, set its platform to "
@@ -803,6 +815,9 @@ msgstr "已安装"
 msgid "listening"
 msgstr "监听中"
 
+msgid "macOS has no fcc service: start the FCC server on that machine itself."
+msgstr "macOS 上没有 fcc 服务：请在那台机器上直接启动 FCC Server。"
+
 msgid "not checked"
 msgstr "未检查"
 
@@ -852,6 +867,9 @@ msgid ""
 msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid "Clear install record"
+#~ msgstr "清除安装记录"
 
 #~ msgid "Re-detect versions"
 #~ msgstr "重新检测版本"

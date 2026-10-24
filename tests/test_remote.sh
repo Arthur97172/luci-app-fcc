@@ -84,11 +84,21 @@ printf 'ARG %s\n' "$@" >> "$SSH_LOG"
 # the details fetch that asks the remote status.sh for its document. The last
 # argument is the remote command, so the answer is chosen by whether it names
 # status.sh; tests that never set SSH_DETAIL_OUT are answered as before.
+#
+# A bare Linux or macOS machine is asked with a different command — one that
+# tries status.sh first and falls through to a process-list probe — and its
+# answer is the probe's lines, which SSH_PROBE_OUT stands in for. The order
+# matters: the console command for those platforms contains both words.
 for last in "$@"; do :; done
 case "${last:-}" in
 	*status.sh*)
 		if [ -n "${SSH_DETAIL_OUT+x}" ]; then
 			printf '%s\n' "$SSH_DETAIL_OUT"
+			exit 0
+		fi ;;
+	*pgrep*)
+		if [ -n "${SSH_PROBE_OUT+x}" ]; then
+			printf '%s\n' "$SSH_PROBE_OUT"
 			exit 0
 		fi ;;
 esac
@@ -628,9 +638,17 @@ test_the_platform_name_in_the_service_field_is_corrected() {
 
 	uci_set remote_platform linux
 	uci_set remote_service Windows
-	out="$(SSH_OUT='Stopped' run_remote running)" || true
-	assert_eq "systemctl is-active fcc" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+	: > "$TMP/ssh.log"
+	run_remote running >/dev/null 2>&1 || true
+	assert_eq "systemctl is-active fcc" "$(ssh_command 1)" \
 		"the same rule applies to every platform word"
+
+	# macOS is a platform word too, and the lower-case comparison is what makes
+	# the spelling of the option ("macOS") match.
+	uci_set remote_platform macos
+	uci_set remote_service macOS
+	assert_contains "$(run_remote status)" '"service":"fcc"' \
+		"macOS is corrected the same way"
 	drop_sandbox
 }
 
@@ -864,8 +882,10 @@ test_console_answers_with_the_lan_agents() {
 	assert_contains "$out" '"name": "Claude Code"' \
 		"with the entries that machine reported"
 	assert_contains "$out" '"running": true' "and the server state the page warns about"
-	assert_eq '[ -x /usr/libexec/fcc/status.sh ] && /usr/libexec/fcc/status.sh' \
-		"$(ssh_command 1)" "asked for the remote's own status document"
+	assert_contains "$(ssh_command 1)" '[ -x /usr/libexec/fcc/status.sh ]' \
+		"asked for the remote's own status document first"
+	assert_contains "$(ssh_command 1)" 'pgrep -f "[f]cc-server"' \
+		"with the bare-host probe as the fallback in the same command"
 	drop_sandbox
 }
 
@@ -954,8 +974,11 @@ test_session_command_is_one_line_a_pane_can_run() {
 	# The pane runs this exact line, so the test pins it word by word: the
 	# shared options, the two interactive-only ones, a forced pty, the key, the
 	# port, the user, the host, and the launcher reached through fcc-env.
+	# OpenWrt is the platform that carries this package, so it is the one whose
+	# pane goes through fcc-env.
 	fresh
 	ready_lan
+	uci_set remote_platform openwrt
 	out="$(run_remote session-command claude)" || true
 	assert_eq "'$BIN/ssh' \
 -o BatchMode=yes \
@@ -997,6 +1020,169 @@ test_session_command_refuses_what_it_cannot_safely_run() {
 	out="$(run_remote session-command claude)" || true
 	assert_contains "$out" '"reason":"not-configured"' \
 		"and a bare target is refused before the ssh line is built"
+	drop_sandbox
+}
+
+# ---------------------------------------------------------------------------
+# A Linux or macOS machine that runs only the upstream install
+#
+# `curl -fsSL .../install.sh | sh` writes the launchers into the account's bin
+# directory and installs no service unit. There is no status.sh to ask and no
+# fcc-env to run, so the answers come from the far side's own shell: one probe
+# whose lines say which agents resolve and whether a server is up.
+# ---------------------------------------------------------------------------
+
+# What the probe prints: the server state, then one line per registry agent.
+BARE_PROBE='server stopped
+agent claude installed
+agent codex missing
+agent dsh missing'
+
+test_console_reads_a_bare_machine_from_the_probe() {
+	fresh
+	ready_lan
+	# The command asks for status.sh first and falls through; the answer here is
+	# what the fallback prints on a machine that has none.
+	out="$(SSH_DETAIL_OUT="$BARE_PROBE" run_remote console)" || true
+	assert_contains "$out" '"ok":true' "the console open is answered"
+	assert_contains "$out" '"host":"192.168.5.20"' "naming the machine"
+	assert_contains "$out" '"running":false' "a stopped server is reported as such"
+	assert_contains "$out" '"claude":{"name":"Claude Code","installed":true}' \
+		"an installed agent carries the registry's display name"
+	assert_contains "$out" '"codex":{"name":"Codex","installed":false}' \
+		"and a missing one is marked not installed"
+	drop_sandbox
+}
+
+test_console_drops_an_agent_the_registry_does_not_have() {
+	# The remote's words are the answer to a question, never JSON: an id this
+	# router does not know must not reach the document it is pasted into.
+	fresh
+	ready_lan
+	out="$(SSH_DETAIL_OUT='server stopped
+agent ../../etc installed' run_remote console)" || true
+	assert_contains "$out" '"ok":true' "the answer is still a document"
+	assert_not_contains "$out" '../../etc' "the unknown id never reaches it"
+	assert_contains "$out" '"agents":{}' "and the map it would have joined is empty"
+	drop_sandbox
+}
+
+test_console_calls_an_answer_it_cannot_read_unreadable() {
+	# Lines that are not the probe's are not guessed at.
+	fresh
+	ready_lan
+	out="$(SSH_DETAIL_OUT='hello there' run_remote console)" || true
+	assert_contains "$out" '"reason":"unreadable"' \
+		"anything else is unreadable, not a status"
+	drop_sandbox
+}
+
+test_session_command_on_a_bare_machine_runs_the_launcher_through_its_shell() {
+	# No fcc-env exists there, so the pane gets the far side's shell: the PATH
+	# the probe used, then the launcher. The whole thing is one quoted argument,
+	# which ssh hands to that shell unchanged.
+	fresh
+	ready_lan
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' run_remote session-command claude)" || true
+	assert_contains "$out" 'exec fcc-claude'"'"'' \
+		"the pane execs the launcher by name from the exported PATH"
+	assert_contains "$out" "'export PATH=" \
+		"after exporting it, in one quoted word"
+	assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" \
+		"and the whole command is one line"
+	assert_contains "$(ssh_command 1)" 'pgrep -f "[f]cc-server"' \
+		"the agent is checked on that machine before the pane opens"
+
+	# A launcher the probe did not find is refused, because the pane would open
+	# a terminal that dies on its first word.
+	fresh
+	ready_lan
+	out="$(SSH_PROBE_OUT='server running
+agent claude missing' run_remote session-command claude)" || true
+	assert_contains "$out" '"ok":false' "a missing agent is refused"
+	assert_contains "$out" '"reason":"no-agent-tools"' "as a machine without it"
+	drop_sandbox
+}
+
+test_session_command_names_a_bare_machine_that_cannot_be_reached() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='ssh: connect to host 192.168.5.20 port 22: Network is unreachable' \
+		SSH_EXIT=255 run_remote session-command claude)" || true
+	assert_contains "$out" '"reason":"unreachable"' "ssh's failure is named as such"
+	assert_contains "$out" 'Network is unreachable' "with the words that say why"
+	drop_sandbox
+}
+
+test_macos_is_a_platform_the_backend_accepts() {
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	out="$(run_remote status)"
+	assert_contains "$out" '"platform":"macos"' "status reports it back"
+	assert_contains "$out" '"ready":true' "and the target stays usable"
+	drop_sandbox
+}
+
+test_running_falls_back_to_the_process_list_without_a_unit() {
+	# systemd answers "inactive" with exit 4 for a unit it does not know, and a
+	# machine running only the upstream install has no unit while its server may
+	# well be up. The word alone would report a stopped server that is running.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='inactive' SSH_EXIT=4 SSH_PROBE_OUT='server running' \
+		run_remote running)" || true
+	assert_contains "$out" '"running":true' "the process list decides"
+	assert_eq 'systemctl is-active fcc' "$(ssh_command 1)" \
+		"systemd is still asked first"
+	assert_contains "$(ssh_command 2)" 'pgrep -f "[f]cc-server"' \
+		"and the process list second"
+
+	fresh
+	ready_lan
+	out="$(SSH_OUT='inactive' SSH_EXIT=4 SSH_PROBE_OUT='server stopped' \
+		run_remote running)" || true
+	assert_contains "$out" '"running":false' "a server the list does not show is stopped"
+	drop_sandbox
+}
+
+test_running_on_macos_asks_only_the_process_list() {
+	# There is no unit to ask about on macOS, so the check is the process list
+	# from the start — one connection, not two.
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	out="$(SSH_PROBE_OUT='server running' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the process list is the answer"
+	assert_contains "$(ssh_command 1)" 'pgrep -f "[f]cc-server"' \
+		"and it is the first thing asked"
+	drop_sandbox
+}
+
+test_control_on_macos_refuses_without_inventing_a_unit() {
+	# The upstream install writes no launchd job. A preset here would start a
+	# server this router could not supervise, so the click is answered with the
+	# reason the page translates instead.
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	out="$(run_remote control start)" || true
+	assert_contains "$out" '"ok":false' "a start is refused"
+	assert_contains "$out" '"reason":"no-service"' "as a machine with no service"
+	assert_not_contains "$(cat "$TMP/ssh.log" 2>/dev/null)" 'CALL' \
+		"and nothing is sent, because nothing could run"
+	drop_sandbox
+}
+
+test_control_names_a_unit_systemd_does_not_have() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='Unit fcc.service could not be found.' SSH_EXIT=4 \
+		run_remote control restart)" || true
+	assert_contains "$out" '"ok":false' "a restart that found no unit failed"
+	assert_contains "$out" '"reason":"no-service"' \
+		"and the page is told it is a missing service, not a missing service name"
 	drop_sandbox
 }
 

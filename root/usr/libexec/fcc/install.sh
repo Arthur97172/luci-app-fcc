@@ -1966,6 +1966,7 @@ cmd_runtime() {
 	_cr_agents=""
 	_cr_none=0
 	_cr_all=0
+	_cr_from_update=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--agents)   _cr_agents="$(printf '%s' "${2:-}" | tr ',' ' ')"; shift 2 ;;
@@ -1979,6 +1980,11 @@ cmd_runtime() {
 			# different request from "no opinion, use the defaults", and an
 			# empty --agents cannot express it, so it gets its own flag.
 			--no-agents) _cr_none=1; shift ;;
+			# update.sh runs this sequence under its own lock, so the update
+			# lock it holds is its own, not another update's. Without this the
+			# guard below refuses every update FCC the UI starts — the parent
+			# is still alive while the child runs.
+			--from-update) _cr_from_update=1; shift ;;
 			*) shift ;;
 		esac
 	done
@@ -1992,7 +1998,7 @@ cmd_runtime() {
 	# Section 48's lock only excludes other installs. An update is a different
 	# operation with its own lock (section 47) but it rewrites the same runtime,
 	# so the two still have to exclude each other.
-	if fcc_lock_held update; then
+	if [ "$_cr_from_update" != 1 ] && fcc_lock_held update; then
 		fcc_lock_release "$_cr_lock"
 		fcc_die "an update is already running"
 		return 1

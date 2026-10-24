@@ -117,13 +117,10 @@ msgstr ""
 msgid "Clear information"
 msgstr ""
 
-msgid "Clear install record"
-msgstr ""
-
 msgid "Clear log"
 msgstr ""
 
-msgid "Clear update record"
+msgid "Clear record"
 msgstr ""
 
 msgid "Close session"
@@ -231,9 +228,6 @@ msgstr ""
 msgid "Install path"
 msgstr ""
 
-msgid "Install record cleared."
-msgstr ""
-
 msgid "Installation is blocked until the failed checks pass."
 msgstr ""
 
@@ -325,6 +319,12 @@ msgid "Port"
 msgstr ""
 
 msgid "Reconnect"
+msgstr ""
+
+msgid "Record cleared."
+msgstr ""
+
+msgid "Remote Login must be enabled on that Mac in System Settings → General → Sharing. The directory must be 700 and the file 600, and neither may be writable by anyone else."
 msgstr ""
 
 msgid "Remote platform"
@@ -496,6 +496,9 @@ msgid "The LAN machine could not be reached. Check that it is on and that SSH is
 msgstr ""
 
 msgid "The LAN machine does not run luci-app-fcc, so its agents cannot be listed."
+msgstr ""
+
+msgid "The LAN machine has no fcc service; start the FCC Server on that machine itself. The Web Console can still run its agents there."
 msgstr ""
 
 msgid "The LAN machine has no systemctl. If it runs OpenWrt, set its platform to OpenWrt in Advanced settings."
@@ -685,6 +688,9 @@ msgid "installed"
 msgstr ""
 
 msgid "listening"
+msgstr ""
+
+msgid "macOS has no fcc service: start the FCC server on that machine itself."
 msgstr ""
 
 msgid "not checked"

@@ -96,8 +96,8 @@ make package/luci-app-fcc/compile V=s
 `fcc-<agent>-NNN`。
 
 **4. 更新。** *配置* → **FCC 运行时** → **Check for updates** → **Update FCC**。检查只在
-点按钮时执行，打开或切回标签页不会联网；**Clear update record** 清掉版本表和升级命令，
-回到"尚未检查"并禁用 **Update FCC**。更新是一串步骤：检查剩余空间、提示仍打开的终端、
+点按钮时执行，打开或切回标签页不会联网；**彻底卸载**之后的 **Clear record** 同时清掉版本表
+和任务记录（进度条与日志），回到"尚未检查"并禁用 **Update FCC**。更新是一串步骤：检查剩余空间、提示仍打开的终端、
 保存状态、停止服务器、重新安装、校验二进制、重启，最后确认服务器在响应才报告成功。
 
 任何一步失败都会把之前的运行时放回去。旧运行时目录是被*改名*挪到一边的（同一文件系统上
@@ -110,12 +110,13 @@ make package/luci-app-fcc/compile V=s
 
 *配置* → **FCC 服务器** 有一个 `[本机] [局域网]` 开关。切到 `[局域网]` 后，同一区域的
 **启动**、**停止**、**重启**、**Open FCC Admin** 作用于另一台机器上的 FCC 服务器——一次
-一台，Windows、Linux、OpenWrt 都可以。
+一台，Windows、Linux、macOS、OpenWrt 都可以。
 
 1. 填好 **IP 地址** 和 **用户名**，点 **生成并配置密钥**。路由器在 `/etc/fcc/ssh/` 下生成
    Ed25519 密钥并显示公钥，把它加进远程账号的 authorized_keys——页面会按所选平台写出具体
    路径：Linux 是 `/home/<账号>/.ssh/authorized_keys`（root 为 `/root/.ssh/authorized_keys`），
-   OpenWrt 的 Dropbear 读 `/etc/dropbear/authorized_keys`，Windows 管理员账户用
+   macOS 是 `/Users/<账号>/.ssh/authorized_keys`（还需在“系统设置 → 通用 → 共享”里打开
+   **远程登录**），OpenWrt 的 Dropbear 读 `/etc/dropbear/authorized_keys`，Windows 管理员账户用
    `C:\ProgramData\ssh\administrators_authorized_keys`、标准账户用
    `C:\Users\<账号>\.ssh\authorized_keys`。本包不保存也不询问密码：连接只提供这把密钥
    （`PreferredAuthentications=publickey`、`BatchMode=yes`、`IdentitiesOnly=yes`）。
@@ -124,6 +125,12 @@ make package/luci-app-fcc/compile V=s
 3. 这时四个按钮才可用。发送的命令由 *高级设置* 里的 **远程平台** 决定：Linux 用
    `systemctl <op> <服务名>`，OpenWrt 用 `/etc/init.d/<服务名> <op>`，Windows 用 PowerShell
    的 `Start-Service`/`Stop-Service`/`Restart-Service`。服务名只接受字母、数字和 `.` `-` `_`。
+
+**只安装上游 fcc 的 Linux / macOS 机器**（`curl -fsSL .../install.sh | sh`）没有服务单元，
+也没有 `fcc-env`：那里没有可启动或停止的服务，所以四个按钮会明确说明这一点（macOS 一律如此，
+Linux 在 `systemctl` 找不到 `fcc.service` 时也一样），而不是去猜一条命令。**网页控制台**不受
+影响：它的局域网模式直接询问那台机器的 shell，能列出并可启动它的智能体；运行状态在 Linux 上
+先问 `systemctl`，没有该单元时改看进程列表，所以手工启动的服务器不会被报成“已停止”。
 
 **只接受私有 IPv4 地址**（`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）；主机名一律
 拒绝，因为一个名字可能解析成公网地址。

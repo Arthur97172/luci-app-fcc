@@ -263,6 +263,7 @@
 						<div class="cbi-value-field">
 							<select id="fcc-remote-platform" class="cbi-input-select">
 								<option value="linux">Linux</option>
+								<option value="macos">macOS</option>
 								<option value="openwrt">OpenWrt</option>
 								<option value="windows">Windows</option>
 							</select>
@@ -352,13 +353,16 @@
 				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
 				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
 				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall completely%></button>
-				<!-- The record is what the job panel below shows — this run's
-				     progress and log, left on the page after the job ended.
-				     Like every other Clear on the page it empties what is on
-				     screen and nothing on disk: the logs under the install
-				     path are the evidence an install left behind, not
-				     clutter to be swept up. -->
-				<button id="fcc-runtime-clear" class="cbi-button"><%:Clear install record%></button>
+				<!-- The records are the job panel below and the version table
+				     in the Updates block — both left on the page after the
+				     run that produced them. They were two buttons; they are
+				     one, here, because both are this run's leftovers and
+				     neither reaches the network again. Like every other
+				     Clear on the page it empties what is on screen and
+				     nothing on disk: the logs under the install path are the
+				     evidence an install left behind, not clutter to be swept
+				     up. -->
+				<button id="fcc-runtime-clear" class="cbi-button"><%:Clear record%></button>
 			</div>
 
 			<div id="fcc-runtime-status"></div>
@@ -387,7 +391,6 @@
 				<div class="fcc-toolbar">
 					<button id="fcc-update-check" class="cbi-button"><%:Check for updates%></button>
 					<button id="fcc-update-run" class="cbi-button cbi-button-apply" disabled><%:Update FCC%></button>
-					<button id="fcc-update-clear" class="cbi-button cbi-button-reset"><%:Clear update record%></button>
 				</div>
 				<p class="fcc-muted">
 					<%:Updating reinstalls the FCC runtime from upstream. If a step fails, the previous runtime is put back and your data is left in place.%>

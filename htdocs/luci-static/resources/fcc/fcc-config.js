@@ -292,6 +292,11 @@
 			FCC._('The LAN machine has no systemctl. If it runs OpenWrt, set its platform to OpenWrt in Advanced settings.'),
 		'no-init-script':
 			FCC._('The service was not found on the LAN machine. Check the service name in Advanced settings.'),
+		/* A Linux or macOS machine carrying only the upstream install has no
+		 * service at all — neither a unit nor a launchd job — so there is
+		 * nothing to start or stop here and nothing in the settings to change. */
+		'no-service':
+			FCC._('The LAN machine has no fcc service; start the FCC Server on that machine itself. The Web Console can still run its agents there.'),
 		'unreadable':
 			FCC._('The LAN machine answered in a form that could not be read.')
 	};
@@ -387,6 +392,13 @@
 		if (!box) { return; }
 		var v = remoteFields();
 		var service = v.service || 'fcc';
+		/* macOS has no preset: the upstream install writes no launchd job, and
+		 * a preview of a command that would not run would be a guess. Saying so
+		 * is the one thing the panel can honestly show here. */
+		if (v.platform === 'macos') {
+			box.textContent = FCC._('macOS has no fcc service: start the FCC server on that machine itself.');
+			return;
+		}
 		var lines = Object.keys(REMOTE_VERBS).map(function (op) {
 			var verb = REMOTE_VERBS[op][v.platform] || REMOTE_VERBS[op].linux;
 			if (v.platform === 'openwrt') { return '/etc/init.d/' + service + ' ' + verb; }
@@ -400,12 +412,12 @@
 	}
 
 	/* Where the public key has to go. The answer is not one path: Linux uses the
-	 * account's ~/.ssh/authorized_keys, OpenWrt's default Dropbear reads
-	 * /etc/dropbear/authorized_keys, and Windows keeps administrators' keys in
-	 * ProgramData — sshd's default config ignores their per-user file. The path
-	 * follows the platform and the account field, so the panel names the file
-	 * the user actually has to edit instead of a Unix path that does not exist
-	 * on two of the three platforms. */
+	 * account's ~/.ssh/authorized_keys, macOS keeps the account home under
+	 * /Users, OpenWrt's default Dropbear reads /etc/dropbear/authorized_keys,
+	 * and Windows keeps administrators' keys in ProgramData — sshd's default
+	 * config ignores their per-user file. The path follows the platform and the
+	 * account field, so the panel names the file the user actually has to edit
+	 * instead of a Unix path that does not exist on Windows. */
 	function remoteKeyPath() {
 		var path = FCC.$('#fcc-remote-key-path');
 		var note = FCC.$('#fcc-remote-key-note');
@@ -421,6 +433,12 @@
 		} else if (remote.platform === 'openwrt') {
 			path.textContent = '/etc/dropbear/authorized_keys';
 			note.textContent = FCC._('Dropbear, the default OpenWrt SSH server, reads this file. An OpenSSH server on the same machine reads ~/.ssh/authorized_keys instead.');
+		} else if (remote.platform === 'macos') {
+			/* Remote Login is off by default on macOS, and nothing else in this
+			 * page can make the connection work until it is on — so the note
+			 * says where the switch is, next to the file to edit. */
+			path.textContent = (user ? '/Users/' + user : '~') + '/.ssh/authorized_keys';
+			note.textContent = FCC._('Remote Login must be enabled on that Mac in System Settings → General → Sharing. The directory must be 700 and the file 600, and neither may be writable by anyone else.');
 		} else {
 			var home = user === 'root' ? '/root' : (user ? '/home/' + user : '~');
 			path.textContent = home + '/.ssh/authorized_keys';
@@ -1152,13 +1170,14 @@
 		runJobAction('update_runtime', {}, 'update', 'fcc-update.log', clearUpdateRecord);
 	}
 
-	/* The install record is the job panel below the runtime toolbar: the
-	 * progress bar and this run's log, left where the job finished. Clearing it
-	 * empties the page and nothing on disk — the logs under the install path
-	 * are the evidence an install leaves behind, and the same rule every other
-	 * Clear on this page follows. Refused while a job is running, because that
-	 * log is the live output, not a record. */
-	function clearInstallRecord() {
+	/* The record is both leftovers of a run: the job panel below the runtime
+	 * toolbar, and the version table in the Updates block. They are one button
+	 * because clearing one without the other left a page that described two
+	 * different runs. Clearing empties the page and nothing on disk — the logs
+	 * under the install path are the evidence an install leaves behind, and the
+	 * same rule every other Clear on this page follows. Refused while a job is
+	 * running, because that log is the live output, not a record. */
+	function clearRecord() {
 		var box = FCC.$('#fcc-runtime-status');
 		if (jobTimer) {
 			FCC.notice(box, 'warn',
@@ -1171,7 +1190,8 @@
 		if (bar) { bar.style.width = '0'; }
 		var pre = FCC.$('#fcc-job-log');
 		if (pre) { pre.textContent = ''; }
-		FCC.notice(box, 'ok', FCC._('Install record cleared.'));
+		clearUpdateRecord();
+		FCC.notice(box, 'ok', FCC._('Record cleared.'));
 	}
 
 	/* ---------------------------------------------------------------- init */
@@ -1309,10 +1329,9 @@
 		 * the check result — watch the same lock, because the backend holds
 		 * fcc-update.lock for this job and not fcc-install.lock. */
 		FCC.$('#fcc-runtime-update').addEventListener('click', runUpdate);
-		FCC.$('#fcc-runtime-clear').addEventListener('click', clearInstallRecord);
+		FCC.$('#fcc-runtime-clear').addEventListener('click', clearRecord);
 		FCC.$('#fcc-update-check').addEventListener('click', checkUpdates);
 		FCC.$('#fcc-update-run').addEventListener('click', runUpdate);
-		FCC.$('#fcc-update-clear').addEventListener('click', clearUpdateRecord);
 		/* A page restored from the back/forward cache keeps the DOM it left,
 		 * disabled state included. The block opens at "Not checked yet" and
 		 * with "Update FCC" inert on every entry, whatever the last visit
