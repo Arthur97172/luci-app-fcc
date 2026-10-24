@@ -523,6 +523,12 @@ fcc_remote_reason() {
 		# to start, and "check the service name" would send the user looking
 		# for a setting that does not exist.
 		*"could not be found"*)            printf 'no-service' ;;
+		# Windows' own words for the same thing: Get-Service's sentence, cmd's
+		# "is not recognized", and PowerShell's "The term ... is not recognized".
+		# All three mean nothing by that name is installed over there, which is
+		# what no-service tells the page to say.
+		*"Cannot find any service"*)       printf 'no-service' ;;
+		*"is not recognized"*)             printf 'no-service' ;;
 		*"No such file or directory"*)     printf 'no-init-script' ;;
 		*)                                 printf 'unreadable' ;;
 	esac
@@ -547,11 +553,14 @@ fcc_remote_reason() {
 # this script is not: the page says what a code means in the interface
 # language.
 #
-# The machine over there is one of two kinds. OpenWrt runs this same package,
+# The machine over there is one of three kinds. OpenWrt runs this same package,
 # so it answers with its own status document and runs the launcher through
 # fcc-env. A Linux or macOS machine is usually nothing but the upstream install
 # — `curl -fsSL .../install.sh | sh` — which has no status.sh, no fcc-env and
-# no service unit; its own shell is asked instead.
+# no service unit; its own shell is asked instead. A Windows machine is the
+# same story in PowerShell: install.ps1 writes the launchers into the account's
+# bin directories and registers no service, so its process list and its PATH
+# are asked the same questions (see the Windows section below).
 
 fcc_remote_console_error() {
 	# fcc_remote_console_error <reason> <message>
@@ -622,6 +631,124 @@ fcc_remote_bare_probe_cmd() {
 	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_probe_script)")"
 }
 
+# ---------------------------------------------------------------------------
+# A Windows machine that runs only the upstream install
+# ---------------------------------------------------------------------------
+#
+# install.ps1 does what install.sh does, in PowerShell: `uv tool install`
+# writes fcc-server, fcc-claude and the other launchers into the account's bin
+# directory, each agent's installer puts its CLI in a directory of its own, and
+# a desktop shortcut starts fcc-desktop. It registers no Windows service, so a
+# machine that only ran the installer has nothing to ask Get-Service about, and
+# the account's PATH is where the launchers are found.
+#
+# Windows has no `sh`, and OpenSSH hands the command to cmd.exe — the default
+# shell of the Windows OpenSSH server. So every question is one
+# `powershell.exe -NoProfile -NonInteractive -Command` line, and the script
+# inside it is wrapped in double quotes, the only quoting cmd.exe honours. That
+# makes one rule for everything below: no double quote inside the script.
+# PowerShell strings are written with single quotes — those are ordinary
+# characters to cmd.exe, which only sees the one quoted argument — and paths
+# are built with Join-Path so no backslash has to be guessed at.
+
+# The directories install.ps1 arranged, in the form PowerShell expands. The uv
+# tool bin comes first — that is where fcc-server and the launchers are — and
+# the variables that are not set contribute nothing. This is
+# Add-KnownBinDirectories() seen from the far side, the way
+# FCC_REMOTE_BARE_PATH is fcc_runtime_bin_dirs() seen from a POSIX shell.
+FCC_REMOTE_WIN_PATH_PARTS="\$env:UV_TOOL_BIN_DIR,\$env:XDG_BIN_HOME,(Join-Path \$env:USERPROFILE '.local\bin'),(Join-Path \$env:USERPROFILE '.opencode\bin'),(Join-Path \$env:LOCALAPPDATA 'hermes\hermes-agent\bin'),(Join-Path \$env:LOCALAPPDATA 'Programs\OpenAI\Codex\bin'),(Join-Path \$env:LOCALAPPDATA 'pi-node\current'),(Join-Path \$env:LOCALAPPDATA 'Programs\Muse Code\bin'),(Join-Path \$env:APPDATA 'npm'),\$env:GROK_BIN_DIR,(Join-Path \$env:USERPROFILE '.grok\bin')"
+
+fcc_remote_win_path_script() {
+	# One statement to run before anything is looked for. sshd gives a
+	# non-interactive command the logon environment, and the installer only
+	# added its directories to the shell it ran in — so the launchers are not
+	# on PATH until this line runs. The empty entries left by variables that are
+	# not set are dropped: an empty PATH element means "the current directory",
+	# and this has no reason to put that on the search path.
+	printf '%s' "\$p = @($FCC_REMOTE_WIN_PATH_PARTS) | Where-Object { \$_ }; \$env:Path = (\$p -join ';') + ';' + \$env:Path"
+}
+
+fcc_remote_win_server_script() {
+	# One statement that prints "server running" or "server stopped".
+	#
+	# A Windows service runs fcc-server.exe too — the upstream install has no
+	# service, but a user who wrapped it with NSSM or winsw gets a process of
+	# the same name — and fcc-desktop is the other way the server is up. So the
+	# process list answers for both the plain install and a service, which is
+	# why it is also the fallback in fcc_remote_running().
+	printf '%s' "if (@(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'server running' } else { Write-Output 'server stopped' }"
+}
+
+fcc_remote_win_agents_script() {
+	# One `if` per registry pair, so the answer has the same two words the
+	# POSIX probe uses. An agent counts as installed only when both its
+	# launcher and the CLI behind it resolve.
+	_bw_out=""
+	_bw_pairs="$(fcc_remote_bare_agents)"
+	while IFS=: read -r _bw_id _bw_launcher; do
+		[ -n "$_bw_id" ] || continue
+		_bw_out="$_bw_out if ((Get-Command '$_bw_id' -ErrorAction SilentlyContinue) -and (Get-Command '$_bw_launcher' -ErrorAction SilentlyContinue)) { Write-Output 'agent $_bw_id installed' } else { Write-Output 'agent $_bw_id missing' };"
+	done <<EOF
+$_bw_pairs
+EOF
+	printf '%s' "$_bw_out"
+}
+
+fcc_remote_win_probe_script() {
+	printf '%s' "$(fcc_remote_win_path_script); $(fcc_remote_win_server_script);$(fcc_remote_win_agents_script)"
+}
+
+fcc_remote_win_cmd() {
+	# fcc_remote_win_cmd <script> -> the remote command, one line.
+	#
+	# The script carries no double quote of its own, so this pair around it is
+	# the only quoting cmd.exe has to understand.
+	printf 'powershell.exe -NoProfile -NonInteractive -Command "%s"' "$1"
+}
+
+fcc_remote_win_probe_cmd() {
+	fcc_remote_win_cmd "$(fcc_remote_win_probe_script)"
+}
+
+fcc_remote_win_server_cmd() {
+	# The process list needs no PATH, so the running check pays for one
+	# statement rather than the whole probe.
+	fcc_remote_win_cmd "$(fcc_remote_win_server_script)"
+}
+
+fcc_remote_win_control_script() {
+	# fcc_remote_win_control_script <op> <service> -> Start/Stop/Restart-Service
+	# when the machine has a service of that name, and the upstream install's
+	# process otherwise. Both branches are in the answer because which one
+	# applies is a property of the machine, not of a setting this router can
+	# see. -ErrorAction Stop turns a failure into a non-zero exit, which is what
+	# the control verb reports.
+	_wc_op="$1"
+	_wc_service="$2"
+	_wc_path="$(fcc_remote_win_path_script)"
+	_wc_start="Start-Process -WindowStyle Hidden -FilePath (Get-Command 'fcc-server' -ErrorAction Stop).Source"
+	_wc_stop="Stop-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue"
+	case "$_wc_op" in
+		start)   _wc_proc="$_wc_start" ;;
+		stop)    _wc_proc="$_wc_stop" ;;
+		restart) _wc_proc="$_wc_stop; Start-Sleep -Milliseconds 500; $_wc_start" ;;
+	esac
+	case "$_wc_op" in
+		start)   _wc_verb="Start-Service" ;;
+		stop)    _wc_verb="Stop-Service" ;;
+		restart) _wc_verb="Restart-Service" ;;
+	esac
+	printf '%s' "$_wc_path; if (Get-Service -Name '$_wc_service' -ErrorAction SilentlyContinue) { $_wc_verb -Name '$_wc_service' -ErrorAction Stop } else { $_wc_proc }"
+}
+
+fcc_remote_win_session_script() {
+	# The pane's command on the far side: the same PATH the probe used, then the
+	# launcher. Starting the server is not this command's job — the launcher is
+	# what the terminal is for. The launcher is a registry name, never anything
+	# a user typed, so quoting it with PowerShell's single quotes is enough.
+	printf '%s' "$(fcc_remote_win_path_script); & '$1'"
+}
+
 fcc_remote_console_cmd() {
 	# What the console asks the remote for. OpenWrt answers with this package's
 	# own status document, and nothing else exists there. A Linux or macOS
@@ -631,6 +758,11 @@ fcc_remote_console_cmd() {
 	case "$(fcc_remote_platform)" in
 		linux|macos)
 			printf 'sh -c %s' "$(fcc_shquote "if [ -x /usr/libexec/fcc/status.sh ]; then /usr/libexec/fcc/status.sh; else $(fcc_remote_bare_probe_script); fi")" ;;
+		windows)
+			# There is no status.sh to ask for and no `sh` to ask with: the
+			# PowerShell probe is the only answer, and it prints the same lines
+			# the POSIX one does.
+			fcc_remote_win_probe_cmd ;;
 		*)
 			printf '%s' "$FCC_REMOTE_CONSOLE_CMD" ;;
 	esac
@@ -715,7 +847,7 @@ fcc_remote_console() {
 	fi
 	# A machine without the package answers in lines rather than a document.
 	case "$(fcc_remote_platform)" in
-		linux|macos)
+		linux|macos|windows)
 			fcc_remote_console_bare "$_cn_host" "$_cn_doc" && return 0 ;;
 	esac
 	# ssh answered, and the guard printed nothing: the remote has no status.sh,
@@ -749,36 +881,47 @@ fcc_remote_session_command() {
 
 	_sc_launcher="$(fcc_agent_command "$_sc_agent")"
 	# What the far side runs. OpenWrt carries this package, so its runtime
-	# environment is applied there by fcc-env. A Linux or macOS machine carries
-	# only the upstream install: the launcher is resolved from the same PATH the
-	# probe uses, and the pane gets a shell command rather than two words —
-	# `export ...; exec ...` is passed quoted, so ssh receives it as one
-	# argument and the far side's shell expands $HOME and $PATH there.
+	# environment is applied there by fcc-env. A Linux, macOS or Windows machine
+	# carries only the upstream install: the launcher is resolved from the same
+	# PATH the probe uses, and the pane gets a shell command rather than two
+	# words — `export ...; exec ...` (or a PowerShell `& ...`) is passed quoted,
+	# so ssh receives it as one argument and the far side expands $HOME, $PATH or
+	# %USERPROFILE% there.
+	_sc_probe=""
 	case "$(fcc_remote_platform)" in
 		linux|macos)
-			# Asked before the pane starts: a session whose launcher is gone
-			# would open a terminal that dies on its first word. The answer is
-			# the same probe the console read, so the two cannot disagree.
-			_sc_out="$(fcc_remote_ssh "$(fcc_remote_bare_probe_cmd)")"
-			_sc_code=$?
-			if [ "$_sc_code" -eq 255 ]; then
-				_sc_why="$(printf '%s' "$_sc_out" | fcc_remote_output_filter \
-					| tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
-				[ -n "$_sc_why" ] || _sc_why="the LAN machine could not be reached"
-				fcc_remote_console_error "unreachable" "$_sc_why"
-				return 1
-			fi
-			case "$_sc_out" in
-				*"agent $_sc_agent installed"*) : ;;
-				*)
-					fcc_remote_console_error "no-agent-tools" \
-						"the LAN machine does not have $_sc_launcher with its client"
-					return 1 ;;
-			esac
+			_sc_probe="$(fcc_remote_bare_probe_cmd)"
 			_sc_remote="$(fcc_shquote "export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher")" ;;
+		windows)
+			_sc_probe="$(fcc_remote_win_probe_cmd)"
+			# cmd.exe parses the one double-quoted argument and hands the script
+			# to PowerShell untouched; fcc_shquote keeps the whole thing one word
+			# on this side, so ssh sends it as one command.
+			_sc_remote="$(fcc_shquote "$(fcc_remote_win_cmd "$(fcc_remote_win_session_script "$_sc_launcher")")")" ;;
 		*)
 			_sc_remote="/usr/bin/fcc-env $_sc_launcher" ;;
 	esac
+	if [ -n "$_sc_probe" ]; then
+		# Asked before the pane starts: a session whose launcher is gone would
+		# open a terminal that dies on its first word. The answer is the same
+		# probe the console read, so the two cannot disagree.
+		_sc_out="$(fcc_remote_ssh "$_sc_probe")"
+		_sc_code=$?
+		if [ "$_sc_code" -eq 255 ]; then
+			_sc_why="$(printf '%s' "$_sc_out" | fcc_remote_output_filter \
+				| tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
+			[ -n "$_sc_why" ] || _sc_why="the LAN machine could not be reached"
+			fcc_remote_console_error "unreachable" "$_sc_why"
+			return 1
+		fi
+		case "$_sc_out" in
+			*"agent $_sc_agent installed"*) : ;;
+			*)
+				fcc_remote_console_error "no-agent-tools" \
+					"the LAN machine does not have $_sc_launcher with its client"
+				return 1 ;;
+		esac
+	fi
 
 	# -tt: the pane already has a pty, and forcing the allocation makes ssh hand
 	#     one to the far side too — an agent draws a full-screen interface and
@@ -907,12 +1050,7 @@ fcc_remote_control() {
 		openwrt)
 			_cc_remote="/etc/init.d/$_cc_service $_cc_op" ;;
 		windows)
-			case "$_cc_op" in
-				start)   _cc_verb="Start-Service" ;;
-				stop)    _cc_verb="Stop-Service" ;;
-				restart) _cc_verb="Restart-Service" ;;
-			esac
-			_cc_remote="powershell.exe -NoProfile -NonInteractive -Command \"$_cc_verb -Name '$_cc_service'\"" ;;
+			_cc_remote="$(fcc_remote_win_cmd "$(fcc_remote_win_control_script "$_cc_op" "$_cc_service")")" ;;
 		*)
 			fcc_remote_error "invalid platform"; return 1 ;;
 	esac
@@ -1140,21 +1278,28 @@ fcc_remote_running() {
 			esac ;;
 	esac
 
-	# A Linux machine can also be a host running only free-claude-code, with no
-	# unit to ask about. The process list is then the honest answer — the same
-	# question macOS asked from the start — and the service check's own words
-	# stay in the answer for the case where neither can tell.
-	if [ "$_rn_known" = "0" ] && [ "$_rn_platform" = "linux" ] \
-		&& [ "$_rn_code" -ne 255 ]; then
-		_rn_probe="$(fcc_remote_ssh "$(fcc_remote_bare_server_cmd)")"
-		_rn_pword="$(printf '%s' "$_rn_probe" | fcc_remote_output_filter | tr -d '\r' | tr 'A-Z' 'a-z' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-		# The probe is the same one the console reads, so it says "server
-		# running" rather than one word: the console needs the kind and the
-		# state, and this is that line.
-		case "$_rn_pword" in
-			'server running') _rn_running=true; _rn_known=1 ;;
-			'server stopped') _rn_known=1 ;;
+	# A machine running only free-claude-code has no unit to ask about — Linux
+	# and Windows included, where the upstream install leaves the server as a
+	# process the account started. The process list is then the honest answer —
+	# the same question macOS asked from the start — and the service check's own
+	# words stay in the answer for the case where neither can tell.
+	if [ "$_rn_known" = "0" ] && [ "$_rn_code" -ne 255 ]; then
+		_rn_probe_cmd=""
+		case "$_rn_platform" in
+			linux)   _rn_probe_cmd="$(fcc_remote_bare_server_cmd)" ;;
+			windows) _rn_probe_cmd="$(fcc_remote_win_server_cmd)" ;;
 		esac
+		if [ -n "$_rn_probe_cmd" ]; then
+			_rn_probe="$(fcc_remote_ssh "$_rn_probe_cmd")"
+			_rn_pword="$(printf '%s' "$_rn_probe" | fcc_remote_output_filter | tr -d '\r' | tr 'A-Z' 'a-z' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+			# The probe is the same one the console reads, so it says "server
+			# running" rather than one word: the console needs the kind and the
+			# state, and this is that line.
+			case "$_rn_pword" in
+				'server running') _rn_running=true; _rn_known=1 ;;
+				'server stopped') _rn_known=1 ;;
+			esac
+		fi
 	fi
 
 	if [ "$_rn_known" = "0" ]; then

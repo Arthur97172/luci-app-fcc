@@ -101,6 +101,14 @@ case "${last:-}" in
 			printf '%s\n' "$SSH_PROBE_OUT"
 			exit 0
 		fi ;;
+	# A Windows probe is PowerShell rather than a shell, and the process list and
+	# the launcher checks are the same two questions. Matching Get-Process and
+	# Get-Command sends them to the probe's fixture too.
+	*Get-Process*|*Get-Command*)
+		if [ -n "${SSH_PROBE_OUT+x}" ]; then
+			printf '%s\n' "$SSH_PROBE_OUT"
+			exit 0
+		fi ;;
 esac
 # A real ssh writes its last words before it exits with the failure code, so
 # the canned one does too: the tests of the unreadable-answer path need both.
@@ -719,9 +727,37 @@ test_control_uses_the_windows_preset() {
 	ready_lan
 	uci_set remote_platform windows
 	run_remote control start >/dev/null
-	assert_eq 'powershell.exe -NoProfile -NonInteractive -Command "Start-Service -Name '"'"'fcc'"'"'"' \
-		"$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
-		"Windows goes through PowerShell's Start-Service"
+	cmd="$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')"
+	assert_contains "$cmd" "if (Get-Service -Name 'fcc' -ErrorAction SilentlyContinue)" \
+		"Windows asks whether a service of that name exists"
+	assert_contains "$cmd" "Start-Service -Name 'fcc'" "and starts it when it does"
+	assert_contains "$cmd" "Start-Process -WindowStyle Hidden" \
+		"falling back to the upstream install's fcc-server when it does not"
+	assert_contains "$cmd" '$env:Path' "with the installer's directories on PATH"
+	# cmd.exe is the shell on the far side, and it only understands double
+	# quotes. The script inside them must therefore contain none of its own:
+	# anything but the wrapping pair would be parsed by cmd rather than by
+	# PowerShell.
+	assert_eq 2 "$(printf '%s' "$cmd" | tr -cd '"' | wc -c | tr -d ' ')" \
+		"the script carries no double quote of its own"
+	drop_sandbox
+}
+
+test_control_on_windows_stops_and_restarts_the_process_without_a_service() {
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	run_remote control stop >/dev/null
+	cmd="$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')"
+	assert_contains "$cmd" "Stop-Service -Name 'fcc'" "a service is stopped when there is one"
+	assert_contains "$cmd" "Stop-Process -Name 'fcc-server','fcc-desktop'" \
+		"and the processes otherwise"
+
+	run_remote control restart >/dev/null
+	cmd="$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')"
+	assert_contains "$cmd" "Restart-Service -Name 'fcc'" "restart restarts the service"
+	assert_contains "$cmd" "Start-Sleep -Milliseconds 500" \
+		"or stops the processes, waits, and starts the proxy again"
 	drop_sandbox
 }
 
@@ -1112,6 +1148,91 @@ test_session_command_names_a_bare_machine_that_cannot_be_reached() {
 		SSH_EXIT=255 run_remote session-command claude)" || true
 	assert_contains "$out" '"reason":"unreachable"' "ssh's failure is named as such"
 	assert_contains "$out" 'Network is unreachable' "with the words that say why"
+	drop_sandbox
+}
+
+test_console_reads_a_windows_machine_from_the_powershell_probe() {
+	# A Windows machine that only ran install.ps1 has no sh, no status.sh and no
+	# fcc-env, so the console cannot ask it the POSIX way. It is asked with one
+	# PowerShell line, and the lines it prints are the same two kinds the POSIX
+	# probe prints — so the document the page renders is identical.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed
+agent codex missing' run_remote console)" || true
+	assert_contains "$out" '"ok":true' "the console open is answered"
+	assert_contains "$out" '"running":true' "the process list decides the server state"
+	assert_contains "$out" '"claude":{"name":"Claude Code","installed":true}' \
+		"an installed agent is reported"
+	assert_contains "$out" '"codex":{"name":"Codex","installed":false}' \
+		"and a missing one is not"
+	assert_contains "$(ssh_command 1)" \
+		'powershell.exe -NoProfile -NonInteractive -Command "$p = @(' \
+		"Windows is asked with one PowerShell line, starting at the PATH setup"
+	assert_contains "$(ssh_command 1)" 'Get-Process -Name' \
+		"which puts the process list in the same answer"
+	assert_not_contains "$(ssh_command 1)" 'status.sh' \
+		"and never with the POSIX helper it does not have"
+	assert_contains "$(ssh_command 1)" "Get-Command 'claude'" \
+		"the launcher check is PowerShell's own"
+	drop_sandbox
+}
+
+test_session_command_on_windows_runs_the_launcher_through_powershell() {
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' run_remote session-command claude)" || true
+	assert_contains "$out" 'powershell.exe -NoProfile' "the pane runs PowerShell"
+	assert_contains "$out" '$env:Path' "with the installer's directories on PATH"
+	assert_contains "$out" 'fcc-claude' "and starts the launcher"
+	assert_contains "$out" '& ' "through PowerShell's call operator"
+	assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" \
+		"the whole command is one line"
+	# The line is a local shell word, so the quotes ssh must receive are still
+	# there — the pane's shell hands the whole command over as one argument.
+	assert_contains "$out" '-Command "' "the -Command argument survives quoting"
+	assert_contains "$(ssh_command 1)" 'Get-Process' \
+		"the agent is checked on that machine before the pane opens"
+
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT='server running
+agent claude missing' run_remote session-command claude)" || true
+	assert_contains "$out" '"reason":"no-agent-tools"' \
+		"and a launcher the probe did not find is refused"
+	drop_sandbox
+}
+
+test_running_falls_back_to_the_process_list_on_windows() {
+	# Get-Service's own words for a name it does not know are not a state: a
+	# machine that only ran install.ps1 has no service, and its server may well
+	# be up. The process list is asked second, and it is the honest answer.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_OUT="Get-Service : Cannot find any service with service name 'fcc'." \
+		SSH_PROBE_OUT='server running' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the process list decides"
+	assert_contains "$(ssh_command 1)" 'Get-Service' "Get-Service is still asked first"
+	assert_contains "$(ssh_command 2)" 'Get-Process' "and the process list second"
+	drop_sandbox
+}
+
+test_windows_errors_are_named_as_a_missing_service() {
+	# The page translates a reason code, so Windows' own wording for "nothing by
+	# that name is here" has to reach it as one.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_OUT="'fcc-server' is not recognized as an internal or external command" \
+		SSH_EXIT=1 run_remote control start)" || true
+	assert_contains "$out" '"reason":"no-service"' \
+		"cmd's not-recognized is the same answer as a missing service"
 	drop_sandbox
 }
 

@@ -1402,6 +1402,14 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	assert_contains "$(cat "$_ts_js")" "'/etc/init.d/' + service + ' ' + verb" \
 		"OpenWrt is its init script"
 	assert_contains "$(cat "$_ts_js")" "'Start-Service'" "Windows is PowerShell"
+	# install.ps1 registers no Windows service, so the preview shows both
+	# branches and the fallback to the upstream install's own server.
+	assert_contains "$(cat "$_ts_js")" "if (Get-Service -Name '" \
+		"the Windows preview asks whether a service of that name exists"
+	assert_contains "$(cat "$_ts_js")" "Start-Process -WindowStyle Hidden" \
+		"and shows the fallback that starts fcc-server when it does not"
+	assert_contains "$(cat "$_ts_js")" "<PATH setup>" \
+		"with the PATH setup it shares with the backend abbreviated"
 	# macOS has no service at all — the upstream install writes no launchd job —
 	# so the preview says that rather than naming a command that cannot run.
 	assert_contains "$(cat "$_ts_js")" 'macOS has no fcc service' \

@@ -292,9 +292,10 @@
 			FCC._('The LAN machine has no systemctl. If it runs OpenWrt, set its platform to OpenWrt in Advanced settings.'),
 		'no-init-script':
 			FCC._('The service was not found on the LAN machine. Check the service name in Advanced settings.'),
-		/* A Linux or macOS machine carrying only the upstream install has no
-		 * service at all — neither a unit nor a launchd job — so there is
-		 * nothing to start or stop here and nothing in the settings to change. */
+		/* A Linux, macOS or Windows machine carrying only the upstream install
+		 * has no service at all — no unit, no launchd job, no Windows service —
+		 * so there is nothing to start or stop here and nothing in the settings
+		 * to change. */
 		'no-service':
 			FCC._('The LAN machine has no fcc service; start the FCC Server on that machine itself. The Web Console can still run its agents there.'),
 		'unreadable':
@@ -387,6 +388,19 @@
 		restart: { linux: 'restart', openwrt: 'restart', windows: 'Restart-Service' }
 	};
 
+	/* What Windows runs when no service of the configured name exists. The
+	 * upstream installer registers no service, so this is the branch that runs
+	 * on a machine that only ran install.ps1: the proxy is fcc-server, started
+	 * hidden, or the process list is stopped. Both branches are shown because
+	 * which one runs depends on the machine, not on a setting here. */
+	var WIN_FALLBACK = {
+		start: "Start-Process -WindowStyle Hidden -FilePath (Get-Command 'fcc-server' -ErrorAction Stop).Source",
+		stop: "Stop-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue",
+		restart: "Stop-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue; " +
+			"Start-Sleep -Milliseconds 500; " +
+			"Start-Process -WindowStyle Hidden -FilePath (Get-Command 'fcc-server' -ErrorAction Stop).Source"
+	};
+
 	function previewCommands() {
 		var box = FCC.$('#fcc-remote-preview');
 		if (!box) { return; }
@@ -403,8 +417,14 @@
 			var verb = REMOTE_VERBS[op][v.platform] || REMOTE_VERBS[op].linux;
 			if (v.platform === 'openwrt') { return '/etc/init.d/' + service + ' ' + verb; }
 			if (v.platform === 'windows') {
-				return 'powershell.exe -NoProfile -NonInteractive -Command "' +
-					verb + " -Name '" + service + "'\"";
+				/* <PATH setup> stands for the directory list every one of these
+				 * commands starts with — the launchers install.ps1 wrote, which
+				 * sshd does not put on PATH. It is the same in all three, so it
+				 * is abbreviated rather than repeated three times. */
+				return 'powershell.exe -NoProfile -NonInteractive -Command "<PATH setup>; ' +
+					"if (Get-Service -Name '" + service + "' -ErrorAction SilentlyContinue) { " +
+					verb + " -Name '" + service + "' -ErrorAction Stop } else { " +
+					WIN_FALLBACK[op] + ' }"';
 			}
 			return 'systemctl ' + verb + ' ' + service;
 		});

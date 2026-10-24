@@ -168,19 +168,25 @@ machine: Windows, Linux, macOS or OpenWrt, one at a time.
    the connection and reports the value it actually found.
 3. Only then do the four buttons become usable. The command a click sends is
    chosen by **Remote platform** in *Advanced settings*: Linux runs
-   `systemctl <op> <service>`, OpenWrt runs `/etc/init.d/<service> <op>`, and
-   Windows runs PowerShell's `Start-Service` / `Stop-Service` /
-   `Restart-Service`. A service name may contain only letters, digits and
-   `.` `-` `_`.
+   `systemctl <op> <service>` and OpenWrt runs `/etc/init.d/<service> <op>`.
+   Windows runs one PowerShell line that asks the machine which it has: a
+   service of that name gets `Start-Service` / `Stop-Service` /
+   `Restart-Service`; a machine with no such service — which is what
+   install.ps1 leaves — gets the upstream install's own server instead, started
+   hidden with `fcc-server` and stopped through its process list, because the
+   installer registers no Windows service. A service name may contain only
+   letters, digits and `.` `-` `_`.
 
-A **Linux or macOS machine carrying only the upstream install**
-(`curl -fsSL .../install.sh | sh`) has no service unit and no `fcc-env`: there
-is nothing there to start or stop, so the four buttons say exactly that — always
-on macOS, and on Linux when `systemctl` has no `fcc.service` — instead of
-guessing a command. The **Web Console** is unaffected: in LAN mode it asks that
-machine's own shell, lists its agents and can start them there. On Linux the
-server state is asked of `systemctl` first and, when there is no such unit, read
-from the process list, so a hand-started server is not reported as stopped.
+A **Linux, macOS or Windows machine carrying only the upstream install** has no
+service unit and no `fcc-env`: there is nothing there to start or stop, so the
+four buttons report the server's process instead of guessing a command — always
+on macOS, on Linux when `systemctl` has no `fcc.service`, and on Windows when
+there is no service of the configured name. The **Web Console** is unaffected:
+in LAN mode it asks that machine's own shell — `sh` on Linux and macOS,
+PowerShell on Windows, with the directories the installer wrote added to PATH
+first — lists its agents and can start them there. The server state is asked of
+the service manager first and, when there is no such unit or service, read from
+the process list, so a hand-started server is not reported as stopped.
 
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.

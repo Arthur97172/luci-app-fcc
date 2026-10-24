@@ -604,7 +604,9 @@ end
 -- `linux` and `macos` mean a machine that carries only the upstream install:
 -- launchers and agent CLIs under the account's home, no service unit, and no
 -- fcc-env. `openwrt` means one that runs this package, with procd's init
--- script. `windows` is the PowerShell service preset.
+-- script. `windows` is the same upstream install under PowerShell: a service
+-- of the configured name if the machine has one, and its own process
+-- otherwise.
 local REMOTE_PLATFORMS = { linux = true, macos = true, openwrt = true, windows = true }
 
 function valid_remote_platform(p)

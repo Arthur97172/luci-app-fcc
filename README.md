@@ -123,14 +123,19 @@ make package/luci-app-fcc/compile V=s
 2. 点 **测试连接**。第一次显示远程主机密钥指纹并要求确认，确认后写入 UCI，此后每次连接都
    要求完全一致；指纹变了就拒绝并报告实际读到的值。
 3. 这时四个按钮才可用。发送的命令由 *高级设置* 里的 **远程平台** 决定：Linux 用
-   `systemctl <op> <服务名>`，OpenWrt 用 `/etc/init.d/<服务名> <op>`，Windows 用 PowerShell
-   的 `Start-Service`/`Stop-Service`/`Restart-Service`。服务名只接受字母、数字和 `.` `-` `_`。
+   `systemctl <op> <服务名>`，OpenWrt 用 `/etc/init.d/<服务名> <op>`。Windows 发送一行
+   PowerShell，先问那台机器有没有同名服务：有就跑
+   `Start-Service`/`Stop-Service`/`Restart-Service`；没有服务——`install.ps1` 装完就是
+   这样——就改用上游安装自带的服务器，用 `fcc-server` 在后台隐藏启动、按进程列表停止，
+   因为那个安装脚本不注册 Windows 服务。服务名只接受字母、数字和 `.` `-` `_`。
 
-**只安装上游 fcc 的 Linux / macOS 机器**（`curl -fsSL .../install.sh | sh`）没有服务单元，
-也没有 `fcc-env`：那里没有可启动或停止的服务，所以四个按钮会明确说明这一点（macOS 一律如此，
-Linux 在 `systemctl` 找不到 `fcc.service` 时也一样），而不是去猜一条命令。**网页控制台**不受
-影响：它的局域网模式直接询问那台机器的 shell，能列出并可启动它的智能体；运行状态在 Linux 上
-先问 `systemctl`，没有该单元时改看进程列表，所以手工启动的服务器不会被报成“已停止”。
+**只安装上游 fcc 的 Linux / macOS / Windows 机器**没有服务单元，也没有 `fcc-env`：那里
+没有可启动或停止的服务，所以四个按钮改为报告那台机器上的服务器进程，而不是去猜一条命令
+（macOS 一律如此，Linux 在 `systemctl` 找不到 `fcc.service` 时、Windows 在没有同名服务时
+也一样）。**网页控制台**不受影响：它的局域网模式直接询问那台机器自己的 shell——Linux 和
+macOS 是 `sh`，Windows 是 PowerShell，都先把安装脚本写入的目录加进 `PATH`——能列出并
+可启动它的智能体；运行状态先问服务管理器，没有对应单元或服务时改看进程列表，所以手工启动
+的服务器不会被报成“已停止”。
 
 **只接受私有 IPv4 地址**（`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）；主机名一律
 拒绝，因为一个名字可能解析成公网地址。
