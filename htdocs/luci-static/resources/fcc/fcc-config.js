@@ -500,7 +500,10 @@
 				box.textContent = FCC._('The LAN FCC Server is running.');
 				return;
 			}
-			box.className = '';
+			/* The same card the local panel puts its six lines in: the two
+			 * panels answer the same question, so they should not look like
+			 * two different kinds of answer. */
+			box.className = 'fcc-card';
 			box.innerHTML = '';
 			box.appendChild(FCC.el('div', {}, [
 				FCC.el('span', { class: 'fcc-dot on' }),

@@ -1474,6 +1474,21 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the LAN panel renders the document when one arrives"
 	assert_contains "$(cat "$_ts_view")" '<div id="fcc-remote-server-state"' \
 		"the LAN state is a container now — a table cannot live in a paragraph"
+
+	# Both panels are read in the same order: the one-server notice, then what
+	# the server is doing, then the buttons that act on it. A panel that offers
+	# Start before it says what is running answers the question the user asks
+	# second before the one they ask first.
+	_ts_notice=$(grep -n 'Only one FCC Server runs at a time' "$_ts_view" | head -1 | cut -d: -f1)
+	_ts_state=$(grep -n 'id="fcc-remote-server-state"' "$_ts_view" | head -1 | cut -d: -f1)
+	_ts_start=$(grep -n 'data-remote-op="start"' "$_ts_view" | head -1 | cut -d: -f1)
+	_ts_host=$(grep -n 'id="fcc-remote-host"' "$_ts_view" | head -1 | cut -d: -f1)
+	assert_eq 1 "$((_ts_notice < _ts_state))" \
+		"the LAN state follows the one-server notice"
+	assert_eq 1 "$((_ts_state < _ts_start))" \
+		"the LAN buttons follow the state"
+	assert_eq 1 "$((_ts_start < _ts_host))" \
+		"and the connection fields follow the buttons"
 }
 
 # ---------------------------------------------------------------------------

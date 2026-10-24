@@ -171,6 +171,28 @@
 			     The four buttons stay disabled until the address, the account,
 			     the key and the host key are all in place. -->
 			<div id="fcc-remote-controls" hidden>
+				<!-- What the machine on the other side is doing, first. The
+				     local panel reads state then buttons in that order, and
+				     this one answers the same question, so a glance at the
+				     top of the panel means the same thing on both sides. The
+				     switch position is stored and survives a logout; these
+				     lines are read over SSH when the panel is shown, so a
+				     reload reports the running server and not only the side
+				     that was chosen. -->
+				<div id="fcc-remote-server-state" class="fcc-key-state"></div>
+
+				<div class="fcc-toolbar">
+					<button type="button" class="cbi-button cbi-button-apply" data-remote-op="start"><%:Start%></button>
+					<button type="button" class="cbi-button cbi-button-reset" data-remote-op="stop"><%:Stop%></button>
+					<button type="button" class="cbi-button" data-remote-op="restart"><%:Restart%></button>
+					<!-- The same LuCI proxy as the local link. In LAN mode it
+					     reaches the remote server through an SSH local forward,
+					     so the remote sees a loopback peer and the browser still
+					     never talks to the FCC port. -->
+					<a id="fcc-remote-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
+					   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
+				</div>
+
 				<div class="cbi-value">
 					<label class="cbi-value-title" for="fcc-remote-host"><%:IP address%></label>
 					<div class="cbi-value-field">
@@ -192,24 +214,6 @@
 						</div>
 					</div>
 				</div>
-
-				<div class="fcc-toolbar">
-					<button type="button" class="cbi-button cbi-button-apply" data-remote-op="start"><%:Start%></button>
-					<button type="button" class="cbi-button cbi-button-reset" data-remote-op="stop"><%:Stop%></button>
-					<button type="button" class="cbi-button" data-remote-op="restart"><%:Restart%></button>
-					<!-- The same LuCI proxy as the local link. In LAN mode it
-					     reaches the remote server through an SSH local forward,
-					     so the remote sees a loopback peer and the browser still
-					     never talks to the FCC port. -->
-					<a id="fcc-remote-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
-					   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
-				</div>
-
-				<!-- What the machine on the other side is doing. The switch
-				     position is stored and survives a logout; this line is read
-				     over SSH when the panel is shown, so a reload reports the
-				     running server and not only the side that was chosen. -->
-				<div id="fcc-remote-server-state" class="fcc-key-state"></div>
 
 				<div class="fcc-remote-key">
 					<span id="fcc-remote-key-state" class="fcc-key-state"></span>
