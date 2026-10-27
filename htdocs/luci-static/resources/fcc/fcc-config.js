@@ -218,6 +218,10 @@
 		fingerprint: '',
 		public_key: '',
 		key_ready: false,
+		/* ok, missing, no-public, mismatch, invalid or unchecked. key_ready is
+		 * the yes/no the controls follow; this word is what lets the page say
+		 * why the answer is no. */
+		key_state: '',
 		trusted: false,
 		ready: false,
 		ssh_client: 'openssh',
@@ -267,6 +271,14 @@
 			FCC._('The remote host key could not be read.'),
 		'could not read the existing SSH key':
 			FCC._('The existing SSH key could not be read.'),
+		'could not store the public key':
+			FCC._('The public key could not be stored on this router.'),
+		'could not move the unusable SSH key aside':
+			FCC._('The unusable SSH key could not be moved aside.'),
+		'the SSH key on this router is not a key OpenSSH can read; generate it again':
+			FCC._('The SSH key on this router is not a key OpenSSH can read. Generate the key again, then add the new public key to the LAN machine.'),
+		'the stored public key does not match the private key; generate the key again':
+			FCC._('The public key does not belong to the private key on this router. Generate the key again.'),
 		'setsid is not available':
 			FCC._('This router has no setsid, so the LAN tunnel cannot be started.'),
 		'the state of the remote server could not be read':
@@ -303,8 +315,30 @@
 		 * to change. */
 		'no-service':
 			FCC._('The LAN machine has no fcc service; start the FCC Server on that machine itself. The Web Console can still run its agents there.'),
+		/* The unit is there and this account may not touch it: systemd asked
+		 * for a password nobody can type into an SSH command. */
+		'needs-root':
+			FCC._('Only an administrator on the LAN machine may control its FCC Server. Start it on that machine itself, or give this account the right to control the service.'),
 		'unreadable':
-			FCC._('The LAN machine answered in a form that could not be read.')
+			FCC._('The LAN machine answered in a form that could not be read.'),
+		/* The key on this router, not the LAN machine: OpenSSH could not read
+		 * it, so nothing was ever offered over there. Generating the key again
+		 * is the only repair, and the new public half then has to be added to
+		 * the LAN account before the connection can work. */
+		'key-invalid':
+			FCC._('The SSH key on this router is not a key OpenSSH can read. Generate the key again, then add the new public key to the LAN machine.'),
+		'key-mismatch':
+			FCC._('The public key shown here does not belong to the private key on this router. Generate the key again, then add the new public key to the LAN machine.'),
+		'key-missing':
+			FCC._('The SSH key on this router is missing. Generate the key again, then add the new public key to the LAN machine.'),
+		/* The key was read and the LAN machine refused it — the ordinary state
+		 * of a first setup, before the public half is in authorized_keys. */
+		'auth':
+			FCC._('The LAN machine refused the SSH key. Add the public key shown here to that account’s authorized_keys.'),
+		'unreachable':
+			FCC._('The LAN machine could not be reached over SSH. Check that it is switched on and that its SSH server is running.'),
+		'host-key':
+			FCC._('The LAN machine’s host key no longer matches the one pinned on this router. Forget the pinned key and trust it again.')
 	};
 
 	function remoteErrorText(text) {
@@ -624,6 +658,15 @@
 			if (blocker) {
 				state.className += ' fail';
 				state.textContent = blocker;
+			} else if (remote.key_state === 'invalid' || remote.key_state === 'mismatch') {
+				/* A key file is there and cannot be used. It must not be called
+				 * configured, and the Generate button below has to be visible:
+				 * it is the repair, and hiding it behind key_ready was what
+				 * left this state with no way out of the page. */
+				state.className += ' fail';
+				state.textContent = remote.key_state === 'mismatch'
+					? FCC._('The public key does not belong to the private key on this router. Generate the key again.')
+					: FCC._('The SSH key on this router cannot be used by OpenSSH. Generate the key again.');
 			} else if (remote.key_ready) {
 				state.className += ' on';
 				state.textContent = FCC._('SSH key configured');
@@ -676,6 +719,7 @@
 			remote.fingerprint = c.fingerprint || '';
 			remote.public_key = d.public_key || '';
 			remote.key_ready = d.key_ready === true;
+			remote.key_state = typeof d.key_state === 'string' ? d.key_state : '';
 			remote.trusted = d.trusted === true;
 			remote.ready = d.ready === true;
 			remote.ssh_client = d.ssh_client || (d.ssh_available === false ? 'none' : 'openssh');
@@ -856,8 +900,10 @@
 			var text = FCC.$('#fcc-remote-pubkey');
 			if (text) { text.textContent = remote.public_key; }
 			if (panel) { panel.hidden = false; }
-			FCC.notice(remoteStatus(), 'ok', d.existing
-				? FCC._('The existing key is shown below.')
+			FCC.notice(remoteStatus(), 'ok',
+				d.repaired ? FCC._('The public key was rebuilt from the private key. It is shown below.')
+				: d.replaced ? FCC._('The unusable key was replaced. Add the public key below to the LAN machine.')
+				: d.existing ? FCC._('The existing key is shown below.')
 				: FCC._('A new SSH key was generated.'));
 			return loadRemote();
 		}).catch(function (err) {

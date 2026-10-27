@@ -300,6 +300,12 @@ msgstr ""
 msgid "On the LAN side the agent itself runs on the other machine, over SSH."
 msgstr ""
 
+msgid "Only an administrator on the LAN machine may control its FCC Server. Start it on that machine itself, or give this account the right to control the service."
+msgstr ""
+
+msgid "Only an administrator on the LAN machine may control its FCC Server. Start it on that machine itself."
+msgstr ""
+
 msgid "Only one FCC Server runs at a time. Switching to a side stops the other one."
 msgstr ""
 
@@ -492,6 +498,9 @@ msgstr ""
 msgid "The LAN machine answered with something unexpected."
 msgstr ""
 
+msgid "The LAN machine could not be reached over SSH. Check that it is switched on and that its SSH server is running."
+msgstr ""
+
 msgid "The LAN machine could not be reached. Check that it is on and that SSH is enabled."
 msgstr ""
 
@@ -507,7 +516,19 @@ msgstr ""
 msgid "The LAN machine is not configured yet. Set it up in Configuration → FCC Server."
 msgstr ""
 
+msgid "The LAN machine refused the SSH key. Add the public key from Configuration → FCC Server to that account’s authorized_keys."
+msgstr ""
+
+msgid "The LAN machine refused the SSH key. Add the public key shown here to that account’s authorized_keys."
+msgstr ""
+
 msgid "The LAN machine’s host key has not been trusted yet. Trust it in Configuration → FCC Server."
+msgstr ""
+
+msgid "The LAN machine’s host key no longer matches the one pinned on this router. Forget it and trust it again in Configuration → FCC Server."
+msgstr ""
+
+msgid "The LAN machine’s host key no longer matches the one pinned on this router. Forget the pinned key and trust it again."
 msgstr ""
 
 msgid "The LAN machine’s state could not be read."
@@ -526,6 +547,21 @@ msgid "The SSH key could not be generated."
 msgstr ""
 
 msgid "The SSH key has not been generated yet."
+msgstr ""
+
+msgid "The SSH key on this router cannot be used by OpenSSH. Generate the key again."
+msgstr ""
+
+msgid "The SSH key on this router is missing. Generate it again in Configuration → FCC Server, then add the new public key to the LAN machine."
+msgstr ""
+
+msgid "The SSH key on this router is missing. Generate the key again, then add the new public key to the LAN machine."
+msgstr ""
+
+msgid "The SSH key on this router is not a key OpenSSH can read. Generate the key again, then add the new public key to the LAN machine."
+msgstr ""
+
+msgid "The SSH key on this router is not one OpenSSH can read. Generate it again in Configuration → FCC Server, then add the new public key to the LAN machine."
 msgstr ""
 
 msgid "The address or SSH port changed — the pinned host key was forgotten."
@@ -573,6 +609,18 @@ msgstr ""
 msgid "The platform selected for the LAN machine is not valid."
 msgstr ""
 
+msgid "The public key could not be stored on this router."
+msgstr ""
+
+msgid "The public key does not belong to the private key on this router. Generate the key again."
+msgstr ""
+
+msgid "The public key shown here does not belong to the private key on this router. Generate the key again, then add the new public key to the LAN machine."
+msgstr ""
+
+msgid "The public key was rebuilt from the private key. It is shown below."
+msgstr ""
+
 msgid "The remote host key could not be read."
 msgstr ""
 
@@ -598,6 +646,12 @@ msgid "The service name was the platform name. It is now fcc — change it if th
 msgstr ""
 
 msgid "The service was not found on the LAN machine. Check the service name in Advanced settings."
+msgstr ""
+
+msgid "The unusable SSH key could not be moved aside."
+msgstr ""
+
+msgid "The unusable key was replaced. Add the public key below to the LAN machine."
 msgstr ""
 
 msgid "They take effect when you choose Save & Apply."

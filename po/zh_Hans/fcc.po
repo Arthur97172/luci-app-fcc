@@ -355,6 +355,17 @@ msgid "On the LAN side the agent itself runs on the other machine, over SSH."
 msgstr "局域网模式下，智能体本身通过 SSH 在另一台机器上运行。"
 
 msgid ""
+"Only an administrator on the LAN machine may control its FCC Server. Start "
+"it on that machine itself, or give this account the right to control the "
+"service."
+msgstr "只有局域网主机的管理员才能控制它的 FCC Server。请在该主机上直接启动，或授予此账户控制该服务的权限。"
+
+msgid ""
+"Only an administrator on the LAN machine may control its FCC Server. Start "
+"it on that machine itself."
+msgstr "只有局域网主机的管理员才能控制它的 FCC Server。请在该主机上直接启动。"
+
+msgid ""
 "Only one FCC Server runs at a time. Switching to a side stops the other one."
 msgstr "同一时间只运行一个 FCC Server。切换到另一侧时会停止原来那一侧的服务。"
 
@@ -572,6 +583,11 @@ msgid "The LAN machine answered with something unexpected."
 msgstr "局域网主机返回了无法识别的内容。"
 
 msgid ""
+"The LAN machine could not be reached over SSH. Check that it is switched on "
+"and that its SSH server is running."
+msgstr "无法通过 SSH 连接到局域网主机。请确认它已开机，并且 SSH 服务正在运行。"
+
+msgid ""
 "The LAN machine could not be reached. Check that it is on and that SSH is "
 "enabled."
 msgstr "无法连接到局域网主机。请确认它已开机，并且已启用 SSH。"
@@ -600,9 +616,37 @@ msgid ""
 msgstr "局域网主机尚未配置。请在“配置管理 → FCC Server”中完成设置。"
 
 msgid ""
+"The LAN machine refused the SSH key. Add the public key from Configuration → "
+"FCC Server to that account’s authorized_keys."
+msgstr ""
+"局域网主机拒绝了该 SSH 密钥。请把“配置管理 → FCC Server”中的公钥添加到该账户"
+"的 authorized_keys 中。"
+
+msgid ""
+"The LAN machine refused the SSH key. Add the public key shown here to that "
+"account’s authorized_keys."
+msgstr ""
+"局域网主机拒绝了该 SSH 密钥。请把此处显示的公钥添加到该账户的 "
+"authorized_keys 中。"
+
+msgid ""
 "The LAN machine’s host key has not been trusted yet. Trust it in "
 "Configuration → FCC Server."
 msgstr "尚未信任局域网主机的主机密钥。请在“配置管理 → FCC Server”中信任它。"
+
+msgid ""
+"The LAN machine’s host key no longer matches the one pinned on this router. "
+"Forget it and trust it again in Configuration → FCC Server."
+msgstr ""
+"局域网主机的主机密钥与本机固定的那一个不再一致。请在“配置管理 → FCC Server”中"
+"忘记它并重新信任。"
+
+msgid ""
+"The LAN machine’s host key no longer matches the one pinned on this router. "
+"Forget the pinned key and trust it again."
+msgstr ""
+"局域网主机的主机密钥与本机固定的那一个不再一致。请忘记已固定的密钥后重新信"
+"任。"
 
 msgid "The LAN machine’s state could not be read."
 msgstr "无法读取局域网主机的状态。"
@@ -623,6 +667,36 @@ msgstr "无法生成 SSH 密钥。"
 
 msgid "The SSH key has not been generated yet."
 msgstr "尚未生成 SSH 密钥。"
+
+msgid ""
+"The SSH key on this router cannot be used by OpenSSH. Generate the key again."
+msgstr "本机的 SSH 密钥无法被 OpenSSH 使用。请重新生成密钥。"
+
+msgid ""
+"The SSH key on this router is missing. Generate it again in Configuration → "
+"FCC Server, then add the new public key to the LAN machine."
+msgstr ""
+"本机的 SSH 密钥缺失。请在“配置管理 → FCC Server”中重新生成，然后把新的公钥添"
+"加到局域网主机。"
+
+msgid ""
+"The SSH key on this router is missing. Generate the key again, then add the "
+"new public key to the LAN machine."
+msgstr "本机的 SSH 密钥缺失。请重新生成密钥，然后把新的公钥添加到局域网主机。"
+
+msgid ""
+"The SSH key on this router is not a key OpenSSH can read. Generate the key "
+"again, then add the new public key to the LAN machine."
+msgstr ""
+"本机的 SSH 密钥不是 OpenSSH 能读取的密钥。请重新生成密钥，然后把新的公钥添加"
+"到局域网主机。"
+
+msgid ""
+"The SSH key on this router is not one OpenSSH can read. Generate it again in "
+"Configuration → FCC Server, then add the new public key to the LAN machine."
+msgstr ""
+"本机的 SSH 密钥不是 OpenSSH 能读取的密钥。请在“配置管理 → FCC Server”中重新生"
+"成，然后把新的公钥添加到局域网主机。"
 
 msgid "The address or SSH port changed — the pinned host key was forgotten."
 msgstr "地址或 SSH 端口已更改——已忘记固定的主机密钥。"
@@ -672,6 +746,24 @@ msgstr "已忘记固定的主机密钥。"
 msgid "The platform selected for the LAN machine is not valid."
 msgstr "为局域网主机选择的平台无效。"
 
+msgid "The public key could not be stored on this router."
+msgstr "无法在本机保存公钥。"
+
+msgid ""
+"The public key does not belong to the private key on this router. Generate "
+"the key again."
+msgstr "公钥与本机的私钥不匹配。请重新生成密钥。"
+
+msgid ""
+"The public key shown here does not belong to the private key on this router. "
+"Generate the key again, then add the new public key to the LAN machine."
+msgstr ""
+"此处显示的公钥与本机的私钥不匹配。请重新生成密钥，然后把新的公钥添加到局域网"
+"主机。"
+
+msgid "The public key was rebuilt from the private key. It is shown below."
+msgstr "已根据私钥重新生成公钥，显示如下。"
+
 msgid "The remote host key could not be read."
 msgstr "无法读取远程主机密钥。"
 
@@ -707,6 +799,13 @@ msgid ""
 "The service was not found on the LAN machine. Check the service name in "
 "Advanced settings."
 msgstr "在局域网主机上找不到该服务。请在高级设置中检查服务名称。"
+
+msgid "The unusable SSH key could not be moved aside."
+msgstr "无法把无法使用的 SSH 密钥移到一旁。"
+
+msgid ""
+"The unusable key was replaced. Add the public key below to the LAN machine."
+msgstr "无法使用的密钥已被替换。请把下面的公钥添加到局域网主机。"
 
 msgid "They take effect when you choose Save & Apply."
 msgstr "选择“保存并应用”后生效。"

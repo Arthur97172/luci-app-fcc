@@ -71,6 +71,17 @@
 			return FCC._('The LAN machine is not configured yet. Set it up in Configuration → FCC Server.');
 		case 'no-key':
 			return FCC._('SSH has not been set up for the LAN machine yet. Generate its key in Configuration → FCC Server.');
+		case 'key-invalid':
+		case 'key-mismatch':
+			return FCC._('The SSH key on this router is not one OpenSSH can read. Generate it again in Configuration → FCC Server, then add the new public key to the LAN machine.');
+		case 'key-missing':
+			return FCC._('The SSH key on this router is missing. Generate it again in Configuration → FCC Server, then add the new public key to the LAN machine.');
+		case 'auth':
+			return FCC._('The LAN machine refused the SSH key. Add the public key from Configuration → FCC Server to that account’s authorized_keys.');
+		case 'host-key':
+			return FCC._('The LAN machine’s host key no longer matches the one pinned on this router. Forget it and trust it again in Configuration → FCC Server.');
+		case 'needs-root':
+			return FCC._('Only an administrator on the LAN machine may control its FCC Server. Start it on that machine itself.');
 		case 'no-host-key':
 			return FCC._('The LAN machine’s host key has not been trusted yet. Trust it in Configuration → FCC Server.');
 		case 'no-ssh-client':

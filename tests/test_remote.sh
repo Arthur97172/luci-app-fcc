@@ -110,6 +110,16 @@ case "${last:-}" in
 			exit 0
 		fi ;;
 esac
+# Whether a unit exists at all is asked separately, after a control command
+# failed in a way that could be either a missing unit or missing rights. That
+# question is not the last argument, so it is matched across the whole argv.
+case "$*" in
+	*list-unit-files*)
+		if [ -n "${SSH_UNIT_OUT+x}" ]; then
+			printf '%s\n' "$SSH_UNIT_OUT"
+			exit 0
+		fi ;;
+esac
 # A real ssh writes its last words before it exits with the failure code, so
 # the canned one does too: the tests of the unreadable-answer path need both.
 if [ -n "${SSH_OUT+x}" ]; then
@@ -160,8 +170,14 @@ done
 printf '[%s]:%s ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY luci-app-fcc-test\n' "$host" "$port"
 EOF
 
-	# ssh-keygen: -lf answers with $REMOTE_FP, -y prints the public half, and
-	# the generation form writes the pair to the -f path.
+	# ssh-keygen: -lf answers with $REMOTE_FP, -y prints the public half of a
+	# file that parses the way the real tool's does, and the generation form
+	# writes the pair to the -f path.
+	#
+	# The -y fake refuses anything but the OpenSSH container the generation
+	# form writes, with the real tool's sentence and exit code. That is what a
+	# key in another format — Dropbear's 83-byte blob is the one this package
+	# met — produces, and the tests for an unusable key depend on it.
 	cat > "$BIN/ssh-keygen" <<'EOF'
 #!/bin/sh
 case "${1:-}" in
@@ -169,6 +185,17 @@ case "${1:-}" in
 		printf '256 %s luci-app-fcc (ED25519)\n' "$REMOTE_FP"
 		exit 0 ;;
 	-y)
+		file=""
+		while [ $# -gt 0 ]; do
+			case "$1" in
+				-f) file="$2"; shift 2 ;;
+				*) shift ;;
+			esac
+		done
+		case "$(cat "$file" 2>/dev/null)" in
+			'PRIVATE KEY'*) : ;;
+			*) printf 'Load key "%s": invalid format\n' "$file" >&2; exit 255 ;;
+		esac
 		printf '%s\n' "${KEYGEN_PUB:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY luci-app-fcc}"
 		exit 0 ;;
 esac
@@ -210,6 +237,16 @@ ssh_command() {
 		n == want { cmd = substr($0, 5) }
 		END { if (cmd != "") print cmd }
 	' "$TMP/ssh.log"
+}
+
+# A key pair the fake ssh-keygen agrees is a pair: "PRIVATE KEY" parses, and
+# its derived public half is the same line the .pub holds. Written by one
+# helper so a fixture cannot half-disagree and turn another test's failure into
+# a key-mismatch refusal.
+fake_key() {
+	printf 'PRIVATE KEY\n' > "$SSH_DIR/id_ed25519"
+	printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY luci-app-fcc\n' \
+		> "$SSH_DIR/id_ed25519.pub"
 }
 
 # Make one helper unreachable the way a router without the package would be:
@@ -352,8 +389,7 @@ test_a_missing_ssh_keyscan_names_its_own_package() {
 	hide_tool ssh-keyscan
 	uci_set remote_host 192.168.5.20
 	uci_set remote_user fcc
-	printf 'PRIVATE KEY\n' > "$SSH_DIR/id_ed25519"
-	printf 'ssh-ed25519 AAAA fake\n' > "$SSH_DIR/id_ed25519.pub"
+	fake_key
 	out="$(run_remote status)"
 	assert_contains "$out" '"scan_available":false' \
 		"status reports the missing scanner"
@@ -418,8 +454,7 @@ test_test_scans_and_asks_for_trust_first() {
 	uci_set remote_host 192.168.5.20
 	uci_set remote_user fcc
 	# A key is needed before the connection is attempted.
-	printf 'PRIVATE KEY\n' > "$SSH_DIR/id_ed25519"
-	printf 'ssh-ed25519 AAAA fake\n' > "$SSH_DIR/id_ed25519.pub"
+	fake_key
 
 	out="$(run_remote test)"
 	assert_contains "$out" '"needs_trust":true' \
@@ -524,6 +559,53 @@ test_running_does_not_call_an_unreachable_host_stopped() {
 	assert_contains "$out" '"ok":false' "an unreachable host is not a state answer"
 	assert_contains "$out" '"checked":false' "and the page is told the check failed"
 	assert_contains "$out" 'could not be read' "in words rather than as a false"
+	assert_contains "$out" '"reason":"unreachable"' \
+		"and the reason is the machine, not an answer in the wrong form"
+	drop_sandbox
+}
+
+test_running_names_a_refused_key() {
+	# The far side answered and refused the key: a fresh key whose public half
+	# has not been added to the account's authorized_keys yet.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='arthur@192.168.5.20: Permission denied (publickey,password).' \
+		SSH_EXIT=255 run_remote running)" || true
+	assert_contains "$out" '"reason":"auth"' \
+		"a refused key is named as the authentication it is"
+	drop_sandbox
+}
+
+test_running_names_a_changed_host_key() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='@@@@@@@ WARNING @@@@@@@ Host key verification failed.' \
+		SSH_EXIT=255 run_remote running)" || true
+	assert_contains "$out" '"reason":"host-key"' \
+		"a host key that no longer matches is its own answer"
+	drop_sandbox
+}
+
+test_test_names_a_refused_key() {
+	# A key in the router's own format that the far side refuses — the state a
+	# first setup is in before its public half is added over there.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='arthur@192.168.5.20: Permission denied (publickey,password).' \
+		SSH_EXIT=255 run_remote test)" || true
+	assert_contains "$out" '"ok":false' "the test failed"
+	assert_contains "$out" '"reason":"auth"' \
+		"and says the key was refused rather than that the connection failed"
+	drop_sandbox
+}
+
+test_test_names_an_unreachable_machine() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='ssh: connect to host 192.168.5.20 port 22: Connection refused' \
+		SSH_EXIT=255 run_remote test)" || true
+	assert_contains "$out" '"reason":"unreachable"' \
+		"a machine that did not answer is named as such"
 	drop_sandbox
 }
 
@@ -790,13 +872,136 @@ test_keygen_creates_the_pair() {
 
 test_keygen_returns_an_existing_key_without_replacing_it() {
 	fresh
-	printf 'PRIVATE KEY\n' > "$SSH_DIR/id_ed25519"
-	printf 'ssh-ed25519 AAAA existing\n' > "$SSH_DIR/id_ed25519.pub"
+	fake_key
 	out="$(run_remote keygen)"
 	assert_contains "$out" '"existing":true' \
 		"a second visit shows the key rather than rotating it"
 	assert_eq "PRIVATE KEY" "$(cat "$SSH_DIR/id_ed25519")" \
 		"the private half is untouched"
+	drop_sandbox
+}
+
+# --- A key that is present but unusable --------------------------------
+#
+# The report that started this: the router held a private key in Dropbear's
+# format, so status said the key was configured, Test connection said
+# "Load key ...: invalid format ... Permission denied", and Start said the LAN
+# machine's answer could not be parsed. The file existing is not the question;
+# whether OpenSSH can read it is.
+
+# The 83 bytes dropbearkey writes for an ed25519 key: a length-prefixed
+# "ssh-ed25519" and 64 raw key bytes. OpenSSH cannot read it, and this is
+# deliberately not written as a readable string.
+write_dropbear_key() {
+	awk 'BEGIN {
+		printf "%c%c%c%c", 0, 0, 0, 11
+		printf "ssh-ed25519"
+		printf "%c%c%c%c", 0, 0, 0, 64
+		for (i = 0; i < 64; i++) { printf "%c", 7 }
+	}' > "$SSH_DIR/id_ed25519"
+	chmod 600 "$SSH_DIR/id_ed25519"
+	printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY luci-app-fcc\n' \
+		> "$SSH_DIR/id_ed25519.pub"
+}
+
+test_status_reports_an_unusable_key() {
+	fresh
+	ready_lan
+	write_dropbear_key
+	out="$(run_remote status)"
+	assert_contains "$out" '"key_state":"invalid"' \
+		"the key that is there is reported as unusable"
+	assert_contains "$out" '"key_ready":false' \
+		"so the key is not called configured"
+	assert_contains "$out" '"public_key":""' \
+		"and no public key is offered for a key that authenticates nothing"
+	assert_contains "$out" '"ready":false' \
+		"which leaves the controls disabled"
+	drop_sandbox
+}
+
+test_status_reports_a_key_pair_that_disagrees() {
+	fresh
+	ready_lan
+	printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOTHERKEY luci-app-fcc\n' \
+		> "$SSH_DIR/id_ed25519.pub"
+	out="$(run_remote status)"
+	assert_contains "$out" '"key_state":"mismatch"' \
+		"a public half that is not this key's is named as such"
+	assert_contains "$out" '"key_ready":false' \
+		"and is not called configured"
+	drop_sandbox
+}
+
+test_test_names_an_unusable_key_without_calling_the_machine() {
+	fresh
+	ready_lan
+	write_dropbear_key
+	out="$(run_remote test)"
+	assert_contains "$out" '"reason":"key-invalid"' \
+		"testing says the key itself cannot be read"
+	assert_contains "$out" 'not a key OpenSSH can read' \
+		"in the script's own words"
+	assert_not_contains "$(cat "$TMP/ssh.log" 2>/dev/null)" 'CALL' \
+		"and nothing is sent, because the failure is here, not over there"
+	drop_sandbox
+}
+
+test_running_names_an_unusable_key() {
+	fresh
+	ready_lan
+	write_dropbear_key
+	out="$(run_remote running)" || true
+	assert_contains "$out" '"ok":false' "the state is not read"
+	assert_contains "$out" '"reason":"key-invalid"' \
+		"and the reason is the key, not an answer that could not be parsed"
+	drop_sandbox
+}
+
+test_keygen_replaces_an_unusable_key() {
+	# The repair the page offers: Generate is visible while key_ready is false,
+	# and it must actually replace the key rather than report the old one.
+	fresh
+	ready_lan
+	write_dropbear_key
+	out="$(run_remote keygen)"
+	assert_contains "$out" '"ok":true' "the key is generated"
+	assert_contains "$out" '"existing":false' "and not reported as the one already there"
+	assert_contains "$out" '"replaced":true' "the unusable key is named as replaced"
+	assert_eq "PRIVATE KEY" "$(cat "$SSH_DIR/id_ed25519")" \
+		"the file is now a key ssh-keygen can read"
+	assert_file "$SSH_DIR/id_ed25519.unusable"
+	out="$(run_remote status)"
+	assert_contains "$out" '"key_ready":true' "and the pair is usable afterwards"
+	drop_sandbox
+}
+
+test_keygen_repairs_a_mismatched_public_half() {
+	# The private half is fine; only the .pub is not its partner. Rotating the
+	# key would make the user re-add it on the LAN machine for no reason.
+	fresh
+	printf 'PRIVATE KEY\n' > "$SSH_DIR/id_ed25519"
+	printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOTHERKEY stale\n' \
+		> "$SSH_DIR/id_ed25519.pub"
+	out="$(run_remote keygen)"
+	assert_contains "$out" '"existing":true' \
+		"the private key that works is kept"
+	assert_contains "$out" '"repaired":true' \
+		"and the answer says the public half was rewritten"
+	assert_contains "$(cat "$SSH_DIR/id_ed25519.pub")" 'AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY' \
+		"with the half derived from the private key"
+	assert_eq "PRIVATE KEY" "$(cat "$SSH_DIR/id_ed25519")" \
+		"and the private half untouched"
+	drop_sandbox
+}
+
+test_keygen_recreates_a_missing_public_half() {
+	fresh
+	printf 'PRIVATE KEY\n' > "$SSH_DIR/id_ed25519"
+	out="$(run_remote keygen)"
+	assert_contains "$out" '"existing":true' \
+		"the private key is not rotated to recover its public half"
+	assert_file "$SSH_DIR/id_ed25519.pub"
 	drop_sandbox
 }
 
@@ -1307,6 +1512,33 @@ test_control_on_macos_refuses_without_inventing_a_unit() {
 	assert_contains "$out" '"reason":"no-service"' "as a machine with no service"
 	assert_not_contains "$(cat "$TMP/ssh.log" 2>/dev/null)" 'CALL' \
 		"and nothing is sent, because nothing could run"
+	drop_sandbox
+}
+
+test_control_does_not_send_a_bare_machine_looking_for_sudo() {
+	# systemctl asks polkit for a password before it checks the unit's name, so
+	# a machine running only the upstream install answers exactly like one
+	# whose service this account may not touch. The unit is asked about before
+	# the answer keeps "you may not": there is nothing to start over there.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='Failed to start fcc.service: Interactive authentication required.' \
+		SSH_EXIT=1 SSH_UNIT_OUT='' run_remote control start)" || true
+	assert_contains "$out" '"ok":false' "the start did not happen"
+	assert_contains "$out" '"reason":"no-service"' \
+		"and the page is told the machine has no service to start"
+	drop_sandbox
+}
+
+test_control_names_a_service_only_an_administrator_may_touch() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='Failed to start fcc.service: Interactive authentication required.' \
+		SSH_EXIT=1 SSH_UNIT_OUT='fcc.service enabled enabled' \
+		run_remote control start)" || true
+	assert_contains "$out" '"ok":false' "the start did not happen"
+	assert_contains "$out" '"reason":"needs-root"' \
+		"and a unit that exists is named as one this account may not control"
 	drop_sandbox
 }
 

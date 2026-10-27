@@ -241,8 +241,63 @@ fcc_remote_config_ok() {
 	return 0
 }
 
+# What state the key pair is in, as one word.
+#
+# A non-empty file is not a key OpenSSH will read. An OpenWrt image that also
+# carries Dropbear can leave /etc/fcc/ssh/id_ed25519 in Dropbear's own 83-byte
+# format, and the connection then fails at the far end with "Permission denied"
+# while ssh-keygen refuses the file with "invalid format" — two sentences that
+# name neither the key nor this router. Reading the size cannot tell the two
+# formats apart, so the key is asked to parse and the public half it yields is
+# compared with the one on disk. A pair that disagrees is what a half-finished
+# generation leaves behind: the private half authenticates nothing, because the
+# key the user copied to the LAN machine was the other one.
+#
+# ok       both halves exist, parse, and belong together
+# missing  there is no private key
+# no-public  the private key parses but its .pub is gone
+# mismatch the .pub is not the public half of this private key
+# invalid  the private key is not a format OpenSSH understands
+# unchecked  there is no ssh-keygen here to ask (the key is left alone)
+fcc_remote_key_state() {
+	[ -s "$FCC_REMOTE_KEY" ] || { printf 'missing'; return 0; }
+	_ks_keygen="$(command -v ssh-keygen 2>/dev/null)" \
+		|| { printf 'unchecked'; return 0; }
+	_ks_pub="$("$_ks_keygen" -y -f "$FCC_REMOTE_KEY" 2>/dev/null)" \
+		|| { printf 'invalid'; return 0; }
+	# ssh-keygen -y prints "type base64" without the comment the .pub may
+	# carry, so the pair is compared on those two fields only.
+	_ks_pub="$(printf '%s\n' "$_ks_pub" | awk 'NF >= 2 { print $1 " " $2; exit }')"
+	[ -n "$_ks_pub" ] || { printf 'invalid'; return 0; }
+	[ -s "$FCC_REMOTE_KEY.pub" ] || { printf 'no-public'; return 0; }
+	_ks_stored="$(awk 'NF >= 2 { print $1 " " $2; exit }' "$FCC_REMOTE_KEY.pub" 2>/dev/null)"
+	[ "$_ks_pub" = "$_ks_stored" ] || { printf 'mismatch'; return 0; }
+	printf 'ok'
+}
+
 fcc_remote_key_ready() {
-	[ -s "$FCC_REMOTE_KEY" ] && [ -s "$FCC_REMOTE_KEY.pub" ]
+	case "$(fcc_remote_key_state)" in
+		ok|unchecked) return 0 ;;
+	esac
+	return 1
+}
+
+# The refusal for a key that is there but cannot be used, with a reason code
+# the page translates into the repair: generating the key again is the only
+# thing that helps, and the page has to offer the button that does it.
+fcc_remote_key_refusal() {
+	case "$(fcc_remote_key_state)" in
+		invalid)
+			printf '{"ok":false,"reason":%s,"error":%s}\n' \
+				"$(fcc_json_str "key-invalid")" \
+				"$(fcc_json_str "the SSH key on this router is not a key OpenSSH can read; generate it again")" ;;
+		mismatch)
+			printf '{"ok":false,"reason":%s,"error":%s}\n' \
+				"$(fcc_json_str "key-mismatch")" \
+				"$(fcc_json_str "the stored public key does not match the private key; generate the key again")" ;;
+		*)
+			fcc_remote_error "the SSH key has not been generated" ;;
+	esac
 }
 
 # ---------------------------------------------------------------------------
@@ -303,7 +358,7 @@ fcc_remote_tunnel_ensure() {
 	fcc_remote_config_ok \
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \
-		|| { fcc_remote_error "the SSH key has not been generated"; return 1; }
+		|| { fcc_remote_key_refusal; return 1; }
 	[ -s "$FCC_REMOTE_KNOWN" ] \
 		|| { fcc_remote_error "the remote host key has not been trusted"; return 1; }
 
@@ -446,23 +501,56 @@ fcc_remote_keygen() {
 	(umask 077; mkdir -p "$_kg_dir") 2>/dev/null \
 		|| { fcc_remote_error "could not create $_kg_dir"; return 1; }
 
-	if [ -s "$FCC_REMOTE_KEY" ]; then
-		[ -s "$FCC_REMOTE_KEY.pub" ] || {
-			_kg_keygen="$(command -v ssh-keygen 2>/dev/null)" || {
-				fcc_remote_error "ssh-keygen is required on this router to create the key (package openssh-keygen)"
-				return 1
-			}
-			"$_kg_keygen" -y -f "$FCC_REMOTE_KEY" > "$FCC_REMOTE_KEY.pub" 2>/dev/null \
+	# What is already there decides the answer, and "there" has to mean a pair
+	# OpenSSH can use. A private key in another format — Dropbear's 83-byte
+	# blob is the one seen in the field — is not kept just because the file
+	# exists: keeping it is what left a page saying "SSH key configured" while
+	# every connection failed. It is moved aside and a real one is made.
+	_kg_state="$(fcc_remote_key_state)"
+	_kg_keygen="$(command -v ssh-keygen 2>/dev/null)"
+
+	case "$_kg_state" in
+		ok)
+			printf '{"ok":true,"existing":true,"public_key":%s}\n' \
+				"$(fcc_json_str "$(head -n 1 "$FCC_REMOTE_KEY.pub")")"
+			return 0 ;;
+		unchecked|no-public|mismatch)
+			# The private half authenticates, but the public half is missing
+			# or is not its partner. Deriving it again is the repair, and the
+			# private key is not rotated: nothing has to be re-trusted on the
+			# LAN machine for the half that was only mislaid.
+			[ -n "$_kg_keygen" ] \
 				|| { fcc_remote_error "could not read the existing SSH key"; return 1; }
+			_kg_pub="$("$_kg_keygen" -y -f "$FCC_REMOTE_KEY" 2>/dev/null)" \
+				|| { fcc_remote_error "could not read the existing SSH key"; return 1; }
+			printf '%s\n' "$_kg_pub" > "$FCC_REMOTE_KEY.pub" \
+				|| { fcc_remote_error "could not store the public key"; return 1; }
 			chmod 644 "$FCC_REMOTE_KEY.pub" 2>/dev/null
-		}
-		printf '{"ok":true,"existing":true,"public_key":%s}\n' \
-			"$(fcc_json_str "$(head -n 1 "$FCC_REMOTE_KEY.pub")")"
-		return 0
+			if [ "$_kg_state" = "unchecked" ]; then
+				printf '{"ok":true,"existing":true,"public_key":%s}\n' \
+					"$(fcc_json_str "$(head -n 1 "$FCC_REMOTE_KEY.pub")")"
+			else
+				printf '{"ok":true,"existing":true,"repaired":true,"public_key":%s}\n' \
+					"$(fcc_json_str "$(head -n 1 "$FCC_REMOTE_KEY.pub")")"
+			fi
+			return 0 ;;
+	esac
+
+	[ -n "$_kg_keygen" ] \
+		|| { fcc_remote_error "ssh-keygen is required on this router to create the key (package openssh-keygen)"; return 1; }
+
+	# ssh-keygen refuses to write over an existing file, and the file that is
+	# there is unusable anyway — but it is kept rather than deleted, because it
+	# is the only trace of what the router had before, and a Dropbear key may
+	# still be the account's only way in.
+	_kg_replaced=false
+	if [ -s "$FCC_REMOTE_KEY" ]; then
+		mv -f "$FCC_REMOTE_KEY" "$FCC_REMOTE_KEY.unusable" 2>/dev/null \
+			|| { fcc_remote_error "could not move the unusable SSH key aside"; return 1; }
+		rm -f "$FCC_REMOTE_KEY.pub"
+		_kg_replaced=true
 	fi
 
-	_kg_keygen="$(command -v ssh-keygen 2>/dev/null)" \
-		|| { fcc_remote_error "ssh-keygen is required on this router to create the key (package openssh-keygen)"; return 1; }
 	umask 077
 	_kg_out="$("$_kg_keygen" -q -t ed25519 -N "" -C "luci-app-fcc" \
 		-f "$FCC_REMOTE_KEY" 2>&1)" || {
@@ -471,7 +559,8 @@ fcc_remote_keygen() {
 	}
 	chmod 600 "$FCC_REMOTE_KEY" 2>/dev/null
 	chmod 644 "$FCC_REMOTE_KEY.pub" 2>/dev/null
-	printf '{"ok":true,"existing":false,"public_key":%s}\n' \
+	printf '{"ok":true,"existing":false,"replaced":%s,"public_key":%s}\n' \
+		"$_kg_replaced" \
 		"$(fcc_json_str "$(head -n 1 "$FCC_REMOTE_KEY.pub")")"
 }
 
@@ -516,6 +605,38 @@ fcc_remote_output_filter() {
 # misconfiguration rather than a fault, which setting to change.
 fcc_remote_reason() {
 	case "$1" in
+		# The private key on *this* router, before anything the far side said:
+		# ssh prints "Load key ...: invalid format" and then reports the far
+		# side's "Permission denied", which together read as though the LAN
+		# machine had refused a password. Nothing about the remote account is
+		# the problem.
+		*"invalid format"*)                printf 'key-invalid' ;;
+		*"error in libcrypto"*)            printf 'key-invalid' ;;
+		*"Load key"*"No such file"*)       printf 'key-missing' ;;
+		# The far side answered and refused the key. This is the state of a
+		# fresh key whose public half has not been added to the account's
+		# authorized_keys yet — the one step the settings page cannot do.
+		*"Permission denied"*)             printf 'auth' ;;
+		*"Too many authentication failures"*) printf 'auth' ;;
+		# ssh's words for a machine that did not answer at all, in the order
+		# they are printed. None of them means the server is stopped.
+		*"Connection refused"*)            printf 'unreachable' ;;
+		*"Connection timed out"*)          printf 'unreachable' ;;
+		*"Operation timed out"*)           printf 'unreachable' ;;
+		*"No route to host"*)              printf 'unreachable' ;;
+		*"Network is unreachable"*)        printf 'unreachable' ;;
+		*"Could not resolve hostname"*)    printf 'unreachable' ;;
+		*"Host key verification failed"*)  printf 'host-key' ;;
+		# systemd asking polkit for a password this connection cannot supply.
+		# systemctl writes this before it has looked for the unit, so it can
+		# mean either "you may not" or "there is no such unit" — the control
+		# path asks whether the unit exists before it keeps this word.
+		*"Interactive authentication required"*) printf 'needs-root' ;;
+		*"Access denied"*)                 printf 'needs-root' ;;
+		*"authentication is required"*)    printf 'needs-root' ;;
+		*"Connection closed by"*)          printf 'unreachable' ;;
+		*"Connection reset by"*)           printf 'unreachable' ;;
+		*"Broken pipe"*)                   printf 'unreachable' ;;
 		*"systemctl: not found"*)          printf 'no-systemctl' ;;
 		*"/etc/init.d/$2"*"not found"*)    printf 'no-init-script' ;;
 		# systemd's own words for a name that is not one of its units. On a
@@ -808,7 +929,14 @@ fcc_remote_console_ready() {
 	fcc_remote_config_ok \
 		|| { fcc_remote_console_error "not-configured" "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \
-		|| { fcc_remote_console_error "no-key" "the SSH key has not been generated"; return 1; }
+		|| {
+			case "$(fcc_remote_key_state)" in
+				invalid)  fcc_remote_console_error "key-invalid" "the SSH key on this router is not a key OpenSSH can read; generate it again" ;;
+				mismatch) fcc_remote_console_error "key-mismatch" "the stored public key does not match the private key; generate the key again" ;;
+				*)        fcc_remote_console_error "no-key" "the SSH key has not been generated" ;;
+			esac
+			return 1
+		}
 	[ -s "$FCC_REMOTE_KNOWN" ] \
 		|| { fcc_remote_console_error "no-host-key" "the remote host key has not been trusted"; return 1; }
 	[ "$(fcc_remote_client)" = "openssh" ] \
@@ -945,7 +1073,7 @@ fcc_remote_test() {
 	fcc_remote_config_ok \
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \
-		|| { fcc_remote_error "the SSH key has not been generated"; return 1; }
+		|| { fcc_remote_key_refusal; return 1; }
 	[ "$(fcc_remote_client)" = "openssh" ] \
 		|| { fcc_remote_client_error; return 1; }
 
@@ -1001,7 +1129,11 @@ fcc_remote_test() {
 		fi
 	fi
 
-	printf '{"ok":false,"output":%s,"exit":%s,"error":%s}\n' \
+	# The reason is what the page turns into a sentence worth reading: a
+	# refused key, an unreachable machine and a changed host key are three
+	# different clicks, and "the connection failed" names none of them.
+	printf '{"ok":false,"reason":%s,"output":%s,"exit":%s,"error":%s}\n' \
+		"$(fcc_json_str "$(fcc_remote_reason "$_tt_out" "$(fcc_remote_service)")")" \
 		"$(fcc_json_str "$(printf '%s' "$_tt_out" | fcc_remote_output_filter | tr '\n' ' ' | sed 's/  */ /g')")" \
 		"$_tt_code" \
 		"$(fcc_json_str "the connection failed")"
@@ -1028,7 +1160,7 @@ fcc_remote_control() {
 	fcc_remote_config_ok \
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \
-		|| { fcc_remote_error "the SSH key has not been generated"; return 1; }
+		|| { fcc_remote_key_refusal; return 1; }
 	[ "$(fcc_remote_client)" = "openssh" ] \
 		|| { fcc_remote_client_error; return 1; }
 	_cc_fp="$(fcc_remote_fingerprint)"
@@ -1065,6 +1197,17 @@ fcc_remote_control() {
 	else
 		_cc_ok=false
 		_cc_reason="$(fcc_remote_reason "$_cc_out" "$_cc_service")"
+		# A permission refusal is only a permission refusal if there is a unit
+		# to control: a machine running the upstream install alone has none,
+		# and "start it with sudo" would send the user after a service that
+		# does not exist. Only this failure pays for the second connection.
+		if [ "$_cc_reason" = "needs-root" ] && [ "$_cc_platform" = "linux" ]; then
+			_cc_units="$(fcc_remote_ssh "systemctl list-unit-files '$_cc_service.service' --no-pager --no-legend 2>/dev/null")"
+			case "$_cc_units" in
+				*"$_cc_service.service"*) : ;;
+				*) _cc_reason="no-service" ;;
+			esac
+		fi
 	fi
 	printf '{"ok":%s,"op":%s,"reason":%s,"output":%s,"exit":%s}\n' \
 		"$_cc_ok" \
@@ -1091,6 +1234,10 @@ fcc_remote_status() {
 	_st_service="$(fcc_remote_service)"
 	_st_fp="$(fcc_remote_fingerprint)"
 
+	# The page offers the key's Generate button while key_ready is false, which
+	# is what makes an unusable key repairable. The word behind it says which
+	# kind of trouble it is: missing, invalid, mismatch, no-public or ok.
+	_st_key_state="$(fcc_remote_key_state)"
 	_st_key=0
 	fcc_remote_key_ready && _st_key=1
 	_st_pub=""
@@ -1133,8 +1280,9 @@ fcc_remote_status() {
 		"$(fcc_json_str "$_st_platform")" \
 		"$(fcc_json_str "$_st_service")" \
 		"$(fcc_json_str "$_st_fp")"
-	printf '"key_ready":%s,"public_key":%s,"trusted":%s,"ready":%s,' \
+	printf '"key_ready":%s,"key_state":%s,"public_key":%s,"trusted":%s,"ready":%s,' \
 		"$(fcc_json_bool "$_st_key")" \
+		"$(fcc_json_str "$_st_key_state")" \
 		"$(fcc_json_str "$_st_pub")" \
 		"$(fcc_json_bool "$_st_trusted")" \
 		"$(fcc_json_bool "$_st_ready")"
@@ -1211,7 +1359,7 @@ fcc_remote_running() {
 	fcc_remote_config_ok \
 		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	fcc_remote_key_ready \
-		|| { fcc_remote_error "the SSH key has not been generated"; return 1; }
+		|| { fcc_remote_key_refusal; return 1; }
 	[ "$(fcc_remote_client)" = "openssh" ] \
 		|| { fcc_remote_client_error; return 1; }
 	_rn_fp="$(fcc_remote_fingerprint)"
