@@ -89,12 +89,22 @@ printf 'ARG %s\n' "$@" >> "$SSH_LOG"
 # tries status.sh first and falls through to a process-list probe — and its
 # answer is the probe's lines, which SSH_PROBE_OUT stands in for. The order
 # matters: the console command for those platforms contains both words.
+#
+# The details fetch that follows a "running" answer is its own script, and it
+# reads the process list too — so it is recognised by the process-list question
+# only it asks (etimes/etime) and answered from SSH_DETAILS_OUT, before the
+# state probe's fixture can claim it.
 for last in "$@"; do :; done
 case "${last:-}" in
 	*status.sh*)
 		if [ -n "${SSH_DETAIL_OUT+x}" ]; then
 			printf '%s\n' "$SSH_DETAIL_OUT"
 			exit 0
+		fi ;;
+	*etime*)
+		if [ -n "${SSH_DETAILS_OUT+x}" ]; then
+			printf '%s\n' "$SSH_DETAILS_OUT"
+			exit "${SSH_DETAILS_EXIT:-0}"
 		fi ;;
 	*pgrep*)
 		if [ -n "${SSH_PROBE_OUT+x}" ]; then
@@ -712,6 +722,72 @@ test_running_without_the_helper_keeps_the_one_line_answer() {
 	out="$(SSH_OUT='active' SSH_DETAIL_OUT='' run_remote running)" || true
 	assert_contains "$out" '"running":true' "the state is still answered"
 	assert_not_contains "$out" '"details"' "and nothing is invented for it"
+	drop_sandbox
+}
+
+test_running_describes_a_bare_machine_from_its_process_list() {
+	# A machine that ran only the upstream install has no status.sh to ask, but
+	# it does have the six facts the local panel shows, and its own process list
+	# and launcher answer them. The pid is the anchor: the document is built from
+	# the lines that came back, and a field the machine did not fill stays null
+	# so the page draws a dash there rather than a guess.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='active' SSH_DETAILS_OUT='pid=332012
+uptime=151
+rss_kb=188000
+version=6.18.3
+bind=0.0.0.0
+port=8082' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the state is still answered"
+	assert_contains "$out" '"details":{' "and the bare machine is described"
+	assert_contains "$out" '"version":"6.18.3"' "with the launcher's own version"
+	assert_contains "$out" '"pid":332012' "as a number, not a string"
+	assert_contains "$out" '"uptime":151' "the seconds it has been up"
+	assert_contains "$out" '"memory_rss_kb":188000' "its RSS"
+	assert_contains "$out" '"bind":"0.0.0.0"' "the address it listens on"
+	assert_contains "$out" '"port":8082' "and that address's port"
+
+	# One POSIX script on the far side, and it must not spell the launcher's
+	# name: sshd hands the script to sh as an argument, so the probe would find
+	# that shell instead of the server. The status.sh question is the second
+	# connection, so the process-list script is the third.
+	assert_not_contains "$(ssh_command 3)" 'fcc-server' \
+		"the launcher name is never spelled out in the script"
+	assert_contains "$(ssh_command 3)" 'ps -o etimes=' \
+		"uptime comes from the process list"
+	assert_contains "$(ssh_command 3)" 'ss -ltnp' \
+		"and the listening socket from ss"
+	drop_sandbox
+}
+
+test_running_keeps_the_one_line_when_the_bare_answer_names_no_process() {
+	# The state check said "running" and the process list then named no pid —
+	# a server that stopped between the two connections. There is nothing to
+	# describe, and the answer must not be a document full of nulls.
+	fresh
+	ready_lan
+	out="$(SSH_OUT='active' SSH_DETAILS_OUT='version=6.18.3' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the state answer stands"
+	assert_not_contains "$out" '"details"' "with nothing invented beside it"
+	drop_sandbox
+}
+
+test_running_on_macos_asks_the_process_list_for_details() {
+	# This package is not installed on macOS, so there is no status.sh there
+	# either; the machine answers the same six questions about its own process.
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	out="$(SSH_OUT='server running' SSH_DETAILS_OUT='pid=901
+uptime=4
+rss_kb=120000
+version=6.18.3' run_remote running)" || true
+	assert_contains "$out" '"details":{' "macOS gets the same six lines"
+	assert_contains "$out" '"pid":901' "from its own process list"
+	assert_contains "$out" '"uptime":4' "and its own uptime"
+	assert_not_contains "$(ssh_command 1)" 'status.sh' \
+		"without asking a helper it does not have"
 	drop_sandbox
 }
 

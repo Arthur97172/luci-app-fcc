@@ -758,6 +758,96 @@ fcc_remote_bare_probe_cmd() {
 	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_probe_script)")"
 }
 
+fcc_remote_bare_details_script() {
+	# The six facts the panel shows for the server here, as key=value lines:
+	# pid, uptime, rss_kb, version, bind and port. A machine that ran only the
+	# upstream install has no status.sh to print the document this page renders,
+	# so the same facts are read from the process list and from the launcher
+	# itself. `fcc-server --version` is documented by upstream as safe to run and
+	# is what status.sh uses too; it never starts anything.
+	#
+	# A field the machine cannot answer is left out rather than guessed at: the
+	# page shows a dash for it. That is the same rule the local panel follows.
+	#
+	# As in the control script, the launcher's name is assembled at run time. The
+	# script text itself reaches the far side as one argument, so a plain
+	# occurrence would sit on the command line of the shell that runs it and the
+	# pid would be that shell's.
+	#
+	# The listening socket is read from whichever of ss, lsof and netstat is
+	# there, and the address is found by its shape rather than a column number:
+	# it is the first field that carries a numeric port. A peer address prints
+	# `*` as its port, and a queue depth has no colon at all, so neither can be
+	# taken for it.
+	_bds_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; s=fcc; s=\${s}-server; "
+	printf '%s%s' "$_bds_head" '
+_bds_p=""
+if command -v pgrep >/dev/null 2>&1; then
+	_bds_p="$(pgrep -f "[f]cc-server" 2>/dev/null | grep -vx "$$" | head -n 1)"
+fi
+[ -n "$_bds_p" ] || exit 0
+echo "pid=$_bds_p"
+_bds_u="$(ps -o etimes= -p "$_bds_p" 2>/dev/null | tr -d " ")"
+if [ -z "$_bds_u" ]; then
+	_bds_e="$(ps -o etime= -p "$_bds_p" 2>/dev/null | tr -d " ")"
+	if [ -n "$_bds_e" ]; then
+		_bds_d=0
+		case "$_bds_e" in
+		*-*) _bds_d="${_bds_e%%-*}"; _bds_e="${_bds_e#*-}" ;;
+		esac
+		_bds_o=$IFS; IFS=:
+		set -- $_bds_e
+		IFS=$_bds_o
+		if [ $# -eq 3 ]; then
+			_bds_u="$(expr "$_bds_d" \* 86400 + "$1" \* 3600 + "$2" \* 60 + "$3" 2>/dev/null)"
+		elif [ $# -eq 2 ]; then
+			_bds_u="$(expr "$_bds_d" \* 86400 + "$1" \* 60 + "$2" 2>/dev/null)"
+		fi
+	fi
+fi
+[ -n "$_bds_u" ] && echo "uptime=$_bds_u"
+_bds_r="$(ps -o rss= -p "$_bds_p" 2>/dev/null | tr -d " ")"
+[ -n "$_bds_r" ] && echo "rss_kb=$_bds_r"
+if command -v "$s" >/dev/null 2>&1; then
+	_bds_v="$("$s" --version 2>/dev/null | head -n 1 | tr -d "\r")"
+	_bds_v="${_bds_v##* }"
+	[ -n "$_bds_v" ] && echo "version=$_bds_v"
+fi
+_bds_l=""
+if command -v ss >/dev/null 2>&1; then
+	_bds_l="$(ss -ltnp 2>/dev/null | grep "pid=$_bds_p," | head -n 1)"
+fi
+if [ -z "$_bds_l" ] && command -v lsof >/dev/null 2>&1; then
+	_bds_l="$(lsof -nP -a -p "$_bds_p" -iTCP -sTCP:LISTEN 2>/dev/null | sed -n "2p")"
+fi
+if [ -z "$_bds_l" ] && command -v netstat >/dev/null 2>&1; then
+	_bds_l="$(netstat -ltnp 2>/dev/null | grep "$_bds_p/" | head -n 1)"
+fi
+_bds_a=""
+for _bds_w in $_bds_l; do
+	case "$_bds_w" in
+	*:*[0-9]) : ;;
+	*) continue ;;
+	esac
+	case "${_bds_w##*:}" in
+	""|*[!0-9]*) continue ;;
+	esac
+	if [ -z "$_bds_a" ]; then _bds_a="$_bds_w"; fi
+done
+if [ -n "$_bds_a" ]; then
+	echo "port=${_bds_a##*:}"
+	_bds_b="${_bds_a%:*}"
+	_bds_b="${_bds_b#[}"
+	_bds_b="${_bds_b%]}"
+	[ -n "$_bds_b" ] && echo "bind=$_bds_b"
+fi
+exit 0'
+}
+
+fcc_remote_bare_details_cmd() {
+	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_details_script)")"
+}
+
 # Start, stop and restart the launcher on a machine that has no unit.
 #
 # The upstream install writes fcc-server into the account's bin directory and
@@ -1395,10 +1485,13 @@ fcc_remote_status() {
 # status.sh is installed by this same package, and its JSON is the document the
 # local panel already renders. So a machine that runs luci-app-fcc can describe
 # its server with the same six lines this router shows for its own, and the LAN
-# panel reads like the local one instead of a single sentence. A machine
-# without it — a plain Linux host running only the FCC runtime, or an OpenWrt
-# carrying an older package — sends nothing here, and the page keeps the
-# one-line state rather than a table of dashes.
+# panel reads like the local one instead of a single sentence.
+#
+# A machine without it — a plain Linux host running only the upstream install,
+# or an OpenWrt carrying an older package — is asked the same six questions of
+# its own process list and launcher instead (see
+# fcc_remote_bare_details_script). Anything it cannot answer stays absent, and
+# the page shows a dash there rather than a guess.
 FCC_REMOTE_DETAIL_DOC=""
 
 fcc_remote_detail_field() {
@@ -1407,31 +1500,54 @@ fcc_remote_detail_field() {
 
 fcc_remote_details() {
 	case "$(fcc_remote_platform)" in
-		openwrt|linux) : ;;
+		openwrt|linux|macos) : ;;
 		*) return 0 ;;
 	esac
-	# jsonfilter is libubox's, and every OpenWrt image has it. Where it is
-	# missing the state answer stands alone, which is still the truth.
-	fcc_remote_has jsonfilter || return 0
 
 	# The helper is asked for only if it is there: test -x is the whole of the
 	# remote side of this, so a machine that never had the package installed
-	# answers with an empty line and no error worth showing.
-	_dt_doc="$(fcc_remote_ssh \
-		'[ -x /usr/libexec/fcc/status.sh ] && /usr/libexec/fcc/status.sh' \
-		2>/dev/null | fcc_remote_output_filter)"
-	case "$_dt_doc" in
-		'{'*) : ;;
-		*) return 0 ;;
+	# answers with an empty line and no error worth showing. macOS has never
+	# carried it — this package does not install there — and goes straight to
+	# the process list.
+	_dt_doc=""
+	case "$(fcc_remote_platform)" in
+		openwrt|linux)
+			_dt_doc="$(fcc_remote_ssh \
+				'[ -x /usr/libexec/fcc/status.sh ] && /usr/libexec/fcc/status.sh' \
+				2>/dev/null | fcc_remote_output_filter)" ;;
 	esac
-	FCC_REMOTE_DETAIL_DOC="$_dt_doc"
+
+	# jsonfilter is libubox's, and every OpenWrt image has it. Where it is
+	# missing the document cannot be read, and the process list answers instead.
+	case "$_dt_doc" in
+		'{'*)
+			if fcc_remote_has jsonfilter; then
+				FCC_REMOTE_DETAIL_DOC="$_dt_doc"
+				printf ',"details":{"version":%s,"pid":%s,"uptime":%s,"memory_rss_kb":%s,"bind":%s,"port":%s}' \
+					"$(fcc_json_str_or_null "$(fcc_remote_detail_field '@.fcc.version')")" \
+					"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.pid')")" \
+					"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.uptime')")" \
+					"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.memory_rss_kb')")" \
+					"$(fcc_json_str_or_null "$(fcc_remote_detail_field '@.server.bind')")" \
+					"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.port')")"
+				return 0
+			fi ;;
+	esac
+
+	# No document: ask the machine's own process list and launcher. The pid is
+	# the anchor — without it there is no server to describe, and the answer
+	# stays the one-line state.
+	_dt_raw="$(fcc_remote_ssh "$(fcc_remote_bare_details_cmd)" \
+		2>/dev/null | fcc_remote_output_filter | tr -d '\r')"
+	_dt_pid="$(printf '%s\n' "$_dt_raw" | sed -n 's/^pid=//p' | head -n 1)"
+	[ -n "$_dt_pid" ] || return 0
 	printf ',"details":{"version":%s,"pid":%s,"uptime":%s,"memory_rss_kb":%s,"bind":%s,"port":%s}' \
-		"$(fcc_json_str_or_null "$(fcc_remote_detail_field '@.fcc.version')")" \
-		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.pid')")" \
-		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.uptime')")" \
-		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.memory_rss_kb')")" \
-		"$(fcc_json_str_or_null "$(fcc_remote_detail_field '@.server.bind')")" \
-		"$(fcc_json_num_or_null "$(fcc_remote_detail_field '@.server.port')")"
+		"$(fcc_json_str_or_null "$(printf '%s\n' "$_dt_raw" | sed -n 's/^version=//p' | head -n 1)")" \
+		"$(fcc_json_num_or_null "$_dt_pid")" \
+		"$(fcc_json_num_or_null "$(printf '%s\n' "$_dt_raw" | sed -n 's/^uptime=//p' | head -n 1)")" \
+		"$(fcc_json_num_or_null "$(printf '%s\n' "$_dt_raw" | sed -n 's/^rss_kb=//p' | head -n 1)")" \
+		"$(fcc_json_str_or_null "$(printf '%s\n' "$_dt_raw" | sed -n 's/^bind=//p' | head -n 1)")" \
+		"$(fcc_json_num_or_null "$(printf '%s\n' "$_dt_raw" | sed -n 's/^port=//p' | head -n 1)")"
 }
 
 # ---------------------------------------------------------------------------
