@@ -92,6 +92,14 @@ DEFAULT_PORT = 8082
 TUNNEL_PORT = 18082
 TUNNEL_PID  = "/tmp/fcc-remote-tunnel.pid"
 
+--- Where ssh writes the tunnel's diagnostics.
+--
+-- remote.sh truncates this when it starts a tunnel and removes it when it stops
+-- one, so what is in it belongs to the tunnel that is running now — which is
+-- what makes its last line answer a question about the request that just
+-- failed. See tunnel_refusal().
+TUNNEL_LOG  = "/tmp/fcc-remote-tunnel.log"
+
 --- The largest request body the proxy will forward.
 --
 -- A router has little memory to spare and nothing the admin UI posts is large:
@@ -242,6 +250,43 @@ local function ensure_tunnel()
 		return false, d.error
 	end
 	return false, "the SSH tunnel could not be started"
+end
+
+--- Why the far end of a live tunnel refused a forwarded channel, when ssh says.
+--
+-- A tunnel can be listening on the router and still carry nothing: the far
+-- side's sshd answers each channel-open request, and the browser's click is the
+-- first thing that ever asks it to open one. ssh writes that answer to its log
+-- and nowhere else, so without this the 502 would say "Connection reset by
+-- peer" — a transport detail that names no cause and suggests no action.
+--
+-- Only refusals this function knows are relayed; anything else returns nil and
+-- the caller keeps the transport's own words. The two that matter here:
+--
+--   * administratively prohibited — the far side's sshd has TCP forwarding
+--     switched off, which is a one-line change in its configuration;
+--   * connect failed — the forward itself is allowed, but nothing on the far
+--     machine answers on its loopback at the Admin port, so the FCC server
+--     there is not running (or not listening on 127.0.0.1).
+function tunnel_refusal()
+	local said = util.read_file(TUNNEL_LOG)
+	if not said then return nil end
+	local line
+	for l in said:gmatch("[^\n]+") do line = l end
+	if not line then return nil end
+	line = line:match("^%s*(.-)%s*$")
+	if line:find("administratively prohibited", 1, true) then
+		return "The LAN machine's SSH server refuses port forwarding, so the " ..
+			"tunnel cannot reach its FCC server. Set AllowTcpForwarding to " ..
+			"\"local\" in that machine's sshd configuration and restart its " ..
+			"SSH service."
+	end
+	if line:find("connect failed", 1, true) then
+		return "The SSH tunnel reached the LAN machine, but nothing there " ..
+			"answers on 127.0.0.1:" .. remote_admin_port() .. ". Start the FCC " ..
+			"server on that machine and check that it listens on that address."
+	end
+	return nil
 end
 
 --- The upstream this proxy talks to.
@@ -648,6 +693,14 @@ function serve()
 
 	local code, response, buffer, sock = httpclient.request_raw(uri, options)
 	if not code then
+		-- In LAN mode the router's end of the tunnel accepts the connection and
+		-- the far end then refuses the channel; the HTTP client only sees the
+		-- reset that follows. ssh's log has the reason, and it is the difference
+		-- between "allow port forwarding on that machine" and "start the server".
+		if target() == "lan" then
+			local why = tunnel_refusal()
+			if why then return gateway_error(why) end
+		end
 		return gateway_error("The connection failed: " ..
 			tostring(buffer or response or "unknown error") .. ".")
 	end

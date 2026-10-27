@@ -329,13 +329,26 @@ test_terminal_long_polls() {
 
 test_no_persistent_daemon() {
 	# Section 87: no persistent Python/Node daemon. The only long-lived process
-	# is the FCC server itself, supervised by procd, plus tmux panes.
+	# this router starts is the FCC server itself, supervised by procd, plus
+	# tmux panes.
+	#
+	# remote.sh is the one backend file that names nohup, and it does so for
+	# the LAN machine: the upstream install there registers no service — no
+	# systemd unit, no launchd job, no Windows service — so a Start click
+	# starts the launcher detached on that machine, which is what a person
+	# would type into its terminal. Nothing is started on this router, and the
+	# two checks below keep that exception where it belongs.
 	_ts_bad=""
 	for _ts_f in "$ROOT"/root/usr/libexec/fcc/*.sh "$ROOT"/root/etc/init.d/fcc; do
+		[ "$(basename "$_ts_f")" = "remote.sh" ] && continue
 		grep -nE 'nohup|start-stop-daemon|--daemon' "$_ts_f" >/dev/null 2>&1 \
 			&& _ts_bad="$_ts_bad $(basename "$_ts_f")"
 	done
 	assert_eq "" "$(printf '%s' "$_ts_bad" | sed 's/^ //')" "the backend starts no daemon of its own"
+	assert_eq "1" "$(grep -c 'nohup' "$ROOT/root/usr/libexec/fcc/remote.sh")" \
+		"remote.sh names nohup once, for the LAN machine"
+	assert_contains "$(sed -n '/^fcc_remote_bare_control_script()/,/^}/p' "$ROOT/root/usr/libexec/fcc/remote.sh")" \
+		'nohup "$s"' "and it is the launcher the far side runs"
 }
 
 test_no_shell_interpolation_of_user_input() {

@@ -122,20 +122,28 @@ make package/luci-app-fcc/compile V=s
    （`PreferredAuthentications=publickey`、`BatchMode=yes`、`IdentitiesOnly=yes`）。
 2. 点 **测试连接**。第一次显示远程主机密钥指纹并要求确认，确认后写入 UCI，此后每次连接都
    要求完全一致；指纹变了就拒绝并报告实际读到的值。
-3. 这时四个按钮才可用。发送的命令由 *高级设置* 里的 **远程平台** 决定：Linux 用
-   `systemctl <op> <服务名>`，OpenWrt 用 `/etc/init.d/<服务名> <op>`。Windows 发送一行
-   PowerShell，先问那台机器有没有同名服务：有就跑
-   `Start-Service`/`Stop-Service`/`Restart-Service`；没有服务——`install.ps1` 装完就是
-   这样——就改用上游安装自带的服务器，用 `fcc-server` 在后台隐藏启动、按进程列表停止，
-   因为那个安装脚本不注册 Windows 服务。服务名只接受字母、数字和 `.` `-` `_`。
+3. 这时四个按钮才可用。发送的命令由 *高级设置* 里的 **远程平台** 决定，Linux 和 OpenWrt
+   都是先问那台机器有没有服务，没有就用它自己的启动器：
 
-**只安装上游 fcc 的 Linux / macOS / Windows 机器**没有服务单元，也没有 `fcc-env`：那里
-没有可启动或停止的服务，所以四个按钮改为报告那台机器上的服务器进程，而不是去猜一条命令
-（macOS 一律如此，Linux 在 `systemctl` 找不到 `fcc.service` 时、Windows 在没有同名服务时
-也一样）。**网页控制台**不受影响：它的局域网模式直接询问那台机器自己的 shell——Linux 和
-macOS 是 `sh`，Windows 是 PowerShell，都先把安装脚本写入的目录加进 `PATH`——能列出并
-可启动它的智能体；运行状态先问服务管理器，没有对应单元或服务时改看进程列表，所以手工启动
-的服务器不会被报成“已停止”。
+   - **Linux**：`systemctl cat <服务名>.service` 能读到单元就 `systemctl <op>`；读不到
+     ——上游 `uv tool install` 装出来的机器就是这样——就改用启动器：`fcc-server` 在后台
+     启动，输出追加到 `~/.fcc/server.log`，停止时按进程列表找到它。
+   - **OpenWrt**：有 `/etc/init.d/<服务名>` 就用它，没有就同样用启动器。
+   - **macOS**：一律用启动器（上游安装不注册 launchd 任务）。
+   - **Windows**：发送一行 PowerShell，先问那台机器有没有同名服务：有就跑
+     `Start-Service`/`Stop-Service`/`Restart-Service`；没有服务——`install.ps1` 装完就是
+     这样——就改用上游安装自带的服务器，用 `fcc-server` 在后台隐藏启动、按进程列表停止，
+     因为那个安装脚本不注册 Windows 服务。
+
+   服务名只接受字母、数字和 `.` `-` `_`。
+
+启动器那条路需要那台机器上有 `pgrep`（Linux、macOS、OpenWrt 默认都有），因为"起没起来"、
+"停没停掉"要问进程列表。失败时页面说的是具体的那一种：那台机器上没装 FCC Server 就提示先
+安装；启动了但没起来，就把 `~/.fcc/server.log` 的位置写出来；没有 `pgrep` 就直说，而不是
+把按钮的行为说得比实际多。**网页控制台**不受影响：它的局域网模式直接询问那台机器自己的
+shell——Linux 和 macOS 是 `sh`，Windows 是 PowerShell，都先把安装脚本写入的目录加进
+`PATH`——能列出并可启动它的智能体；运行状态先问服务管理器，没有对应单元或服务时改看
+进程列表，所以手工启动的服务器不会被报成"已停止"。
 
 **只接受私有 IPv4 地址**（`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）；主机名一律
 拒绝，因为一个名字可能解析成公网地址。
@@ -144,6 +152,9 @@ macOS 是 `sh`，Windows 是 PowerShell，都先把安装脚本写入的目录�
 `http://<远程IP>:8082`：LuCI 代理先建立 SSH 本地转发
 `ssh -N -L 127.0.0.1:18082:127.0.0.1:<Admin 端口>`，再把请求交给隧道这一端——远程看到的是
 回环对端，浏览器访问仍经过 LuCI 登录。隧道在第一次打开 Admin 时建立，离开局域网模式时关闭。
+这要求那台机器的 sshd 允许**本地**转发（`AllowTcpForwarding`，默认 `yes`；只开本地用
+`local`）。它被关成 `no` 时，打开 Admin 会得到 502，页面直接说明是那台机器的 sshd 拒绝了
+转发并指出要改的设置，而不是只报一句 `Connection reset by peer`。
 
 连接需要**路由器上**有 OpenSSH 客户端（远程机器上的不算）。Dropbear 也提供 `/usr/bin/ssh`，
 但不支持这里用到的选项，页面会直接说明。缺少时按提示安装：

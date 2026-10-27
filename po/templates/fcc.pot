@@ -468,6 +468,15 @@ msgstr ""
 msgid "That agent is not one this package knows."
 msgstr ""
 
+msgid "The FCC Server did not start on the LAN machine. Its log on that machine, ~/.fcc/server.log, says why."
+msgstr ""
+
+msgid "The FCC Server did not stop on the LAN machine. Its process is still running there."
+msgstr ""
+
+msgid "The FCC Server is not installed on the LAN machine. Install it there, then try again."
+msgstr ""
+
 msgid "The FCC Server on the LAN machine is not running. Start it on the Configuration tab."
 msgstr ""
 
@@ -507,7 +516,10 @@ msgstr ""
 msgid "The LAN machine does not run luci-app-fcc, so its agents cannot be listed."
 msgstr ""
 
-msgid "The LAN machine has no fcc service; start the FCC Server on that machine itself. The Web Console can still run its agents there."
+msgid "The LAN machine has no fcc service and no launcher to start. Install the FCC Server on that machine, or check the service name in Advanced settings."
+msgstr ""
+
+msgid "The LAN machine has no pgrep, so its FCC Server cannot be found to be started or stopped from here."
 msgstr ""
 
 msgid "The LAN machine has no systemctl. If it runs OpenWrt, set its platform to OpenWrt in Advanced settings."

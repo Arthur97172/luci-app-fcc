@@ -310,11 +310,24 @@
 		'no-init-script':
 			FCC._('The service was not found on the LAN machine. Check the service name in Advanced settings.'),
 		/* A Linux, macOS or Windows machine carrying only the upstream install
-		 * has no service at all — no unit, no launchd job, no Windows service —
-		 * so there is nothing to start or stop here and nothing in the settings
-		 * to change. */
+		 * has no service at all — no unit, no launchd job, no Windows service.
+		 * Start and stop then go to the launcher itself, so this is only what
+		 * is left when even that cannot be reached. */
 		'no-service':
-			FCC._('The LAN machine has no fcc service; start the FCC Server on that machine itself. The Web Console can still run its agents there.'),
+			FCC._('The LAN machine has no fcc service and no launcher to start. Install the FCC Server on that machine, or check the service name in Advanced settings.'),
+		/* The launcher is not on that machine's PATH. The page cannot put it
+		 * there: the upstream install writes it into the account's own bin
+		 * directory, which only an install on that machine can do. */
+		'no-launcher':
+			FCC._('The FCC Server is not installed on the LAN machine. Install it there, then try again.'),
+		/* The launcher ran and did not come up, or did not go away. Its own log
+		 * over there says which, and the page names the file to look at. */
+		'start-failed':
+			FCC._('The FCC Server did not start on the LAN machine. Its log on that machine, ~/.fcc/server.log, says why.'),
+		'stop-failed':
+			FCC._('The FCC Server did not stop on the LAN machine. Its process is still running there.'),
+		'no-pgrep':
+			FCC._('The LAN machine has no pgrep, so its FCC Server cannot be found to be started or stopped from here.'),
 		/* The unit is there and this account may not touch it: systemd asked
 		 * for a password nobody can type into an SSH command. */
 		'needs-root':

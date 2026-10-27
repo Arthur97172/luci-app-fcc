@@ -321,6 +321,56 @@ contains("lan/failure_names_the_tunnel", written(), "SSH tunnel")
 absent("lan/failure_does_not_name_the_local_port", written(), "127.0.0.1:8082")
 check("lan/no_fallback_to_the_local_server", SENT == nil)
 
+-- A tunnel that is up can still carry nothing. The router's end accepts the
+-- connection; the far end answers each channel-open request, and it is the
+-- browser's first click that opens one. sshd there answers
+-- "administratively prohibited" when forwarding is switched off entirely, and
+-- that line — in ssh's log, nowhere else — is the difference between a user
+-- changing one line of sshd configuration and a user restarting a server that
+-- was never the problem.
+local kept_log = proxy.TUNNEL_LOG
+
+local function refusal_for(text)
+	local path = os.tmpname()
+	local fh = assert(io.open(path, "w"))
+	fh:write(text)
+	fh:close()
+	proxy.TUNNEL_LOG = path
+	local said = proxy.tunnel_refusal()
+	os.remove(path)
+	proxy.TUNNEL_LOG = kept_log
+	return said
+end
+
+contains("refusal/forwarding_off_is_named",
+	refusal_for("channel 1: open failed: administratively prohibited: open failed\n"),
+	"refuses port forwarding")
+contains("refusal/forwarding_off_points_at_the_setting",
+	refusal_for("channel 1: open failed: administratively prohibited: open failed\n"),
+	"AllowTcpForwarding")
+
+-- The forward worked and the far side's loopback answered nothing: the server
+-- there is not running, or is bound somewhere its own loopback is not.
+contains("refusal/nothing_listening_is_named",
+	refusal_for("channel 1: open failed: connect failed: Connection refused\n"),
+	"nothing there answers on 127.0.0.1:8082")
+
+-- Only the newest line is an answer to the request that just failed — the older
+-- one is history from before the user fixed whatever it described.
+contains("refusal/newest_line_wins",
+	refusal_for("channel 1: open failed: connect failed: Connection refused\n" ..
+		"channel 1: open failed: administratively prohibited: open failed\n"),
+	"refuses port forwarding")
+
+-- A line this does not recognise is not a diagnosis, and inventing one would be
+-- worse than the transport's own words.
+eq("refusal/unrecognised_line_stays_quiet",
+	refusal_for("Connection closed by 192.168.10.156 port 22\n"), nil)
+
+proxy.TUNNEL_LOG = "/nonexistent/fcc-remote-tunnel.log"
+eq("refusal/no_log_stays_quiet", proxy.tunnel_refusal(), nil)
+proxy.TUNNEL_LOG = kept_log
+
 UCI.control_target = "local"
 
 -- ---------------------------------------------------------------------------

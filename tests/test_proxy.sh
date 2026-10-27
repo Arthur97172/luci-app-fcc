@@ -24,6 +24,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
 CTRL="$ROOT/luasrc/controller/fcc.lua"
 MOD="$ROOT/luasrc/fcc/adminproxy.lua"
+REMOTE="$ROOT/root/usr/libexec/fcc/remote.sh"
 MAKEFILE="$ROOT/Makefile"
 VIEW="$ROOT/luasrc/view/fcc/config.htm"
 
@@ -146,6 +147,27 @@ test_lan_mode_goes_through_the_tunnel() {
 		"from the pid file remote.sh writes"
 	assert_not_contains "$(cat "$MOD")" 'main", "remote_host"' \
 		"the proxy never dials the stored LAN address directly"
+}
+
+test_a_tunnel_that_carries_nothing_says_why() {
+	# The tunnel can be listening on the router and still carry nothing, because
+	# the far side's sshd only answers when the first channel is opened. Its
+	# answer — "administratively prohibited" when AllowTcpForwarding is off,
+	# "connect failed" when nothing answers on the far loopback — is written to
+	# ssh's log and nowhere else. Without reading it back the page says
+	# "Connection reset by peer", which names no cause and suggests no action.
+	#
+	# The message translation itself is exercised in tests/proxy_driver.lua; what
+	# is pinned here is that the dial failure consults the log at all, and that
+	# both files name the same one.
+	assert_contains \
+		"$(sed -n '/local code, response, buffer, sock = httpclient.request_raw/,/Connection failed/p' "$MOD")" \
+		'tunnel_refusal()' \
+		"a failed dial in LAN mode asks the tunnel log why"
+	assert_contains "$(cat "$MOD")" 'TUNNEL_LOG  = "/tmp/fcc-remote-tunnel.log"' \
+		"the log remote.sh writes"
+	assert_contains "$(cat "$REMOTE")" 'FCC_REMOTE_TUNNEL_LOG:-/tmp/fcc-remote-tunnel.log' \
+		"and both sides spell it the same"
 }
 
 test_the_shim_survives_a_double_application() {

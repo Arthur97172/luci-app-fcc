@@ -634,6 +634,12 @@ fcc_remote_reason() {
 		*"Interactive authentication required"*) printf 'needs-root' ;;
 		*"Access denied"*)                 printf 'needs-root' ;;
 		*"authentication is required"*)    printf 'needs-root' ;;
+		# The launcher itself, on a machine that has no unit: it is either not
+		# installed there, or it did not come up / did not go away.
+		*"not installed"*)                 printf 'no-launcher' ;;
+		*"did not start"*)                 printf 'start-failed' ;;
+		*"did not stop"*)                  printf 'stop-failed' ;;
+		*"only be controlled on a machine with pgrep"*) printf 'no-pgrep' ;;
 		*"Connection closed by"*)          printf 'unreachable' ;;
 		*"Connection reset by"*)           printf 'unreachable' ;;
 		*"Broken pipe"*)                   printf 'unreachable' ;;
@@ -644,12 +650,12 @@ fcc_remote_reason() {
 		# to start, and "check the service name" would send the user looking
 		# for a setting that does not exist.
 		*"could not be found"*)            printf 'no-service' ;;
-		# Windows' own words for the same thing: Get-Service's sentence, cmd's
-		# "is not recognized", and PowerShell's "The term ... is not recognized".
-		# All three mean nothing by that name is installed over there, which is
-		# what no-service tells the page to say.
+		# Windows' own words for the same thing: Get-Service's sentence means
+		# nothing by that service name is installed, and cmd's and PowerShell's
+		# "is not recognized" mean the launcher itself is not on the account's
+		# PATH — the same two answers the POSIX side gives.
 		*"Cannot find any service"*)       printf 'no-service' ;;
-		*"is not recognized"*)             printf 'no-service' ;;
+		*"is not recognized"*)             printf 'no-launcher' ;;
 		*"No such file or directory"*)     printf 'no-init-script' ;;
 		*)                                 printf 'unreadable' ;;
 	esac
@@ -750,6 +756,92 @@ fcc_remote_bare_probe_script() {
 
 fcc_remote_bare_probe_cmd() {
 	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_probe_script)")"
+}
+
+# Start, stop and restart the launcher on a machine that has no unit.
+#
+# The upstream install writes fcc-server into the account's bin directory and
+# registers nothing with systemd. On such a machine `systemctl start` asks
+# polkit for a password (and systemctl reports the unit as inactive whether or
+# not the server is up), so the launcher *is* the service: it is started
+# detached with its output appended to a log, and stopped by the pid the
+# process list yields. Both are what a person would type by hand there.
+#
+# The literal "fcc-server" must not appear anywhere in these scripts. sshd
+# hands the whole script to sh as one argument, so a plain occurrence would
+# put the string on the command line of the shell running it, and the probe —
+# and the stop — would match that shell instead of the server. The name is
+# assembled at run time and the pgrep pattern keeps its brackets.
+fcc_remote_bare_control_script() {
+	_bcs_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; s=fcc; s=\${s}-server; log=\"\$HOME/.fcc/server.log\"; "
+	# The process list, with this very shell excluded: the script's own command
+	# line is handed to sh as one argument, and anything in it that looks like
+	# the launcher's name would make the probe find itself.
+	_bcs_state='state() { if pgrep -f "[f]cc-server" 2>/dev/null | grep -vx "$$" | grep -q .; then echo server running; else echo server stopped; fi; }; '
+	_bcs_need_pgrep='if ! command -v pgrep >/dev/null 2>&1; then echo "the FCC Server can only be controlled on a machine with pgrep"; exit 1; fi
+'
+
+	case "$1" in
+		start)
+			printf '%s%s%s' "$_bcs_head" "$_bcs_state" "$_bcs_need_pgrep"
+			# The script's own variables carry the generator's tag because
+			# tests/locals.awk reads this function's source like any other:
+			# a bare `i` here would look like a local clobbering a caller's.
+			printf '%s' '
+if [ "$(state)" = "server running" ]; then echo server running; exit 0; fi
+if ! command -v "$s" >/dev/null 2>&1; then echo "the FCC Server is not installed on this machine"; exit 1; fi
+mkdir -p "${log%/*}" 2>/dev/null
+nohup "$s" >>"$log" 2>&1 </dev/null &
+_bcs_i=0
+while [ "$_bcs_i" -lt 15 ]; do
+	sleep 1
+	if [ "$(state)" = "server running" ]; then echo server running; exit 0; fi
+	_bcs_i=$((_bcs_i + 1))
+done
+echo "the FCC Server did not start"; tail -n 5 "$log" 2>/dev/null
+exit 1' ;;
+		stop)
+			printf '%s%s%s' "$_bcs_head" "$_bcs_state" "$_bcs_need_pgrep"
+			printf '%s' '
+_bcs_p="$(pgrep -f "[f]cc-server" 2>/dev/null | grep -vx "$$")"
+if [ -z "$_bcs_p" ]; then echo server stopped; exit 0; fi
+kill $_bcs_p 2>/dev/null
+_bcs_i=0
+while [ "$_bcs_i" -lt 10 ]; do
+	sleep 1
+	if [ "$(state)" = "server stopped" ]; then echo server stopped; exit 0; fi
+	_bcs_i=$((_bcs_i + 1))
+done
+_bcs_p="$(pgrep -f "[f]cc-server" 2>/dev/null | grep -vx "$$")"
+[ -n "$_bcs_p" ] && kill -9 $_bcs_p 2>/dev/null
+sleep 1
+if [ "$(state)" = "server running" ]; then echo "the FCC Server did not stop"; exit 1; fi
+echo server stopped' ;;
+		restart)
+			# Each half has exits of its own, so each runs in a subshell: a
+			# successful stop must not end the command before the start.
+			printf '( %s ) && ( %s )' \
+				"$(fcc_remote_bare_control_script stop)" \
+				"$(fcc_remote_bare_control_script start)" ;;
+	esac
+}
+
+fcc_remote_bare_control_cmd() {
+	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_control_script "$1")")"
+}
+
+# One connection that asks a machine either its service manager or, when it
+# has no service by that name, the launcher's own process list.
+#
+# A unit that does not exist reads "inactive" whatever is running, and systemd
+# asks polkit for a password before it has even looked for the name — so the
+# unit is looked for first, with a question that needs no privilege, and the
+# answer decides which of the two questions is the honest one. OpenWrt asks
+# the same question of its init script with a plain executability test.
+fcc_remote_or_bare_cmd() {
+	# fcc_remote_or_bare_cmd <test when the service exists> <script when it does not> <command when it does>
+	printf 'sh -c %s' "$(fcc_shquote \
+		"if $1 >/dev/null 2>&1; then $3; else $2; fi")"
 }
 
 # ---------------------------------------------------------------------------
@@ -1173,16 +1265,24 @@ fcc_remote_control() {
 	_cc_service="$(fcc_remote_service)"
 	case "$_cc_platform" in
 		linux)
-			_cc_remote="systemctl $_cc_op $_cc_service" ;;
+			# A unit when there is one, the launcher itself when there is not:
+			# the upstream install registers no service, and on such a machine
+			# starting and stopping are what the person would type by hand.
+			_cc_remote="$(fcc_remote_or_bare_cmd "systemctl cat $_cc_service.service" \
+				"$(fcc_remote_bare_control_script "$_cc_op")" \
+				"systemctl $_cc_op $_cc_service")" ;;
 		macos)
-			# No preset exists to run. The upstream install has no launchd job,
-			# and inventing one here would start a server this router cannot
-			# supervise. The answer is the reason code the page translates.
-			printf '{"ok":false,"op":%s,"reason":"no-service","output":"","exit":0}\n' \
-				"$(fcc_json_str "$_cc_op")"
-			return 0 ;;
+			# The upstream install registers no launchd job, so the launcher is
+			# the service: it is started detached and stopped by the pid the
+			# process list yields, exactly as on a bare Linux machine.
+			_cc_remote="$(fcc_remote_bare_control_cmd "$_cc_op")" ;;
 		openwrt)
-			_cc_remote="/etc/init.d/$_cc_service $_cc_op" ;;
+			# This package's own init script when it is there; the launcher
+			# when it is not, so a machine carrying only the upstream install
+			# can still be started and stopped from this page.
+			_cc_remote="$(fcc_remote_or_bare_cmd "[ -x /etc/init.d/$_cc_service ]" \
+				"$(fcc_remote_bare_control_script "$_cc_op")" \
+				"/etc/init.d/$_cc_service $_cc_op")" ;;
 		windows)
 			_cc_remote="$(fcc_remote_win_cmd "$(fcc_remote_win_control_script "$_cc_op" "$_cc_service")")" ;;
 		*)
@@ -1196,18 +1296,11 @@ fcc_remote_control() {
 		_cc_reason=""
 	else
 		_cc_ok=false
+		# The unit was looked for on the far side before either question was
+		# asked, so needs-root here means a unit this account may not touch,
+		# and a machine with no unit at all has already answered from its
+		# process list.
 		_cc_reason="$(fcc_remote_reason "$_cc_out" "$_cc_service")"
-		# A permission refusal is only a permission refusal if there is a unit
-		# to control: a machine running the upstream install alone has none,
-		# and "start it with sudo" would send the user after a service that
-		# does not exist. Only this failure pays for the second connection.
-		if [ "$_cc_reason" = "needs-root" ] && [ "$_cc_platform" = "linux" ]; then
-			_cc_units="$(fcc_remote_ssh "systemctl list-unit-files '$_cc_service.service' --no-pager --no-legend 2>/dev/null")"
-			case "$_cc_units" in
-				*"$_cc_service.service"*) : ;;
-				*) _cc_reason="no-service" ;;
-			esac
-		fi
 	fi
 	printf '{"ok":%s,"op":%s,"reason":%s,"output":%s,"exit":%s}\n' \
 		"$_cc_ok" \
@@ -1372,16 +1465,25 @@ fcc_remote_running() {
 	_rn_service="$(fcc_remote_service)"
 	case "$_rn_platform" in
 		linux)
-			# is-active prints one word and exits 0 only for "active".
-			_rn_cmd="systemctl is-active $_rn_service" ;;
+			# is-active prints one word and exits 0 only for "active" — but a
+			# unit that does not exist reads "inactive" whatever the process
+			# list says, so the unit is looked for first and the launcher's
+			# own process list answers when there is none.
+			_rn_cmd="$(fcc_remote_or_bare_cmd "systemctl cat $_rn_service.service" \
+				"$(fcc_remote_bare_server_script)" \
+				"systemctl is-active $_rn_service")" ;;
 		macos)
 			# macOS has no unit to ask about: the server is whatever the
 			# account started.
 			_rn_cmd="$(fcc_remote_bare_server_cmd)" ;;
 		openwrt)
 			# rc.common is procd's init framework; its status verb answers with
-			# the exit code (0 running, 3 not) rather than a word.
-			_rn_cmd="/etc/init.d/$_rn_service status" ;;
+			# the exit code (0 running, 3 not) rather than a word. A machine
+			# with only the upstream install has no init script at all, so the
+			# process list answers there.
+			_rn_cmd="$(fcc_remote_or_bare_cmd "[ -x /etc/init.d/$_rn_service ]" \
+				"$(fcc_remote_bare_server_script)" \
+				"/etc/init.d/$_rn_service status")" ;;
 		windows)
 			_rn_cmd="powershell.exe -NoProfile -NonInteractive -Command \"(Get-Service -Name '$_rn_service').Status\"" ;;
 		*)
@@ -1407,6 +1509,8 @@ fcc_remote_running() {
 			if [ "$_rn_code" -ne 4 ]; then
 				case "$_rn_word" in
 					active) _rn_running=true; _rn_known=1 ;;
+					'server running') _rn_running=true; _rn_known=1 ;;
+					'server stopped') _rn_known=1 ;;
 					inactive|failed|activating|deactivating|reloading|unknown) _rn_known=1 ;;
 				esac
 			fi ;;
@@ -1422,10 +1526,18 @@ fcc_remote_running() {
 				stopped|startpending|stoppending|paused|pausepending) _rn_known=1 ;;
 			esac ;;
 		openwrt)
-			case "$_rn_code" in
-				0) _rn_running=true; _rn_known=1 ;;
-				3) _rn_known=1 ;;
-			esac ;;
+			# The init script's status verb answers with an exit code, and the
+			# process-list probe answers with a line, so both are read.
+			case "$_rn_word" in
+				'server running') _rn_running=true; _rn_known=1 ;;
+				'server stopped') _rn_known=1 ;;
+			esac
+			if [ "$_rn_known" = "0" ]; then
+				case "$_rn_code" in
+					0) _rn_running=true; _rn_known=1 ;;
+					3) _rn_known=1 ;;
+				esac
+			fi ;;
 	esac
 
 	# A machine running only free-claude-code has no unit to ask about — Linux
@@ -1436,8 +1548,8 @@ fcc_remote_running() {
 	if [ "$_rn_known" = "0" ] && [ "$_rn_code" -ne 255 ]; then
 		_rn_probe_cmd=""
 		case "$_rn_platform" in
-			linux)   _rn_probe_cmd="$(fcc_remote_bare_server_cmd)" ;;
-			windows) _rn_probe_cmd="$(fcc_remote_win_server_cmd)" ;;
+			linux|openwrt) _rn_probe_cmd="$(fcc_remote_bare_server_cmd)" ;;
+			windows)       _rn_probe_cmd="$(fcc_remote_win_server_cmd)" ;;
 		esac
 		if [ -n "$_rn_probe_cmd" ]; then
 			_rn_probe="$(fcc_remote_ssh "$_rn_probe_cmd")"

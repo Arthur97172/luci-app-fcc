@@ -99,7 +99,7 @@ case "${last:-}" in
 	*pgrep*)
 		if [ -n "${SSH_PROBE_OUT+x}" ]; then
 			printf '%s\n' "$SSH_PROBE_OUT"
-			exit 0
+			exit "${SSH_PROBE_EXIT:-0}"
 		fi ;;
 	# A Windows probe is PowerShell rather than a shell, and the process list and
 	# the launcher checks are the same two questions. Matching Get-Process and
@@ -232,10 +232,16 @@ uci_set() { printf '%s' "$2" > "$UCI/$1"; }
 # call $1 is what was asked — which stays true when a later call (the details
 # fetch that follows a running answer) is made as well.
 ssh_command() {
+	# The remote command is one argv word, and a script it carries may run to
+	# several lines: the log writes one line per word, so a line without the
+	# ARG prefix continues the word before it.
 	awk -v want="${1:-1}" '
-		/^CALL$/ { n++; next }
-		n == want { cmd = substr($0, 5) }
-		END { if (cmd != "") print cmd }
+		/^CALL$/ { if (n == want && cmd != "") print cmd; n++; next }
+		n == want {
+			if (substr($0, 1, 4) == "ARG ") cmd = substr($0, 5)
+			else if (cmd != "") cmd = cmd "\n" $0
+		}
+		END { if (n == want && cmd != "") print cmd }
 	' "$TMP/ssh.log"
 }
 
@@ -519,7 +525,7 @@ test_stop_is_allowed_outside_lan_mode() {
 	out="$(run_remote control stop)" || rc=$?
 	assert_eq "0" "$rc" "a stop is accepted while the target is this router"
 	assert_contains "$out" '"ok":true' "and it reports what the remote said"
-	assert_eq "systemctl stop fcc" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
+	assert_contains "$(ssh_command 1)" 'then systemctl stop fcc' \
 		"the command is the same preset a LAN stop sends"
 	drop_sandbox
 }
@@ -534,7 +540,7 @@ test_running_reports_an_active_linux_service() {
 	assert_contains "$out" '"ok":true' "the check answered"
 	assert_contains "$out" '"checked":true' "and it is an answer rather than a guess"
 	assert_contains "$out" '"running":true' "an active service is running"
-	assert_eq "systemctl is-active fcc" "$(ssh_command 1)" \
+	assert_contains "$(ssh_command 1)" 'then systemctl is-active fcc' \
 		"systemd is asked with is-active"
 	drop_sandbox
 }
@@ -615,13 +621,14 @@ test_running_uses_the_openwrt_and_windows_presets() {
 	uci_set remote_platform openwrt
 	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
 	assert_contains "$out" '"running":true' "rc.common exits 0 when the service runs"
-	assert_eq "/etc/init.d/fcc status" "$(ssh_command 1)" \
+	assert_contains "$(ssh_command 1)" 'then /etc/init.d/fcc status' \
 		"OpenWrt is asked through its init script"
 
 	uci_set remote_platform windows
+	: > "$TMP/ssh.log"
 	out="$(SSH_OUT='Running' run_remote running)" || true
 	assert_contains "$out" '"running":true' "PowerShell prints Running"
-	assert_contains "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" 'Get-Service' \
+	assert_contains "$(ssh_command 1)" 'Get-Service' \
 		"Windows is asked through PowerShell"
 	drop_sandbox
 }
@@ -640,12 +647,22 @@ test_running_names_a_missing_systemctl() {
 	drop_sandbox
 }
 
-test_running_names_a_missing_init_script() {
+test_running_on_openwrt_without_its_init_script_asks_the_process_list() {
+	# A machine carrying only the upstream install has no /etc/init.d/fcc, so
+	# the status verb would answer "not found". The init script is tested for
+	# first, in the same command, and the process list answers when it is
+	# absent — the same question a Linux machine without its unit is asked.
 	fresh
 	ready_lan
-	out="$(SSH_OUT='/etc/init.d/fcc: not found' SSH_EXIT=127 run_remote running)" || true
-	assert_contains "$out" '"reason":"no-init-script"' \
-		"a service that does not exist is named as the problem"
+	uci_set remote_platform openwrt
+	out="$(SSH_PROBE_OUT='server running' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the process list decides"
+	assert_contains "$(ssh_command 1)" '[ -x /etc/init.d/fcc ]' \
+		"the init script is looked for first"
+	assert_contains "$(ssh_command 1)" 'then /etc/init.d/fcc status' \
+		"and used when it is there"
+	assert_contains "$(ssh_command 1)" 'pgrep -f "[f]cc-server"' \
+		"with the process list as the fallback in the same command"
 	drop_sandbox
 }
 
@@ -721,7 +738,7 @@ test_the_platform_name_in_the_service_field_is_corrected() {
 	uci_set remote_service OpenWrt
 	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
 	assert_contains "$out" '"running":true' "the check uses the real service"
-	assert_eq "/etc/init.d/fcc status" "$(ssh_command 1)" \
+	assert_contains "$(ssh_command 1)" 'then /etc/init.d/fcc status' \
 		"not /etc/init.d/OpenWrt"
 	assert_contains "$(run_remote status)" '"service":"fcc"' \
 		"and the page is told the name that is actually used"
@@ -730,7 +747,7 @@ test_the_platform_name_in_the_service_field_is_corrected() {
 	uci_set remote_service Windows
 	: > "$TMP/ssh.log"
 	run_remote running >/dev/null 2>&1 || true
-	assert_eq "systemctl is-active fcc" "$(ssh_command 1)" \
+	assert_contains "$(ssh_command 1)" 'then systemctl is-active fcc' \
 		"the same rule applies to every platform word"
 
 	# macOS is a platform word too, and the lower-case comparison is what makes
@@ -789,8 +806,19 @@ test_control_uses_the_linux_preset() {
 	ready_lan
 	out="$(run_remote control restart)"
 	assert_contains "$out" '"ok":true' "the operation reports success"
-	assert_eq "systemctl restart fcc" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
-		"systemd takes systemctl <op> <service>"
+	# The unit is looked for first, in the same connection: on a machine that
+	# carries only the upstream install there is none, and starting the
+	# launcher is what a person would do there by hand.
+	assert_contains "$(ssh_command 1)" 'systemctl cat fcc.service' \
+		"the unit is looked for before it is used"
+	assert_contains "$(ssh_command 1)" 'then systemctl restart fcc' \
+		"and systemd takes systemctl <op> <service> when it exists"
+	assert_contains "$(ssh_command 1)" 'else' \
+		"with the launcher as the alternative in the same command"
+	assert_contains "$(ssh_command 1)" 'nohup "$s"' \
+		"which is started detached"
+	assert_not_contains "$(ssh_command 1)" 'fcc-server' \
+		"and the launcher name is never spelled out in the script"
 	drop_sandbox
 }
 
@@ -799,8 +827,12 @@ test_control_uses_the_openwrt_preset() {
 	ready_lan
 	uci_set remote_platform openwrt
 	run_remote control stop >/dev/null
-	assert_eq "/etc/init.d/fcc stop" "$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')" \
-		"OpenWrt runs its init script directly"
+	assert_contains "$(ssh_command 1)" '[ -x /etc/init.d/fcc ]' \
+		"OpenWrt is asked whether it has the init script"
+	assert_contains "$(ssh_command 1)" 'then /etc/init.d/fcc stop' \
+		"and its init script is run directly when it does"
+	assert_contains "$(ssh_command 1)" 'kill $_bcs_p' \
+		"with the launcher as the alternative"
 	drop_sandbox
 }
 
@@ -1442,16 +1474,18 @@ test_running_falls_back_to_the_process_list_on_windows() {
 	drop_sandbox
 }
 
-test_windows_errors_are_named_as_a_missing_service() {
+test_windows_errors_are_named_as_a_missing_launcher() {
 	# The page translates a reason code, so Windows' own wording for "nothing by
-	# that name is here" has to reach it as one.
+	# that name is here" has to reach it as one. A machine that only ran
+	# install.ps1 has no service, and the start goes to the launcher — so a
+	# name that does not resolve there means the launcher is not installed.
 	fresh
 	ready_lan
 	uci_set remote_platform windows
 	out="$(SSH_OUT="'fcc-server' is not recognized as an internal or external command" \
 		SSH_EXIT=1 run_remote control start)" || true
-	assert_contains "$out" '"reason":"no-service"' \
-		"cmd's not-recognized is the same answer as a missing service"
+	assert_contains "$out" '"reason":"no-launcher"' \
+		"cmd's not-recognized is the same answer as a missing launcher"
 	drop_sandbox
 }
 
@@ -1474,10 +1508,10 @@ test_running_falls_back_to_the_process_list_without_a_unit() {
 	out="$(SSH_OUT='inactive' SSH_EXIT=4 SSH_PROBE_OUT='server running' \
 		run_remote running)" || true
 	assert_contains "$out" '"running":true' "the process list decides"
-	assert_eq 'systemctl is-active fcc' "$(ssh_command 1)" \
+	assert_contains "$(ssh_command 1)" 'then systemctl is-active fcc' \
 		"systemd is still asked first"
-	assert_contains "$(ssh_command 2)" 'pgrep -f "[f]cc-server"' \
-		"and the process list second"
+	assert_contains "$(ssh_command 1)" 'pgrep -f "[f]cc-server"' \
+		"and the process list is the same command's fallback"
 
 	fresh
 	ready_lan
@@ -1500,33 +1534,46 @@ test_running_on_macos_asks_only_the_process_list() {
 	drop_sandbox
 }
 
-test_control_on_macos_refuses_without_inventing_a_unit() {
-	# The upstream install writes no launchd job. A preset here would start a
-	# server this router could not supervise, so the click is answered with the
-	# reason the page translates instead.
+test_control_on_macos_runs_the_launcher() {
+	# The upstream install writes no launchd job, so the launcher is the
+	# service there too: the click starts it detached, and stops it by the pid
+	# the process list yields — the same two things a person would type.
 	fresh
 	ready_lan
 	uci_set remote_platform macos
 	out="$(run_remote control start)" || true
-	assert_contains "$out" '"ok":false' "a start is refused"
-	assert_contains "$out" '"reason":"no-service"' "as a machine with no service"
-	assert_not_contains "$(cat "$TMP/ssh.log" 2>/dev/null)" 'CALL' \
-		"and nothing is sent, because nothing could run"
+	assert_contains "$out" '"ok":true' "the start is made"
+	assert_contains "$(ssh_command 1)" 'nohup "$s"' "through the launcher"
+	assert_contains "$(ssh_command 1)" 'pgrep -f "[f]cc-server"' \
+		"with the process list deciding whether it is up"
+	assert_not_contains "$(ssh_command 1)" 'fcc-server' \
+		"and the name assembled rather than spelled out"
+
+	: > "$TMP/ssh.log"
+	run_remote control stop >/dev/null 2>&1 || true
+	assert_contains "$(ssh_command 1)" 'kill $_bcs_p' "a stop kills the launcher's pid"
 	drop_sandbox
 }
 
-test_control_does_not_send_a_bare_machine_looking_for_sudo() {
+test_control_never_sends_systemctl_to_a_bare_machine() {
 	# systemctl asks polkit for a password before it checks the unit's name, so
-	# a machine running only the upstream install answers exactly like one
-	# whose service this account may not touch. The unit is asked about before
-	# the answer keeps "you may not": there is nothing to start over there.
+	# a machine running only the upstream install would answer with a password
+	# prompt. The unit is looked for first, in the same connection, and a
+	# machine that has none is answered from its process list instead — so a
+	# bare target is never sent looking for sudo.
 	fresh
 	ready_lan
-	out="$(SSH_OUT='Failed to start fcc.service: Interactive authentication required.' \
-		SSH_EXIT=1 SSH_UNIT_OUT='' run_remote control start)" || true
+	out="$(SSH_PROBE_OUT='the FCC Server is not installed on this machine' \
+		SSH_PROBE_EXIT=1 run_remote control start)" || true
 	assert_contains "$out" '"ok":false' "the start did not happen"
-	assert_contains "$out" '"reason":"no-service"' \
-		"and the page is told the machine has no service to start"
+	assert_contains "$out" '"reason":"no-launcher"' \
+		"and the page is told there is no launcher to start"
+	assert_contains "$(ssh_command 1)" 'systemctl cat fcc.service' \
+		"the unit is asked about without privilege"
+	assert_contains "$(ssh_command 1)" 'else' \
+		"and the launcher, not systemctl, is what a machine without it runs"
+	assert_contains "$(ssh_command 1)" 'nohup "$s"' \
+		"which is started the way a person would start it"
 	drop_sandbox
 }
 
@@ -1550,6 +1597,65 @@ test_control_names_a_unit_systemd_does_not_have() {
 	assert_contains "$out" '"ok":false' "a restart that found no unit failed"
 	assert_contains "$out" '"reason":"no-service"' \
 		"and the page is told it is a missing service, not a missing service name"
+	drop_sandbox
+}
+
+test_restart_stops_before_it_starts() {
+	# A launcher has no restart verb, so a restart is a stop followed by a
+	# start. Each half has exits of its own, so each runs in a subshell: a
+	# successful stop must not end the command before the start runs.
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	run_remote control restart >/dev/null 2>&1 || true
+	cmd="$(ssh_command 1)"
+	assert_contains "$cmd" '( ' "the stop runs in a subshell"
+	assert_contains "$cmd" ') && ( ' "and the start follows it only on success"
+	assert_contains "$cmd" 'kill $_bcs_p' "the stop is there"
+	assert_contains "$cmd" 'nohup "$s"' "and so is the start"
+	drop_sandbox
+}
+
+test_every_platform_can_start_a_machine_without_a_service() {
+	# Linux, OpenWrt, macOS and Windows are asked the same way: use the service
+	# when there is one, the launcher when there is not, so the Start button
+	# works on a machine that only ran the upstream installer.
+	for _p in linux openwrt macos windows; do
+		fresh
+		ready_lan
+		uci_set remote_platform "$_p"
+		run_remote control start >/dev/null 2>&1 || true
+		cmd="$(ssh_command 1)"
+		case "$_p" in
+			windows)
+				assert_contains "$cmd" 'Start-Process -WindowStyle Hidden' \
+					"windows starts the launcher" ;;
+			*)
+				assert_contains "$cmd" 'nohup "$s"' \
+					"$_p starts the launcher" ;;
+		esac
+	done
+	drop_sandbox
+}
+
+test_the_launcher_scripts_never_spell_their_own_name() {
+	# sshd hands the whole script to sh as one argument, so a plain occurrence
+	# of the launcher's name would put it on the command line of the shell
+	# running the script — and the process probe, and the stop, would find that
+	# shell instead of the server. The name is assembled at run time and the
+	# pgrep pattern keeps its brackets, so the literal never appears. (Windows
+	# matches on process names, not command lines, so it is not in this list.)
+	for _p in linux openwrt macos; do
+		fresh
+		ready_lan
+		uci_set remote_platform "$_p"
+		for _op in start stop restart; do
+			: > "$TMP/ssh.log"
+			run_remote control "$_op" >/dev/null 2>&1 || true
+			assert_not_contains "$(ssh_command 1)" 'fcc-server' \
+				"$_p $_op names the launcher without spelling it out"
+		done
+	done
 	drop_sandbox
 }
 
