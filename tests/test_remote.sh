@@ -114,6 +114,14 @@ case "${last:-}" in
 			printf '%s\n' "$SSH_DETAILS_OUT"
 			exit "${SSH_DETAILS_EXIT:-0}"
 		fi ;;
+	# The Windows details script is the process-list question asked in
+	# PowerShell, and it also names Get-Process — so it is recognised by the
+	# memory it reads, before the probe's own case can claim it.
+	*WorkingSet64*)
+		if [ -n "${SSH_DETAILS_OUT+x}" ]; then
+			printf '%s\n' "$SSH_DETAILS_OUT"
+			exit "${SSH_DETAILS_EXIT:-0}"
+		fi ;;
 	*pgrep*)
 		if [ -n "${SSH_PROBE_OUT+x}" ]; then
 			printf '%s\n' "$SSH_PROBE_OUT"
@@ -806,6 +814,58 @@ version=6.18.3' run_remote running)" || true
 	assert_contains "$out" '"uptime":4' "and its own uptime"
 	assert_not_contains "$(ssh_command 1)" 'status.sh' \
 		"without asking a helper it does not have"
+	drop_sandbox
+}
+
+test_running_describes_a_windows_machine_from_its_process_list() {
+	# Windows has no status.sh either — this package does not install there — so
+	# the same six questions are asked of the process and of the socket it owns,
+	# in PowerShell. The answer is the same key=value lines, which is what lets
+	# the page keep one parser and one renderer for all four platforms.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_OUT='Running' SSH_DETAILS_OUT='pid=4242
+uptime=95
+rss_kb=210000
+version=6.18.3
+bind=127.0.0.1
+port=8082' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the state is still answered"
+	assert_contains "$out" '"details":{' "and Windows gets the same six lines"
+	assert_contains "$out" '"pid":4242' "from its own process list"
+	assert_contains "$out" '"uptime":95' "its own uptime"
+	assert_contains "$out" '"memory_rss_kb":210000' "its working set"
+	assert_contains "$out" '"version":"6.18.3"' "the launcher's version"
+	assert_contains "$out" '"bind":"127.0.0.1"' "the address it listens on"
+	assert_contains "$out" '"port":8082' "and that address's port"
+
+	_dt="$(ssh_command 2)"
+	assert_contains "$_dt" 'powershell.exe -NoProfile -NonInteractive -Command' \
+		"the questions are asked in PowerShell, not in a shell Windows lacks"
+	assert_contains "$_dt" 'WorkingSet64' "memory comes from the process itself"
+	assert_contains "$_dt" 'Get-NetTCPConnection' "and the socket from its owner"
+	assert_contains "$_dt" 'netstat -ano' "with netstat where that cmdlet is absent"
+	assert_not_contains "$_dt" 'sh -c' "no POSIX shell is assumed"
+
+	# cmd.exe is handed the script as one argument, so the pair around it must be
+	# the only double quotes in the command: a second pair would end the argument
+	# there and leave cmd to parse the rest.
+	assert_eq 2 "$(printf '%s' "$_dt" | tr -cd '"' | wc -c | tr -d ' ')" \
+		"the only double quotes are the pair around the script"
+	drop_sandbox
+}
+
+test_a_windows_machine_without_a_process_is_not_described() {
+	# The state check said "running" and the process list then named nothing.
+	# There is no pid to anchor the six lines to, and an object full of nulls
+	# would render as a table of dashes that says less than the sentence.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_OUT='Running' SSH_DETAILS_OUT='' run_remote running)" || true
+	assert_contains "$out" '"running":true' "the state answer stands"
+	assert_not_contains "$out" '"details"' "with nothing invented beside it"
 	drop_sandbox
 }
 

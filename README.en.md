@@ -205,12 +205,15 @@ not reported as stopped.
 While the server is running the LAN panel shows the same six lines as
 `[This router]`: running, version, process ID, uptime, memory (RSS) and
 listening on. A machine carrying this package answers with its own `status.sh`;
-a machine carrying only the upstream runtime — Linux, macOS and OpenWrt have no
-`status.sh` — is asked the same questions of its own process list and launcher
-instead: the PID, memory and uptime come from the process, the listening address
-from its listening socket in `ss`, `lsof` or `netstat`, and the version from
-`fcc-server --version` (upstream documents running it as safe). Whatever cannot
-be read shows `—` rather than a guess.
+a machine carrying only the upstream runtime — Linux, macOS, OpenWrt and Windows
+have no `status.sh` — is asked the same questions of its own process list and
+launcher instead: the PID, memory and uptime come from the process, the
+listening address from its listening socket in `ss`, `lsof` or `netstat` — on
+Windows from `Get-NetTCPConnection`, falling back to `netstat -ano` where that
+cmdlet does not exist — and the version from `fcc-server --version` (upstream
+documents running it as safe). Whatever cannot be read shows `—` rather than a
+guess. On Windows the questions are asked through PowerShell and have yet to be
+verified on a real machine.
 
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.

@@ -147,9 +147,11 @@ shell——Linux 和 macOS 是 `sh`，Windows 是 PowerShell，都先把安装�
 
 服务器在运行时，局域网面板显示和 `[本机]` 一样的六行：运行中、版本、进程 ID、已运行时长、
 内存 (RSS)、监听于。装了本包的机器由它自己的 `status.sh` 回答；只装了上游运行时的机器
-（Linux、macOS、OpenWrt 上都没有 `status.sh`）改问它自己的进程列表和启动器：PID、内存和
-运行时长取自该进程，监听地址取自 `ss`、`lsof` 或 `netstat` 里它的监听套接字，版本来自
+（Linux、macOS、OpenWrt、Windows 上都没有 `status.sh`）改问它自己的进程列表和启动器：
+PID、内存和运行时长取自该进程，监听地址取自它的监听套接字——`ss`、`lsof` 或 `netstat`，
+Windows 上用 `Get-NetTCPConnection`，没有这个 cmdlet 时退回 `netstat -ano`——版本来自
 `fcc-server --version`（上游说明该用法安全）。哪一项读不到就显示 `—`，不会编造。
+Windows 上这套查询走 PowerShell，尚待在真机上验证。
 
 **只接受私有 IPv4 地址**（`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）；主机名一律
 拒绝，因为一个名字可能解析成公网地址。

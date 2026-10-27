@@ -1112,6 +1112,48 @@ fcc_remote_win_server_cmd() {
 	fcc_remote_win_cmd "$(fcc_remote_win_server_script)"
 }
 
+# The six facts the panel shows for the server here, asked of a Windows machine
+# in the same key=value lines the POSIX script prints — so one parser and one
+# renderer serve all four platforms.
+#
+# The pid is the anchor: no process, no lines, and the answer stays the
+# one-line state. Memory and uptime come from the process object; the version
+# from the launcher, exactly as on the POSIX side and for the same reason
+# (upstream documents `--version` as safe); the socket from Get-NetTCPConnection
+# where it exists and from `netstat -ano` where it does not. A field the machine
+# cannot answer is left out rather than guessed, and the page draws a dash.
+#
+# `fcc-desktop` is the other way the server is up, so it is the second choice
+# when no `fcc-server` process exists — the same pair the running check counts.
+#
+# Nothing here may contain a double quote or a newline: fcc_remote_win_cmd wraps
+# the whole script in the only pair cmd.exe is asked to understand, and the
+# remote command is a single line. The script is therefore written one
+# statement per line, each ending in `;`, and flattened at the end.
+fcc_remote_win_details_script() {
+	_wd_body="$(cat <<'FCCEOF'
+$s = @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue) | Sort-Object { $_.ProcessName -ne 'fcc-server' } | Select-Object -First 1;
+if (-not $s) { exit 0 };
+Write-Output ('pid=' + $s.Id);
+try { Write-Output ('uptime=' + [int]((Get-Date) - $s.StartTime).TotalSeconds) } catch { };
+try { Write-Output ('rss_kb=' + [int]($s.WorkingSet64 / 1KB)) } catch { };
+$g = Get-Command 'fcc-server' -ErrorAction SilentlyContinue;
+if ($g) { $v = @(& $g.Source --version 2>$null) | Where-Object { $_ } | Select-Object -First 1; if ($v) { $w = ($v -split '\s+') | Where-Object { $_ } | Select-Object -Last 1; if ($w) { Write-Output ('version=' + $w) } } };
+$l = $null;
+if (Get-Command 'Get-NetTCPConnection' -ErrorAction SilentlyContinue) { $l = @(Get-NetTCPConnection -State Listen -OwningProcess $s.Id -ErrorAction SilentlyContinue) | Select-Object -First 1 };
+if ($l) { Write-Output ('port=' + $l.LocalPort); if ($l.LocalAddress) { Write-Output ('bind=' + $l.LocalAddress) } };
+if (-not $l) { $n = @(netstat -ano | Where-Object { $_ -match ('^\s*TCP\s+\S+\s+\S+\s+LISTENING\s+' + $s.Id + '\s*$') }) | Select-Object -First 1; if ($n) { $f = ($n.Trim() -split '\s+')[1]; $pt = ($f -split ':') | Select-Object -Last 1; Write-Output ('port=' + $pt); $ad = $f -replace ':\d+$',''; if ($ad) { Write-Output ('bind=' + $ad) } } };
+exit 0
+FCCEOF
+)"
+	printf '%s; %s' "$(fcc_remote_win_path_script)" \
+		"$(printf '%s' "$_wd_body" | tr '\n' ' ')"
+}
+
+fcc_remote_win_details_cmd() {
+	fcc_remote_win_cmd "$(fcc_remote_win_details_script)"
+}
+
 fcc_remote_win_control_script() {
 	# fcc_remote_win_control_script <op> <service> -> Start/Stop/Restart-Service
 	# when the machine has a service of that name, and the upstream install's
@@ -1615,6 +1657,11 @@ fcc_remote_status() {
 # its own process list and launcher instead (see
 # fcc_remote_bare_details_script). Anything it cannot answer stays absent, and
 # the page shows a dash there rather than a guess.
+#
+# Windows is in that second group by construction: this package installs no
+# status.sh there, and the questions are asked of the process and of the socket
+# it owns through PowerShell instead. The answer is the same six key=value
+# lines, so the page keeps one parser and one renderer for all four platforms.
 FCC_REMOTE_DETAIL_DOC=""
 
 fcc_remote_detail_field() {
@@ -1623,15 +1670,15 @@ fcc_remote_detail_field() {
 
 fcc_remote_details() {
 	case "$(fcc_remote_platform)" in
-		openwrt|linux|macos) : ;;
+		openwrt|linux|macos|windows) : ;;
 		*) return 0 ;;
 	esac
 
 	# The helper is asked for only if it is there: test -x is the whole of the
 	# remote side of this, so a machine that never had the package installed
-	# answers with an empty line and no error worth showing. macOS has never
-	# carried it — this package does not install there — and goes straight to
-	# the process list.
+	# answers with an empty line and no error worth showing. macOS and Windows
+	# have never carried it — this package does not install there — and go
+	# straight to the process list.
 	_dt_doc=""
 	case "$(fcc_remote_platform)" in
 		openwrt|linux)
@@ -1660,7 +1707,11 @@ fcc_remote_details() {
 	# No document: ask the machine's own process list and launcher. The pid is
 	# the anchor — without it there is no server to describe, and the answer
 	# stays the one-line state.
-	_dt_raw="$(fcc_remote_ssh "$(fcc_remote_bare_details_cmd)" \
+	_dt_cmd="$(fcc_remote_bare_details_cmd)"
+	if [ "$(fcc_remote_platform)" = "windows" ]; then
+		_dt_cmd="$(fcc_remote_win_details_cmd)"
+	fi
+	_dt_raw="$(fcc_remote_ssh "$_dt_cmd" \
 		2>/dev/null | fcc_remote_output_filter | tr -d '\r')"
 	_dt_pid="$(printf '%s\n' "$_dt_raw" | sed -n 's/^pid=//p' | head -n 1)"
 	[ -n "$_dt_pid" ] || return 0
