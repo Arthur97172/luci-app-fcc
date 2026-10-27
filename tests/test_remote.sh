@@ -1029,6 +1029,23 @@ test_a_tunnel_setting_already_in_place_needs_no_privilege() {
 	drop_sandbox
 }
 
+test_a_narrowed_sudo_rule_is_enough_to_place_the_tunnel_setting() {
+	# A sudoers rule that allows only the commands this needs — mkdir, tee,
+	# sshd -t and the reload — is the sensible way to grant it on a shared
+	# machine. `sudo -n true` is not among them, so probing with it would report
+	# "denied" on a machine where every command it guards would have worked.
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=on' run_remote control start)"
+	assert_contains "$out" '"forwarding":"on"' "the setting was placed"
+	_fw="$(ssh_command 1)"
+	assert_contains "$_fw" '_fw_as="sudo -n"' \
+		"the commands themselves carry sudo -n"
+	assert_not_contains "$_fw" 'sudo -n true' \
+		"and nothing is asked of sudo beyond the work it was allowed for"
+	drop_sandbox
+}
+
 test_a_tunnel_setting_that_cannot_be_changed_does_not_fail_the_start() {
 	# The SSH daemon over there is a separate thing from the FCC server: an
 	# account that may not write /etc/ssh still gets its server started, and the

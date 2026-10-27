@@ -865,15 +865,22 @@ fcc_remote_bare_details_cmd() {
 # failure here is reported as a word and never fails the start or stop — the
 # server on that machine is a separate thing from its SSH daemon.
 #
-# This needs root on the far side: /etc/ssh is root's. The account is asked to
-# write directly when it is root and through `sudo -n` otherwise; where neither
-# is possible the answer is "denied", which names the one manual step left.
+# This needs root on the far side: /etc/ssh is root's. The account writes
+# directly when it is root and through `sudo -n` otherwise; where neither works
+# the answer is "denied", which names the one manual step left.
+#
+# There is deliberately no `sudo -n true` probe in front of this. An
+# administrator who allowed exactly the commands below — a narrowed sudoers
+# rule, which is the sensible way to grant this — would fail that probe while
+# every command it guards went through, and the page would report a permission
+# problem that does not exist. The first command that cannot run is the answer
+# instead.
 fcc_remote_forwarding_script() {
 	# fcc_remote_forwarding_script <on|off>
 	_fw_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; c=/etc/ssh/sshd_config; f=/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf; "
 	_fw_state='if [ ! -r "$c" ] || ! grep -q "sshd_config.d" "$c" 2>/dev/null; then echo forwarding=unsupported; exit 0; fi
 '
-	_fw_priv='if [ "$(id -u)" = "0" ]; then _fw_as=; elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then _fw_as=sudo; else echo forwarding=denied; exit 0; fi
+	_fw_priv='if [ "$(id -u)" = "0" ]; then _fw_as=; elif command -v sudo >/dev/null 2>&1; then _fw_as="sudo -n"; else echo forwarding=denied; exit 0; fi
 '
 	_fw_reload='if command -v systemctl >/dev/null 2>&1; then
 	$_fw_as systemctl reload ssh >/dev/null 2>&1 || $_fw_as systemctl reload sshd >/dev/null 2>&1
