@@ -167,26 +167,50 @@ machine: Windows, Linux, macOS or OpenWrt, one at a time.
    every later connection must match it exactly. A changed fingerprint refuses
    the connection and reports the value it actually found.
 3. Only then do the four buttons become usable. The command a click sends is
-   chosen by **Remote platform** in *Advanced settings*: Linux runs
-   `systemctl <op> <service>` and OpenWrt runs `/etc/init.d/<service> <op>`.
-   Windows runs one PowerShell line that asks the machine which it has: a
-   service of that name gets `Start-Service` / `Stop-Service` /
-   `Restart-Service`; a machine with no such service — which is what
-   install.ps1 leaves — gets the upstream install's own server instead, started
-   hidden with `fcc-server` and stopped through its process list, because the
-   installer registers no Windows service. A service name may contain only
-   letters, digits and `.` `-` `_`.
+   chosen by **Remote platform** in *Advanced settings*; on Linux and OpenWrt it
+   first asks whether that machine has a service, and uses its own launcher when
+   it does not:
 
-A **Linux, macOS or Windows machine carrying only the upstream install** has no
-service unit and no `fcc-env`: there is nothing there to start or stop, so the
-four buttons report the server's process instead of guessing a command — always
-on macOS, on Linux when `systemctl` has no `fcc.service`, and on Windows when
-there is no service of the configured name. The **Web Console** is unaffected:
-in LAN mode it asks that machine's own shell — `sh` on Linux and macOS,
-PowerShell on Windows, with the directories the installer wrote added to PATH
-first — lists its agents and can start them there. The server state is asked of
-the service manager first and, when there is no such unit or service, read from
-the process list, so a hand-started server is not reported as stopped.
+   - **Linux**: `systemctl cat <service>.service` — when the unit is there,
+     `systemctl <op>`; when it is not, which is what an upstream
+     `uv tool install` leaves behind, the launcher: `fcc-server` is started in
+     the background with its output appended to `~/.fcc/server.log`, and stopped
+     by finding it in the process list.
+   - **OpenWrt**: `/etc/init.d/<service>` when it is there, the launcher when it
+     is not.
+   - **macOS**: always the launcher (the upstream install registers no launchd
+     job).
+   - **Windows**: one PowerShell line that asks the machine whether it has a
+     service of that name: if it does, `Start-Service` / `Stop-Service` /
+     `Restart-Service`; if it does not — which is what install.ps1 leaves — the
+     upstream install's own server, started hidden with `fcc-server` and
+     stopped through its process list, because the installer registers no
+     Windows service.
+
+   A service name may contain only letters, digits and `.` `-` `_`.
+
+The launcher route needs `pgrep` on that machine (Linux, macOS and OpenWrt have
+it by default), because "did it come up" and "did it stop" are questions for the
+process list. A failure names the one that happened: no FCC Server installed on
+that machine is reported as "install it first"; a server that was started but
+did not come up has the location of `~/.fcc/server.log` written out; no `pgrep`
+is said plainly, rather than the buttons promising more than they do. The
+**Web Console** is unaffected: in LAN mode it asks that machine's own shell —
+`sh` on Linux and macOS, PowerShell on Windows, with the directories the
+installer wrote added to PATH first — lists its agents and can start them there.
+The server state is asked of the service manager first and, when there is no
+such unit or service, read from the process list, so a hand-started server is
+not reported as stopped.
+
+While the server is running the LAN panel shows the same six lines as
+`[This router]`: running, version, process ID, uptime, memory (RSS) and
+listening on. A machine carrying this package answers with its own `status.sh`;
+a machine carrying only the upstream runtime — Linux, macOS and OpenWrt have no
+`status.sh` — is asked the same questions of its own process list and launcher
+instead: the PID, memory and uptime come from the process, the listening address
+from its listening socket in `ss`, `lsof` or `netstat`, and the version from
+`fcc-server --version` (upstream documents running it as safe). Whatever cannot
+be read shows `—` rather than a guess.
 
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.
@@ -196,7 +220,30 @@ The remote FCC Admin is loopback-only too, so **Open FCC Admin** does not open
 forward, `ssh -N -L 127.0.0.1:18082:127.0.0.1:<admin-port>`, and hands the
 request to this end of it: the remote server sees a loopback peer, while the
 browser's access still goes through LuCI's own login. The tunnel is opened when
-Admin is first reached and closed when LAN mode is left.
+Admin is first reached and closed when LAN mode is left. It needs that machine's
+sshd to allow **local** forwarding (`AllowTcpForwarding`, `yes` by default;
+`local` for local only). On a **Linux** machine the buttons arrange that
+themselves, so nobody has to edit a configuration file by hand: **Start** first
+writes `/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf` (a single line,
+`AllowTcpForwarding local`), validates it with `sshd -t`, reloads sshd, and only
+then starts the server; **Stop** removes the file and reloads only after the
+server has really stopped; **Restart** deletes it, writes it again and then
+restarts the server. The file's name sorts before the other
+`sshd_config.d/*.conf`, and sshd keeps the **first** value it meets, so the file
+takes effect even when an `AllowTcpForwarding no` was already there — that file
+itself is left untouched. Writing to `/etc/ssh` needs root: an account that is
+root writes directly, any other account goes through `sudo -n` (no blanket
+passwordless sudo is needed — a `sudoers` rule allowing just `mkdir`, `tee`,
+`sshd -t` and the reload is enough). When neither works the buttons still start
+and stop the server and show the outcome of this step as one sentence —
+permission denied, a file of that name this package did not write, a
+configuration `sshd -t` rejected (rolled back), and a failed reload each have
+their own wording, and none of them counts as a failed start or stop. macOS and
+OpenWrt do not read that directory, so nothing is changed on those machines.
+
+When forwarding is switched off and cannot be changed from here, Open FCC Admin
+returns a 502 and the page says that machine's sshd refused the forward and
+which setting to change, rather than only `Connection reset by peer`.
 
 The connection needs an OpenSSH client **on the router**; the client on the
 remote machine is not used. Dropbear also answers as `/usr/bin/ssh` but does not

@@ -165,7 +165,8 @@ shell——Linux 和 macOS 是 `sh`，Windows 是 PowerShell，都先把安装�
 **停止** 在服务器确实停掉之后才删掉这个文件并重载；**重启** 先删后写，再重启服务器。
 文件名排在其它 `sshd_config.d/*.conf` 之前，而 sshd 采用它读到的**第一个**值，所以即便
 那里早有一份 `AllowTcpForwarding no`，这个文件也能生效，那份文件本身保持原样。写入
-`/etc/ssh` 需要 root：账户是 root 就直接写，否则用 `sudo -n`；两者都不行时按钮照常启停
+`/etc/ssh` 需要 root：账户是 root 就直接写，否则用 `sudo -n`（不需要整权的免密 sudo，
+`sudoers` 里只放行 `mkdir`、`tee`、`sshd -t` 和重载这几条命令就够）；两者都不行时按钮照常启停
 服务器，只把这一步的结果作为一句提醒显示出来——无权修改、同名文件不是本包写的、
 `sshd -t` 拒绝了这份配置（已回滚）、重载失败，各有各的说法，都不算启动或停止失败。
 macOS 和 OpenWrt 的 sshd 不读这个目录，这两类机器上不做任何改动。
