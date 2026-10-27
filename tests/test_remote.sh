@@ -96,6 +96,14 @@ printf 'ARG %s\n' "$@" >> "$SSH_LOG"
 # state probe's fixture can claim it.
 for last in "$@"; do :; done
 case "${last:-}" in
+	# The sshd drop-in a Linux start, stop or restart carries is its own
+	# connection, and it is the only command that names the configuration file.
+	# Without a fixture it answers nothing, which reads as "no word came back".
+	*sshd_config*)
+		if [ -n "${SSH_FW_OUT+x}" ]; then
+			printf '%s\n' "$SSH_FW_OUT"
+			exit "${SSH_FW_EXIT:-0}"
+		fi ;;
 	*status.sh*)
 		if [ -n "${SSH_DETAIL_OUT+x}" ]; then
 			printf '%s\n' "$SSH_DETAIL_OUT"
@@ -253,6 +261,14 @@ ssh_command() {
 		}
 		END { if (n == want && cmd != "") print cmd }
 	' "$TMP/ssh.log"
+}
+
+# The remote command of the last ssh call. An operation reaches the service
+# command last — a Linux start, stop or restart sends the sshd drop-in first —
+# so this is the one assertion that does not depend on how many calls came
+# before it.
+ssh_last_command() {
+	ssh_command "$(awk '/^CALL$/ { n++ } END { print n + 0 }' "$TMP/ssh.log" 2>/dev/null)"
 }
 
 # A key pair the fake ssh-keygen agrees is a pair: "PRIVATE KEY" parses, and
@@ -535,6 +551,8 @@ test_stop_is_allowed_outside_lan_mode() {
 	out="$(run_remote control stop)" || rc=$?
 	assert_eq "0" "$rc" "a stop is accepted while the target is this router"
 	assert_contains "$out" '"ok":true' "and it reports what the remote said"
+	# The stop itself is the first connection on Linux; the sshd drop-in it
+	# leaves behind a stopped server follows it.
 	assert_contains "$(ssh_command 1)" 'then systemctl stop fcc' \
 		"the command is the same preset a LAN stop sends"
 	drop_sandbox
@@ -882,18 +900,21 @@ test_control_uses_the_linux_preset() {
 	ready_lan
 	out="$(run_remote control restart)"
 	assert_contains "$out" '"ok":true' "the operation reports success"
+	# Calls one and two are the sshd drop-in a restart takes away and puts back;
+	# the service command is the third.
+	_cmd="$(ssh_command 3)"
 	# The unit is looked for first, in the same connection: on a machine that
 	# carries only the upstream install there is none, and starting the
 	# launcher is what a person would do there by hand.
-	assert_contains "$(ssh_command 1)" 'systemctl cat fcc.service' \
+	assert_contains "$_cmd" 'systemctl cat fcc.service' \
 		"the unit is looked for before it is used"
-	assert_contains "$(ssh_command 1)" 'then systemctl restart fcc' \
+	assert_contains "$_cmd" 'then systemctl restart fcc' \
 		"and systemd takes systemctl <op> <service> when it exists"
-	assert_contains "$(ssh_command 1)" 'else' \
+	assert_contains "$_cmd" 'else' \
 		"with the launcher as the alternative in the same command"
-	assert_contains "$(ssh_command 1)" 'nohup "$s"' \
+	assert_contains "$_cmd" 'nohup "$s"' \
 		"which is started detached"
-	assert_not_contains "$(ssh_command 1)" 'fcc-server' \
+	assert_not_contains "$_cmd" 'fcc-server' \
 		"and the launcher name is never spelled out in the script"
 	drop_sandbox
 }
@@ -909,6 +930,143 @@ test_control_uses_the_openwrt_preset() {
 		"and its init script is run directly when it does"
 	assert_contains "$(ssh_command 1)" 'kill $_bcs_p' \
 		"with the launcher as the alternative"
+	drop_sandbox
+}
+
+# ---------------------------------------------------------------------------
+# The sshd setting the Admin tunnel needs
+# ---------------------------------------------------------------------------
+#
+# "Open FCC Admin" is an ssh -L forward, so that machine's sshd has to allow
+# local forwarding. The button that starts the server is where the requirement
+# becomes visible, so it is the button that meets it: start puts a drop-in in
+# place before the server is started, stop takes it away again, and a restart
+# does both in that order. None of it applies outside Linux, where sshd_config.d
+# is not a thing.
+
+test_control_on_linux_puts_the_tunnel_setting_in_place_on_start() {
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=on' run_remote control start)"
+	assert_contains "$out" '"ok":true' "the start is made"
+	assert_contains "$out" '"forwarding":"on"' \
+		"and what became of the setting is reported beside the result"
+	_fw="$(ssh_command 1)"
+	assert_contains "$_fw" '/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf' \
+		"the drop-in is named"
+	assert_contains "$_fw" 'AllowTcpForwarding local' \
+		"and it carries the one setting the tunnel needs"
+	assert_contains "$_fw" 'sshd -t' \
+		"the configuration is validated before sshd is reloaded"
+	# The same hazard as the launcher scripts: sshd hands this whole script to
+	# sh as one argv word, so a literal launcher name in it would be matched by
+	# the process-list probes and by a stop.
+	assert_not_contains "$_fw" 'fcc-server' \
+		"and the launcher's name is not spelled out in a script run over there"
+	assert_contains "$(ssh_command 2)" 'then systemctl start fcc' \
+		"the server itself is started after that"
+	drop_sandbox
+}
+
+test_stop_takes_the_tunnel_setting_away() {
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=off' run_remote control stop)"
+	assert_contains "$out" '"ok":true' "the stop is made"
+	assert_contains "$out" '"forwarding":"off"' "the setting went with it"
+	# The server goes first: a stop that did not happen must leave the route to
+	# the Admin page alone, because the server it leads to is still running.
+	assert_contains "$(ssh_command 1)" 'then systemctl stop fcc' "the server is stopped"
+	_fw="$(ssh_command 2)"
+	assert_contains "$_fw" 'rm -f "$f"' "and then the drop-in is removed"
+	assert_contains "$_fw" 'forwarding=absent' \
+		"with a machine that never had one saying so instead of failing"
+	drop_sandbox
+}
+
+test_a_stop_that_did_not_happen_leaves_the_tunnel_setting_alone() {
+	fresh
+	ready_lan
+	out="$(SSH_OUT='Failed to stop fcc.service: Interactive authentication required.' \
+		SSH_EXIT=1 SSH_UNIT_OUT='fcc.service enabled enabled' \
+		run_remote control stop)" || true
+	assert_contains "$out" '"ok":false' "the stop did not happen"
+	assert_contains "$out" '"forwarding":null' "so the setting was not touched"
+	assert_not_contains "$(cat "$TMP/ssh.log")" 'sshd_config' \
+		"and that machine was asked nothing about its SSH daemon"
+	drop_sandbox
+}
+
+test_restart_takes_the_tunnel_setting_away_and_puts_it_back() {
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=on' run_remote control restart)"
+	assert_contains "$out" '"forwarding":"on"' \
+		"the setting is reported in its final state"
+	assert_contains "$(ssh_command 1)" 'rm -f "$f"' \
+		"a restart removes it first"
+	assert_contains "$(ssh_command 2)" 'AllowTcpForwarding local' \
+		"then writes it again"
+	assert_contains "$(ssh_command 3)" 'then systemctl restart fcc' \
+		"and the server is restarted last"
+	drop_sandbox
+}
+
+test_a_tunnel_setting_already_in_place_needs_no_privilege() {
+	# The file's state is read before the account is asked whether it may write
+	# one: on a machine where the drop-in is already right, starting the server
+	# must not need root at all — which is the ordinary case after the first
+	# start, and the only case that works for an account without sudo.
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=already' run_remote control start)"
+	assert_contains "$out" '"forwarding":"already"' "the answer is passed through"
+	_fw="$(ssh_command 1)"
+	_al="$(printf '%s\n' "$_fw" | grep -n 'forwarding=already' | head -n 1 | cut -d: -f1)"
+	_pr="$(printf '%s\n' "$_fw" | grep -n 'id -u' | head -n 1 | cut -d: -f1)"
+	assert_eq "1" "$([ -n "$_al" ] && [ -n "$_pr" ] && [ "$_al" -lt "$_pr" ] && echo 1 || echo 0)" \
+		"and the file is looked at before any privilege is asked for"
+	drop_sandbox
+}
+
+test_a_tunnel_setting_that_cannot_be_changed_does_not_fail_the_start() {
+	# The SSH daemon over there is a separate thing from the FCC server: an
+	# account that may not write /etc/ssh still gets its server started, and the
+	# page gets a word it can turn into one sentence about what to do instead.
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=denied' run_remote control start)"
+	assert_contains "$out" '"ok":true' "the start still happened"
+	assert_contains "$out" '"forwarding":"denied"' "and the refusal is reported"
+
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=foreign' run_remote control start)"
+	assert_contains "$out" '"ok":true' "a file of that name that is not ours"
+	assert_contains "$out" '"forwarding":"foreign"' \
+		"is reported and left alone rather than overwritten"
+	drop_sandbox
+}
+
+test_the_tunnel_setting_is_left_alone_outside_linux() {
+	# macOS reads no sshd_config.d directory, and an OpenWrt machine's SSH
+	# server is dropbear: there is nothing there for this file to say, so
+	# neither is sent looking for it.
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	out="$(run_remote control start)"
+	assert_contains "$out" '"forwarding":null' "macOS reports no setting"
+	assert_not_contains "$(ssh_command 1)" 'sshd_config' \
+		"and is asked nothing about one"
+
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(run_remote control stop)"
+	assert_contains "$out" '"forwarding":null' "OpenWrt reports no setting"
+	assert_not_contains "$(ssh_command 1)" 'sshd_config' \
+		"and is asked nothing about one either"
 	drop_sandbox
 }
 
@@ -1644,11 +1802,12 @@ test_control_never_sends_systemctl_to_a_bare_machine() {
 	assert_contains "$out" '"ok":false' "the start did not happen"
 	assert_contains "$out" '"reason":"no-launcher"' \
 		"and the page is told there is no launcher to start"
-	assert_contains "$(ssh_command 1)" 'systemctl cat fcc.service' \
+	_cmd="$(ssh_command 2)"
+	assert_contains "$_cmd" 'systemctl cat fcc.service' \
 		"the unit is asked about without privilege"
-	assert_contains "$(ssh_command 1)" 'else' \
+	assert_contains "$_cmd" 'else' \
 		"and the launcher, not systemctl, is what a machine without it runs"
-	assert_contains "$(ssh_command 1)" 'nohup "$s"' \
+	assert_contains "$_cmd" 'nohup "$s"' \
 		"which is started the way a person would start it"
 	drop_sandbox
 }
@@ -1701,7 +1860,7 @@ test_every_platform_can_start_a_machine_without_a_service() {
 		ready_lan
 		uci_set remote_platform "$_p"
 		run_remote control start >/dev/null 2>&1 || true
-		cmd="$(ssh_command 1)"
+		cmd="$(ssh_last_command)"
 		case "$_p" in
 			windows)
 				assert_contains "$cmd" 'Start-Process -WindowStyle Hidden' \
@@ -1721,6 +1880,9 @@ test_the_launcher_scripts_never_spell_their_own_name() {
 	# shell instead of the server. The name is assembled at run time and the
 	# pgrep pattern keeps its brackets, so the literal never appears. (Windows
 	# matches on process names, not command lines, so it is not in this list.)
+	# The whole log is checked rather than one call: every word sent to that
+	# machine is a candidate, including the sshd drop-in a Linux operation
+	# carries.
 	for _p in linux openwrt macos; do
 		fresh
 		ready_lan
@@ -1728,7 +1890,7 @@ test_the_launcher_scripts_never_spell_their_own_name() {
 		for _op in start stop restart; do
 			: > "$TMP/ssh.log"
 			run_remote control "$_op" >/dev/null 2>&1 || true
-			assert_not_contains "$(ssh_command 1)" 'fcc-server' \
+			assert_not_contains "$(cat "$TMP/ssh.log")" 'fcc-server' \
 				"$_p $_op names the launcher without spelling it out"
 		done
 	done

@@ -159,8 +159,19 @@ shell——Linux 和 macOS 是 `sh`，Windows 是 PowerShell，都先把安装�
 `ssh -N -L 127.0.0.1:18082:127.0.0.1:<Admin 端口>`，再把请求交给隧道这一端——远程看到的是
 回环对端，浏览器访问仍经过 LuCI 登录。隧道在第一次打开 Admin 时建立，离开局域网模式时关闭。
 这要求那台机器的 sshd 允许**本地**转发（`AllowTcpForwarding`，默认 `yes`；只开本地用
-`local`）。它被关成 `no` 时，打开 Admin 会得到 502，页面直接说明是那台机器的 sshd 拒绝了
-转发并指出要改的设置，而不是只报一句 `Connection reset by peer`。
+`local`）。Linux 机器上这件事由按钮自己完成，不用手工改配置：**启动** 先在那里写入
+`/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf`（内容只有一行
+`AllowTcpForwarding local`），再用 `sshd -t` 校验、通过后重载 sshd，然后才启动服务器；
+**停止** 删掉这个文件再重载；**重启** 先删后写。文件名排在其它 `sshd_config.d/*.conf`
+之前，而 sshd 采用它读到的**第一个**值，所以即便那里早有一份 `AllowTcpForwarding no`，
+这个文件也能生效，那份文件本身保持原样。写入 `/etc/ssh` 需要 root：账户是 root 就直接写，
+否则用 `sudo -n`；两者都不行时按钮照常启停服务器，只把这一步的结果作为一句提醒显示出来
+——无权修改、同名文件不是本包写的、`sshd -t` 拒绝了这份配置（已回滚）、重载失败，各有
+各的说法，都不算启动或停止失败。macOS 和 OpenWrt 的 sshd 不读这个目录，这两类机器上
+不做任何改动。
+
+转发被关成 `no` 又没法从这里改时，打开 Admin 会得到 502，页面直接说明是那台机器的 sshd
+拒绝了转发并指出要改的设置，而不是只报一句 `Connection reset by peer`。
 
 连接需要**路由器上**有 OpenSSH 客户端（远程机器上的不算）。Dropbear 也提供 `/usr/bin/ssh`，
 但不支持这里用到的选项，页面会直接说明。缺少时按提示安装：

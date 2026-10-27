@@ -21,6 +21,12 @@ msgstr ""
 msgid "%d agent session(s) are running and will be left as they are."
 msgstr ""
 
+msgid "A file named 00-fcc-local-forwarding.conf on the LAN machine does not belong to FCC and was left as it is."
+msgstr ""
+
+msgid "A file named 00-fcc-local-forwarding.conf was already on the LAN machine and was left as it is. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration."
+msgstr ""
+
 msgid "A job is still running. Wait for it to finish before clearing the record."
 msgstr ""
 
@@ -534,6 +540,15 @@ msgstr ""
 msgid "The LAN machine refused the SSH key. Add the public key shown here to that account’s authorized_keys."
 msgstr ""
 
+msgid "The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator."
+msgstr ""
+
+msgid "The LAN machine’s SSH daemon rejected the forwarding setting, so it was taken away again. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration."
+msgstr ""
+
+msgid "The LAN machine’s SSH service did not reload, so the change to its forwarding setting has not taken effect."
+msgstr ""
+
 msgid "The LAN machine’s host key has not been trusted yet. Trust it in Configuration → FCC Server."
 msgstr ""
 
@@ -592,6 +607,9 @@ msgid "The existing key is shown below."
 msgstr ""
 
 msgid "The firewall rule could not be added — the server is bound to every interface without one."
+msgstr ""
+
+msgid "The forwarding file could not be removed from the LAN machine: this account is not allowed to change its SSH configuration. It was left in place."
 msgstr ""
 
 msgid "The host key could not be trusted."

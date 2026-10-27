@@ -354,6 +354,46 @@
 			FCC._('The LAN machine’s host key no longer matches the one pinned on this router. Forget the pinned key and trust it again.')
 	};
 
+	/* Start, stop and restart also put the sshd setting the Admin tunnel needs
+	 * in place on that machine, or take it away again (remote.sh's
+	 * fcc_remote_forwarding_script). The four ordinary answers — on, already,
+	 * off, absent — are the operation working, and say nothing; these are the
+	 * ones that leave the machine as it was. None of them is a failed start or
+	 * stop: the FCC server over there is a separate thing from its SSH daemon,
+	 * so the page warns and the state line still shows what the server does.
+	 *
+	 * "unsupported" is silence too: a machine whose sshd_config does not read a
+	 * drop-in directory may still allow forwarding, and the page has no way to
+	 * tell. If the tunnel is refused, the Admin page names the setting. */
+	var FORWARDING_TEXT = {
+		'denied':
+			FCC._('The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator.'),
+		'foreign':
+			FCC._('A file named 00-fcc-local-forwarding.conf was already on the LAN machine and was left as it is. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration.'),
+		'invalid':
+			FCC._('The LAN machine’s SSH daemon rejected the forwarding setting, so it was taken away again. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration.'),
+		'reload-failed':
+			FCC._('The LAN machine’s SSH service did not reload, so the change to its forwarding setting has not taken effect.')
+	};
+
+	/* Stopping takes the same file away, so "denied" there means it is still
+	 * in place — a different sentence, and one that does not talk about a
+	 * tunnel nobody is opening. */
+	var FORWARDING_STOP_TEXT = {
+		'denied':
+			FCC._('The forwarding file could not be removed from the LAN machine: this account is not allowed to change its SSH configuration. It was left in place.'),
+		'foreign':
+			FCC._('A file named 00-fcc-local-forwarding.conf on the LAN machine does not belong to FCC and was left as it is.'),
+		'reload-failed':
+			FCC._('The LAN machine’s SSH service did not reload, so the change to its forwarding setting has not taken effect.')
+	};
+
+	function forwardingWarning(d, op) {
+		if (!d || !d.forwarding) { return ''; }
+		var map = (op === 'stop') ? FORWARDING_STOP_TEXT : FORWARDING_TEXT;
+		return map[d.forwarding] || '';
+	}
+
 	function remoteErrorText(text) {
 		var t = String(text == null ? '' : text)
 			.replace(/\s+/g, ' ')
@@ -936,11 +976,18 @@
 		}
 		FCC.notice(remoteStatus(), '', '');
 		FCC.api('remote_control', { op: op }, { method: 'POST' }).then(function (d) {
-			if (d.ok) {
-				FCC.notice(remoteStatus(), 'ok', FCC._('Done.'));
-			} else {
+			/* The sshd setting the Admin tunnel needs is arranged by this same
+			 * click. A failed operation keeps the page's one line — that is the
+			 * thing to retry — and when it worked but the setting did not, the
+			 * warning takes the place of "Done." so it is not read past. */
+			var warn = forwardingWarning(d, op);
+			if (!d.ok) {
 				FCC.notice(remoteStatus(), 'fail',
 					remoteFailure(d, FCC._('The operation failed.')));
+			} else if (warn) {
+				FCC.notice(remoteStatus(), 'warn', warn);
+			} else {
+				FCC.notice(remoteStatus(), 'ok', FCC._('Done.'));
 			}
 			/* Ask again rather than infer from the verb: the state line is the
 			 * one place that says what the remote machine is doing, and a stop

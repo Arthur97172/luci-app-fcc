@@ -848,6 +848,92 @@ fcc_remote_bare_details_cmd() {
 	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_details_script)")"
 }
 
+# ---------------------------------------------------------------------------
+# The sshd drop-in the Admin tunnel needs
+# ---------------------------------------------------------------------------
+#
+# "Open FCC Admin" in LAN mode is an ssh -L forward, so that machine's sshd has
+# to allow local forwarding. Its own configuration may say otherwise — a
+# hardening file that was there before this package — and then the tunnel is
+# refused and the page can only explain why. The button that starts the server
+# is where the requirement becomes visible, so it is the button that can meet
+# it: starting makes the drop-in, stopping takes it away again.
+#
+# The file is ours by name and is never used to override a different setting:
+# an existing file that does not say "local" is left alone and reported, and a
+# configuration sshd itself rejects is rolled back rather than reloaded. Any
+# failure here is reported as a word and never fails the start or stop — the
+# server on that machine is a separate thing from its SSH daemon.
+#
+# This needs root on the far side: /etc/ssh is root's. The account is asked to
+# write directly when it is root and through `sudo -n` otherwise; where neither
+# is possible the answer is "denied", which names the one manual step left.
+fcc_remote_forwarding_script() {
+	# fcc_remote_forwarding_script <on|off>
+	_fw_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; c=/etc/ssh/sshd_config; f=/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf; "
+	_fw_state='if [ ! -r "$c" ] || ! grep -q "sshd_config.d" "$c" 2>/dev/null; then echo forwarding=unsupported; exit 0; fi
+'
+	_fw_priv='if [ "$(id -u)" = "0" ]; then _fw_as=; elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then _fw_as=sudo; else echo forwarding=denied; exit 0; fi
+'
+	_fw_reload='if command -v systemctl >/dev/null 2>&1; then
+	$_fw_as systemctl reload ssh >/dev/null 2>&1 || $_fw_as systemctl reload sshd >/dev/null 2>&1
+else
+	$_fw_as /etc/init.d/ssh reload >/dev/null 2>&1 || $_fw_as /etc/init.d/sshd reload >/dev/null 2>&1
+fi
+'
+	case "$1" in
+	on)
+		# The state of the file is read before any privilege is asked for: on a
+		# machine where it is already right, starting the server must not need
+		# root at all.
+		printf '%s%s%s%s%s' "$_fw_head" "$_fw_state" '
+if [ -f "$f" ]; then
+	if grep -q "^AllowTcpForwarding local" "$f" 2>/dev/null; then echo forwarding=already; exit 0; fi
+	echo forwarding=foreign; exit 0
+fi
+' "$_fw_priv" '
+if ! $_fw_as mkdir -p "${f%/*}" >/dev/null 2>&1; then echo forwarding=denied; exit 0; fi
+if ! $_fw_as tee "$f" >/dev/null 2>&1 <<FCCEOF
+# Managed by luci-app-fcc on the router that controls this machine: the FCC
+# Admin page is opened through an SSH tunnel, which needs local forwarding
+# allowed. The file is removed again when that router stops the server here.
+AllowTcpForwarding local
+FCCEOF
+then echo forwarding=denied; exit 0; fi
+# A configuration sshd rejects must never be reloaded, and the file that caused
+# it must not be left behind: the next reload from anyone else would apply it.
+if ! $_fw_as sshd -t >/dev/null 2>&1; then
+	$_fw_as rm -f "$f" >/dev/null 2>&1
+	echo forwarding=invalid; exit 0
+fi
+'"$_fw_reload"'if [ $? -ne 0 ]; then
+	$_fw_as rm -f "$f" >/dev/null 2>&1
+	echo forwarding=reload-failed; exit 0
+fi
+echo forwarding=on' ;;
+	off)
+		printf '%s%s%s%s%s' "$_fw_head" "$_fw_state" '
+if [ ! -f "$f" ]; then echo forwarding=absent; exit 0; fi
+if ! grep -q "^AllowTcpForwarding local" "$f" 2>/dev/null; then echo forwarding=foreign; exit 0; fi
+' "$_fw_priv" '
+if ! $_fw_as rm -f "$f" >/dev/null 2>&1; then echo forwarding=denied; exit 0; fi
+'"$_fw_reload"'if [ $? -ne 0 ]; then echo forwarding=reload-failed; exit 0; fi
+echo forwarding=off' ;;
+	esac
+}
+
+fcc_remote_forwarding_cmd() {
+	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_forwarding_script "$1")")"
+}
+
+fcc_remote_forwarding_word() {
+	# One SSH connection, one word back: on, already, off, absent, denied,
+	# foreign, invalid, reload-failed or unsupported.
+	_fw_out="$(fcc_remote_ssh "$(fcc_remote_forwarding_cmd "$1")" 2>/dev/null \
+		| fcc_remote_output_filter | tr -d '\r')"
+	printf '%s\n' "$_fw_out" | sed -n 's/^forwarding=//p' | head -n 1
+}
+
 # Start, stop and restart the launcher on a machine that has no unit.
 #
 # The upstream install writes fcc-server into the account's bin directory and
@@ -1379,6 +1465,31 @@ fcc_remote_control() {
 			fcc_remote_error "invalid platform"; return 1 ;;
 	esac
 
+	# The Admin tunnel is an ssh -L forward, so that machine's sshd has to allow
+	# one, and the button that starts the server is where that requirement
+	# becomes real: start puts the drop-in in place, stop takes it away again,
+	# restart does both in that order — the sequence the user of this page would
+	# otherwise have to carry out by hand on the other machine. Only Linux reads
+	# the sshd_config.d directory this belongs in, so the other platforms are
+	# left untouched. The word that comes back is reported, never acted on: the
+	# machine's SSH daemon is a separate thing from its FCC server, and a
+	# "denied" here must not turn a working start into a failed one.
+	#
+	# Start and restart arrange it first, so the route to the Admin page is
+	# there by the time the server is up. Stop takes it away afterwards, and
+	# only when the server did stop: a stop this account could not carry out
+	# leaves a server running, and taking the tunnel's route away then would
+	# break Admin for a server that is still there.
+	_cc_fw=""
+	if [ "$_cc_platform" = "linux" ]; then
+		case "$_cc_op" in
+			start) _cc_fw="$(fcc_remote_forwarding_word on)" ;;
+			restart)
+				_cc_fw="$(fcc_remote_forwarding_word off)"
+				_cc_fw="$(fcc_remote_forwarding_word on)" ;;
+		esac
+	fi
+
 	_cc_out="$(fcc_remote_ssh "$_cc_remote")"
 	_cc_code=$?
 	if [ "$_cc_code" -eq 0 ]; then
@@ -1392,10 +1503,15 @@ fcc_remote_control() {
 		# process list.
 		_cc_reason="$(fcc_remote_reason "$_cc_out" "$_cc_service")"
 	fi
-	printf '{"ok":%s,"op":%s,"reason":%s,"output":%s,"exit":%s}\n' \
+	if [ "$_cc_platform" = "linux" ] && [ "$_cc_op" = "stop" ] \
+		&& [ "$_cc_code" -eq 0 ]; then
+		_cc_fw="$(fcc_remote_forwarding_word off)"
+	fi
+	printf '{"ok":%s,"op":%s,"reason":%s,"forwarding":%s,"output":%s,"exit":%s}\n' \
 		"$_cc_ok" \
 		"$(fcc_json_str "$_cc_op")" \
 		"$(fcc_json_str "$_cc_reason")" \
+		"$(fcc_json_str_or_null "$_cc_fw")" \
 		"$(fcc_json_str "$(printf '%s' "$_cc_out" | fcc_remote_output_filter | tr '\n' ' ' | sed 's/  */ /g')")" \
 		"$_cc_code"
 	# The JSON document already says whether the operation worked; a failing
