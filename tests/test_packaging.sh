@@ -1572,6 +1572,15 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"a machine without systemctl is explained, not quoted"
 	assert_contains "$(cat "$_ts_js")" 'remoteOutput' \
 		"ssh's own warnings are filtered out of the diagnostics"
+
+	# A start that failed is the one mapped reason whose sentence points at a
+	# log, so the log's last lines — already collected by the check over there —
+	# are shown with it instead of being thrown away by the mapping.
+	_ts_fail="$(sed -n '/function remoteFailure/,/function remoteCaught/p' "$_ts_js")"
+	assert_contains "$_ts_fail" "d.reason === 'start-failed'" \
+		"a failed start keeps the log tail the check brought back"
+	assert_contains "$_ts_fail" 'the FCC Server did not start' \
+		"without repeating the verdict line the tail opens with"
 	assert_contains "$(cat "$_ts_remote")" 'fcc_remote_output_filter' \
 		"the script drops them before anything is relayed"
 	assert_contains "$(cat "$_ts_remote")" 'fcc_remote_reason' \

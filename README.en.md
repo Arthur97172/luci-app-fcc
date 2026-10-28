@@ -203,8 +203,11 @@ such unit or service, read from the process list, so a hand-started server is
 not reported as stopped. On OpenWrt a start run through the init script is then
 watched for up to fifteen seconds: a start that never puts `fcc-server` in that
 machine's process list counts as failed, and the last lines of
-`logs/fcc-server.log` under the install path are shown with it. A machine
-without `pgrep` skips that check rather than passing on a guess.
+`logs/fcc-server.log` under the install path are shown with it. A machine with
+no FCC Server installed at all is told apart from one whose server died: the
+page says it is not installed and to install it there, rather than pointing at
+a log that has never been written. A machine without `pgrep` skips that check
+rather than passing on a guess.
 
 While the server is running the LAN panel shows the same six lines as
 `[This router]`: running, version, process ID, uptime, memory (RSS) and

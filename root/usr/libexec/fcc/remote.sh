@@ -1251,9 +1251,17 @@ fcc_remote_openwrt_control_cmd() {
 	# the exit code alone would let this page say "Done." for a server that is
 	# not there. So the process list is asked the same question the launcher
 	# route asks, within the same 15 seconds, and a server that did not appear
-	# is reported with the tail of the package's log — where the init script's
-	# own "runtime not installed" line lands. Restart is verified the same way.
+	# is reported with the tail of the package's log — where a server that
+	# started and then died writes why. Restart is verified the same way.
 	# Stop is not: procd's stop is what the init script already waits on.
+	#
+	# A server that did not appear because the runtime is not installed there is
+	# said differently, the way the launcher route says it. The init script's
+	# "runtime not installed" line goes to syslog, which this connection cannot
+	# read, and the package's log does not exist yet because no server ever ran
+	# to write it — so the log tail would point at nothing. The install path is
+	# checked instead, and the page then offers the sentence that fits: install
+	# it there, then try again.
 	#
 	# The launcher's name is assembled at run time here as everywhere else. A
 	# plain "fcc-server" would sit on the command line of the shell running
@@ -1267,7 +1275,7 @@ fcc_remote_openwrt_control_cmd() {
 	case "$2" in
 		start|restart)
 			_oc_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; s=fcc; s=\${s}-server; log=\"\"; if command -v uci >/dev/null 2>&1; then r=\"\$(uci -q get fcc.main.install_path 2>/dev/null)\"; case \"\$r\" in /*) : ;; *) r=/opt ;; esac; case \"\$r\" in */fcc) : ;; *) r=\"\$r/fcc\" ;; esac; log=\"\$r/logs/\$s.log\"; fi; state() { if pgrep -f \"[f]cc-server\" 2>/dev/null | grep -vx \"\$\$\" | grep -q .; then echo server running; else echo server stopped; fi; }; "
-			_oc_tail='if ! command -v pgrep >/dev/null 2>&1; then exit 0; fi; _oc_i=0; while [ "$_oc_i" -lt 15 ]; do if [ "$(state)" = "server running" ]; then echo server running; exit 0; fi; sleep 1; _oc_i=$((_oc_i + 1)); done; echo "the FCC Server did not start"; [ -n "$log" ] && tail -n 5 "$log" 2>/dev/null; exit 1'
+			_oc_tail='if ! command -v pgrep >/dev/null 2>&1; then exit 0; fi; _oc_i=0; while [ "$_oc_i" -lt 15 ]; do if [ "$(state)" = "server running" ]; then echo server running; exit 0; fi; sleep 1; _oc_i=$((_oc_i + 1)); done; if [ -n "$r" ] && ! [ -x "$r/bin/$s" ] && ! [ -x "$r/runtime/bin/$s" ] && ! [ -x "$r/venv/bin/$s" ] && ! command -v "$s" >/dev/null 2>&1; then echo "the FCC Server is not installed on this machine"; exit 1; fi; echo "the FCC Server did not start"; [ -n "$log" ] && tail -n 5 "$log" 2>/dev/null; exit 1'
 			_oc_run="/etc/init.d/$1 $2; $_oc_head$_oc_tail" ;;
 		*)
 			_oc_run="/etc/init.d/$1 $2" ;;

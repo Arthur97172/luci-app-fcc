@@ -475,9 +475,26 @@
 	/* One sentence for a failed LAN operation. The reason, when the script sent
 	 * one, wins: it is the only case where the page can say what to do. The
 	 * script's own diagnostic follows in brackets only when nothing above
-	 * explained it, so the common failures carry no English at all. */
+	 * explained it, so the common failures carry no English at all.
+	 *
+	 * start-failed is the exception: its sentence names a log on that machine,
+	 * and the check that produced it already collected that log's last lines.
+	 * They are the answer — a Python traceback, a missing module — and nobody
+	 * should have to SSH in to read three lines the page is holding. The tail
+	 * is data, not wording, so it is shown as it came. */
 	function remoteFailure(d, fallback) {
 		if (d && d.reason && REMOTE_REASON_TEXT[d.reason]) {
+			if (d.reason === 'start-failed') {
+				/* The check's own verdict line is what matched the reason; the
+				 * log follows it. Dropping the verdict leaves the log alone. */
+				var tail = remoteOutput(String(d.output == null ? '' : d.output)
+					.split('\n')
+					.filter(function (line) {
+						return line.replace(/\s+/g, ' ').replace(/^ | $/g, '') !== 'the FCC Server did not start';
+					})
+					.join('\n'));
+				if (tail) { return REMOTE_REASON_TEXT[d.reason] + ' ' + tail; }
+			}
 			return REMOTE_REASON_TEXT[d.reason];
 		}
 		var text = remoteErrorText(d && d.error) || fallback;

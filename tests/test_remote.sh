@@ -1037,6 +1037,14 @@ test_control_checks_that_an_openwrt_start_really_started() {
 		"the same probe the launcher route uses"
 	assert_contains "$_oc_cmd" 'logs/$s.log' \
 		"the package's log is where the tail is taken from"
+	# A start that failed because nothing is installed there is not a start that
+	# failed: the log file does not exist yet, so the page must not send anyone
+	# to read it. The init script's own "runtime not installed" line goes to
+	# syslog, which this connection cannot read, so the install path is checked.
+	assert_contains "$_oc_cmd" 'the FCC Server is not installed on this machine' \
+		"a machine with no runtime is told apart from a server that died"
+	assert_contains "$_oc_cmd" 'bin/$s' \
+		"by looking for the launcher where the init script looks for it"
 	assert_not_contains "$_oc_cmd" 'fcc-server' \
 		"and the launcher's name is still never spelled out"
 
@@ -1046,6 +1054,11 @@ test_control_checks_that_an_openwrt_start_really_started() {
 		"a server that did not come up is reported as a failure"
 	assert_contains "$out" '"reason":"start-failed"' \
 		"with the reason the page turns into a sentence"
+
+	out="$(SSH_OUT='the FCC Server is not installed on this machine' SSH_EXIT=1 \
+		run_remote control start)" || true
+	assert_contains "$out" '"reason":"no-launcher"' \
+		"a missing runtime is the page's install-it-there sentence"
 
 	: > "$TMP/ssh.log"
 	run_remote control stop >/dev/null 2>&1 || true
