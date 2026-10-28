@@ -226,23 +226,49 @@ browser's access still goes through LuCI's own login. The tunnel is opened when
 Admin is first reached and closed when LAN mode is left. It needs that machine's
 sshd to allow **local** forwarding (`AllowTcpForwarding`, `yes` by default;
 `local` for local only). On a **Linux** machine the buttons arrange that
-themselves, so nobody has to edit a configuration file by hand: **Start** first
-writes `/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf` (a single line,
-`AllowTcpForwarding local`), validates it with `sshd -t`, reloads sshd, and only
-then starts the server; **Stop** removes the file and reloads only after the
-server has really stopped; **Restart** deletes it, writes it again and then
-restarts the server. The file's name sorts before the other
+themselves, and on most machines no configuration has to change at all:
+**Start** first works out, without root, the value that machine's sshd really
+applies — the main configuration and the `/etc/ssh/sshd_config.d/*.conf` files
+its `Include` lines splice in are readable by anyone, and they are scanned in
+sshd's own order, first match wins (`sshd -T` answers the same question but
+reads root-only host keys, so an ordinary account cannot run it). When the value
+is already `yes`, `all` or `local` — or nothing is written at all, since
+OpenSSH's default is `yes` — the tunnel opens as it is: no file is written, no
+privilege is asked for, and the page reports `allowed`.
+
+Only a machine that really blocks forwarding is changed: **Start** tries an
+installed root helper, `/usr/local/sbin/fcc-local-forwarding on`, first, and
+otherwise writes `/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf` (a single
+line, `AllowTcpForwarding local`); both paths validate with `sshd -t`, reload
+sshd, and only then start the server. **Stop** removes the file and reloads only
+after the server has really stopped; **Restart** deletes it, writes it again and
+then restarts the server. The file's name sorts before the other
 `sshd_config.d/*.conf`, and sshd keeps the **first** value it meets, so the file
 takes effect even when an `AllowTcpForwarding no` was already there — that file
-itself is left untouched. Writing to `/etc/ssh` needs root: an account that is
-root writes directly, any other account goes through `sudo -n` (no blanket
-passwordless sudo is needed — a `sudoers` rule allowing just `mkdir`, `tee`,
-`sshd -t` and the reload is enough). When neither works the buttons still start
-and stop the server and show the outcome of this step as one sentence —
-permission denied, a file of that name this package did not write, a
-configuration `sshd -t` rejected (rolled back), and a failed reload each have
-their own wording, and none of them counts as a failed start or stop. macOS and
-OpenWrt do not read that directory, so nothing is changed on those machines.
+itself is left untouched.
+
+Writing to `/etc/ssh` needs root: an account that is root writes directly, any
+other account goes through the helper when it is installed and `sudo -n`
+otherwise (no blanket passwordless sudo is needed — a `sudoers` rule allowing
+just `mkdir`, `tee`, `sshd -t` and the reload is enough). When none of that
+works the buttons still start and stop the server and show the outcome of this
+step as one sentence — permission denied, a file of that name this package did
+not write, a configuration `sshd -t` rejected (rolled back), and a failed reload
+each have their own wording, and none of them counts as a failed start or stop.
+macOS and OpenWrt do not read that directory, so nothing is changed on those
+machines.
+
+For a machine that does block forwarding and whose administrator does not want
+to hand that account `tee` into `/etc/ssh`, the page's **One-time setup on the
+LAN machine** gives a block to paste once: `sudo sh -s` as an administrator
+(`sh -s` where that machine logs in as root), which installs the helper and a
+`sudoers` rule allowing only `fcc-local-forwarding on` and
+`fcc-local-forwarding off`. The program accepts those two words and nothing
+else, so it can change this one setting and nothing more — a far smaller grant
+than a list of commands. How sshd is reloaded here (systemd unit, SysV script,
+`/etc/init.d`) lives in the helper, which is the only part that differs between
+distributions. The password is typed by that machine's administrator and is
+never stored or asked for by this package.
 
 When forwarding is switched off and cannot be changed from here, Open FCC Admin
 returns a 502 and the page says that machine's sshd refused the forward and

@@ -865,9 +865,20 @@ fcc_remote_bare_details_cmd() {
 # failure here is reported as a word and never fails the start or stop — the
 # server on that machine is a separate thing from its SSH daemon.
 #
-# This needs root on the far side: /etc/ssh is root's. The account writes
-# directly when it is root and through `sudo -n` otherwise; where neither works
-# the answer is "denied", which names the one manual step left.
+# Nothing is written until the machine is asked what it already allows. The
+# main sshd_config and the files its Include lines splice into it are world
+# readable, so the effective AllowTcpForwarding is worked out by the account
+# itself, without root and without a drop-in; `sshd -T` answers the same
+# question but cannot be run there, because it reads the root-only host keys.
+# Where the answer is "yes", "all" or "local" — and OpenSSH's default, with no
+# directive at all, is "yes" — the tunnel opens as it is and the word is
+# "allowed". On that machine, which is most of them, nothing needs root.
+#
+# Writing it needs root on the far side: /etc/ssh is root's. The account writes
+# directly when it is root, through a small root-owned helper when one has been
+# installed (fcc_remote_helper_document prints the block that installs it), and
+# through `sudo -n` otherwise; where none of those works the answer is "denied",
+# which names the one manual step left.
 #
 # There is deliberately no `sudo -n true` probe in front of this. An
 # administrator who allowed exactly the commands below — a narrowed sudoers
@@ -877,29 +888,105 @@ fcc_remote_bare_details_cmd() {
 # instead.
 fcc_remote_forwarding_script() {
 	# fcc_remote_forwarding_script <on|off>
-	_fw_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; c=/etc/ssh/sshd_config; f=/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf; "
-	_fw_state='if [ ! -r "$c" ] || ! grep -q "sshd_config.d" "$c" 2>/dev/null; then echo forwarding=unsupported; exit 0; fi
+	_fw_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; c=/etc/ssh/sshd_config; f=/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf; h=/usr/local/sbin/fcc-local-forwarding; "
+	# Whether anything has to be written at all: the first AllowTcpForwarding
+	# sshd itself would see, with every Include spliced in where it stands and
+	# the drop-in files read in lexical order, which is the order sshd reads
+	# them in. A Match block is treated as global here; that can only make the
+	# probe answer "allowed" for a machine whose setting is conditional, and
+	# such a machine is left alone — the tunnel's own refusal is what the Admin
+	# page names then.
+	#
+	# The words are read one line at a time with globbing off, because a line
+	# like "Include /etc/ssh/sshd_config.d/*.conf" has to reach the pattern
+	# matcher below with its asterisk intact.
+	_fw_need='_fw_v=; _fw_n=; _fw_nf=
+scan() {
+	[ -n "$_fw_v" ] && return 0
+	_fw_nf=$1
+	while IFS= read -r _fw_line || [ -n "$_fw_line" ]; do
+		[ -n "$_fw_v" ] && return 0
+		set -f
+		set -- $_fw_line
+		set +f
+		[ $# -ge 1 ] || continue
+		case "$1" in \#*) continue ;; esac
+		case "$1" in
+		Include)
+			shift
+			while [ $# -ge 1 ]; do
+				case "$1" in \#*) break ;; esac
+				_fw_i=$1
+				shift
+				case "$_fw_i" in /*) ;; *) _fw_i=/etc/ssh/$_fw_i ;; esac
+				for _fw_g in $_fw_i; do
+					[ -f "$_fw_g" ] && scan "$_fw_g"
+				done
+			done ;;
+		AllowTcpForwarding)
+			if [ $# -ge 2 ]; then
+				case "$2" in \#*) ;; *) _fw_v=$2 ;; esac
+			fi ;;
+		esac
+	done < "$_fw_nf"
+}
+if [ ! -r "$c" ]; then
+	_fw_n=unsupported
+else
+	scan "$c"
+	case "$_fw_v" in
+		""|yes|all|local) _fw_n=none ;;
+		*) if grep -q "sshd_config.d" "$c" 2>/dev/null; then _fw_n=write; else _fw_n=unsupported; fi ;;
+	esac
+fi
 '
-	_fw_priv='if [ "$(id -u)" = "0" ]; then _fw_as=; elif command -v sudo >/dev/null 2>&1; then _fw_as="sudo -n"; else echo forwarding=denied; exit 0; fi
+	_fw_need_case='case "$_fw_n" in
+	none) echo forwarding=allowed; exit 0 ;;
+	unsupported) echo forwarding=unsupported; exit 0 ;;
+esac
+'
+	_fw_priv='_fw_hp=; if [ "$(id -u)" = "0" ]; then _fw_as=; elif command -v sudo >/dev/null 2>&1; then _fw_as="sudo -n"; if [ -x "$h" ]; then _fw_hp=$h; fi; else echo forwarding=denied; exit 0; fi
+'
+	# The helper answers with an exit code rather than a word: it is one small
+	# program on the far side, and the word belongs to the side that can
+	# translate it. 3 is a configuration sshd rejected, 4 a service that did
+	# not reload, anything else "it did not run" — which falls through to the
+	# individual commands below, so an account with full sudo still works with
+	# an old helper lying around.
+	_fw_helper_on='if [ -n "$_fw_hp" ]; then
+	$_fw_as "$_fw_hp" on >/dev/null 2>&1
+	case $? in
+		0) echo forwarding=on; exit 0 ;;
+		3) echo forwarding=invalid; exit 0 ;;
+		4) echo forwarding=reload-failed; exit 0 ;;
+	esac
+fi
+'
+	_fw_helper_off='if [ -n "$_fw_hp" ]; then
+	$_fw_as "$_fw_hp" off >/dev/null 2>&1
+	case $? in
+		0) echo forwarding=off; exit 0 ;;
+		4) echo forwarding=reload-failed; exit 0 ;;
+	esac
+fi
+'
+	_fw_file_on='if [ -f "$f" ]; then
+	if grep -q "^AllowTcpForwarding local" "$f" 2>/dev/null; then echo forwarding=already; exit 0; fi
+	echo forwarding=foreign; exit 0
+fi
+'
+	_fw_file_off='if [ ! -f "$f" ]; then echo forwarding=absent; exit 0; fi
+if ! grep -q "^AllowTcpForwarding local" "$f" 2>/dev/null; then echo forwarding=foreign; exit 0; fi
 '
 	_fw_reload='if command -v systemctl >/dev/null 2>&1; then
 	$_fw_as systemctl reload ssh >/dev/null 2>&1 || $_fw_as systemctl reload sshd >/dev/null 2>&1
+elif command -v service >/dev/null 2>&1; then
+	$_fw_as service ssh reload >/dev/null 2>&1 || $_fw_as service sshd reload >/dev/null 2>&1
 else
 	$_fw_as /etc/init.d/ssh reload >/dev/null 2>&1 || $_fw_as /etc/init.d/sshd reload >/dev/null 2>&1
 fi
 '
-	case "$1" in
-	on)
-		# The state of the file is read before any privilege is asked for: on a
-		# machine where it is already right, starting the server must not need
-		# root at all.
-		printf '%s%s%s%s%s' "$_fw_head" "$_fw_state" '
-if [ -f "$f" ]; then
-	if grep -q "^AllowTcpForwarding local" "$f" 2>/dev/null; then echo forwarding=already; exit 0; fi
-	echo forwarding=foreign; exit 0
-fi
-' "$_fw_priv" '
-if ! $_fw_as mkdir -p "${f%/*}" >/dev/null 2>&1; then echo forwarding=denied; exit 0; fi
+	_fw_write='if ! $_fw_as mkdir -p "${f%/*}" >/dev/null 2>&1; then echo forwarding=denied; exit 0; fi
 if ! $_fw_as tee "$f" >/dev/null 2>&1 <<FCCEOF
 # Managed by luci-app-fcc on the router that controls this machine: the FCC
 # Admin page is opened through an SSH tunnel, which needs local forwarding
@@ -917,16 +1004,128 @@ fi
 	$_fw_as rm -f "$f" >/dev/null 2>&1
 	echo forwarding=reload-failed; exit 0
 fi
-echo forwarding=on' ;;
-	off)
-		printf '%s%s%s%s%s' "$_fw_head" "$_fw_state" '
-if [ ! -f "$f" ]; then echo forwarding=absent; exit 0; fi
-if ! grep -q "^AllowTcpForwarding local" "$f" 2>/dev/null; then echo forwarding=foreign; exit 0; fi
-' "$_fw_priv" '
-if ! $_fw_as rm -f "$f" >/dev/null 2>&1; then echo forwarding=denied; exit 0; fi
+echo forwarding=on
+'
+	_fw_remove='if ! $_fw_as rm -f "$f" >/dev/null 2>&1; then echo forwarding=denied; exit 0; fi
 '"$_fw_reload"'if [ $? -ne 0 ]; then echo forwarding=reload-failed; exit 0; fi
-echo forwarding=off' ;;
+echo forwarding=off
+'
+	case "$1" in
+	on)
+		# The state of the file is read before any privilege is asked for, and
+		# before the configuration is read at all: on a machine where the drop-in
+		# is already right, starting the server must not need root.
+		printf '%s%s%s%s%s%s%s' "$_fw_head" "$_fw_file_on" "$_fw_need" \
+			"$_fw_need_case" "$_fw_priv" "$_fw_helper_on" "$_fw_write" ;;
+	off)
+		printf '%s%s%s%s%s' "$_fw_head" "$_fw_file_off" "$_fw_priv" \
+			"$_fw_helper_off" "$_fw_remove" ;;
 	esac
+}
+
+# The one-time half, for a machine that does have forwarding turned off.
+#
+# A sudoers rule naming the individual commands would hand `tee` — arbitrary
+# content into a file sshd loads at the next reload — to that account, which on
+# such a machine is the same thing as root. One program that accepts `on` or
+# `off` and nothing else cannot be turned into anything but the setting it
+# names. It also puts the part that differs between distributions in one place:
+# the reload command is a systemd unit here, a SysV script there, and inside the
+# Portable OpenSSH tree elsewhere, while the sudoers line naming this program is
+# the same on every machine.
+#
+# Exit codes: 0 done, 1 could not, 3 sshd rejected the configuration, 4 the
+# service did not reload.
+fcc_remote_helper_source() {
+	cat <<'FCCEOF'
+#!/bin/sh
+# Managed by luci-app-fcc. The router that controls this machine runs this as
+# root, to place or remove the sshd drop-in the FCC Admin tunnel needs.
+# Usage: fcc-local-forwarding on|off. Nothing else is accepted.
+set -u
+_hs_op=${1:-}
+_hs_c=/etc/ssh/sshd_config
+_hs_f=/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf
+_hs_sshd=/usr/sbin/sshd
+[ -x "$_hs_sshd" ] || _hs_sshd=/usr/local/sbin/sshd
+[ -r "$_hs_c" ] || exit 1
+grep -q "sshd_config.d" "$_hs_c" 2>/dev/null || exit 2
+reload() {
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl reload ssh >/dev/null 2>&1 && return 0
+		systemctl reload sshd >/dev/null 2>&1 && return 0
+	elif command -v service >/dev/null 2>&1; then
+		service ssh reload >/dev/null 2>&1 && return 0
+		service sshd reload >/dev/null 2>&1 && return 0
+	elif [ -x /etc/init.d/ssh ]; then
+		/etc/init.d/ssh reload >/dev/null 2>&1 && return 0
+	elif [ -x /etc/init.d/sshd ]; then
+		/etc/init.d/sshd reload >/dev/null 2>&1 && return 0
+	fi
+	return 1
+}
+case "$_hs_op" in
+on)
+	mkdir -p "${_hs_f%/*}" || exit 1
+	cat > "$_hs_f" <<'DROPIN' || exit 1
+# Managed by luci-app-fcc on the router that controls this machine: the FCC
+# Admin page is opened through an SSH tunnel, which needs local forwarding
+# allowed. The file is removed again when that router stops the server here.
+AllowTcpForwarding local
+DROPIN
+	if [ -x "$_hs_sshd" ] && ! "$_hs_sshd" -t >/dev/null 2>&1; then
+		rm -f "$_hs_f"
+		exit 3
+	fi
+	reload || { rm -f "$_hs_f"; exit 4; }
+	;;
+off)
+	rm -f "$_hs_f" || exit 1
+	reload || exit 4
+	;;
+*)
+	exit 1
+	;;
+esac
+exit 0
+FCCEOF
+}
+
+# The text to paste on the LAN machine, once, as an administrator.
+#
+# It is generated here rather than shipped as a file the page links to: the
+# account in the sudoers rule is the one this router is configured with, and the
+# script is the one this version of the package drives. The paste goes through
+# `sudo sh -s`, which asks that machine's administrator for their own password —
+# nothing about it is stored here.
+#
+# Installed or not is asked of the far side, so the page can say which state the
+# machine is in rather than guessing from a successful start.
+fcc_remote_helper_document() {
+	_hd_user="$(fcc_remote_user)"
+	_hd_path=/usr/local/sbin/fcc-local-forwarding
+	_hd_state="$(fcc_remote_ssh "PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; if [ -x $_hd_path ]; then echo helper=installed; else echo helper=missing; fi" \
+		2>/dev/null | fcc_remote_output_filter | tr -d '\r')"
+	_hd_installed=false
+	case "$_hd_state" in *helper=installed*) _hd_installed=true ;; esac
+	_hd_body="$(cat <<FCCEOF
+mkdir -p /usr/local/sbin
+cat > $_hd_path <<'FCC_HELPER'
+$(fcc_remote_helper_source)
+FCC_HELPER
+chmod 0755 $_hd_path
+printf '%s\n' '$_hd_user ALL=(root) NOPASSWD: $_hd_path on, $_hd_path off' > /etc/sudoers.d/50-fcc-local-forwarding
+chmod 0440 /etc/sudoers.d/50-fcc-local-forwarding
+if command -v visudo >/dev/null 2>&1; then visudo -cf /etc/sudoers.d/50-fcc-local-forwarding >/dev/null; fi
+FCCEOF
+)"
+	printf '{"ok":true,"user":%s,"path":%s,"installed":%s,"install":%s}\n' \
+		"$(fcc_json_str "$_hd_user")" \
+		"$(fcc_json_str "$_hd_path")" \
+		"$_hd_installed" \
+		"$(fcc_json_str "sudo sh -s <<'FCC_PREPARE'
+$_hd_body
+FCC_PREPARE")"
 }
 
 fcc_remote_forwarding_cmd() {
@@ -934,8 +1133,8 @@ fcc_remote_forwarding_cmd() {
 }
 
 fcc_remote_forwarding_word() {
-	# One SSH connection, one word back: on, already, off, absent, denied,
-	# foreign, invalid, reload-failed or unsupported.
+	# One SSH connection, one word back: on, already, allowed, off, absent,
+	# denied, foreign, invalid, reload-failed or unsupported.
 	_fw_out="$(fcc_remote_ssh "$(fcc_remote_forwarding_cmd "$1")" 2>/dev/null \
 		| fcc_remote_output_filter | tr -d '\r')"
 	printf '%s\n' "$_fw_out" | sed -n 's/^forwarding=//p' | head -n 1
@@ -1886,6 +2085,8 @@ case "${1:-}" in
 		fcc_remote_status ;;
 	running)
 		fcc_remote_running ;;
+	helper)
+		fcc_remote_helper_document ;;
 	keygen)
 		fcc_remote_keygen ;;
 	trust)

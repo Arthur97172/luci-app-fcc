@@ -78,6 +78,7 @@ function index()
 		remote_test = "act_remote_test",
 		remote_control = "act_remote_control",
 		remote_running = "act_remote_running",
+		remote_helper = "act_remote_helper",
 	}
 	for name, fn in pairs(actions) do
 		local e = entry({ "admin", "services", "fcc", "api", name }, call(fn))
@@ -770,6 +771,18 @@ end
 --- so a reload still reports what is actually running over there.
 function act_remote_running()
 	relay("remote", { "running" })
+end
+
+--- The one-time step on the LAN machine, as text to paste there.
+---
+--- Only needed on a machine that has local forwarding switched off; the start
+--- button arranges the setting by itself everywhere else, and on most machines
+--- needs no privilege to do it. What comes back is the block that installs a
+--- small root-owned program and the sudoers rule naming it, plus whether that
+--- program is already there — read-only on this side, and generated here so the
+--- account in it is the one the settings name.
+function act_remote_helper()
+	relay("remote", { "helper" })
 end
 
 -- ---------------------------------------------------------------------------

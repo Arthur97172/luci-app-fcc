@@ -362,12 +362,17 @@
 	 * stop: the FCC server over there is a separate thing from its SSH daemon,
 	 * so the page warns and the state line still shows what the server does.
 	 *
-	 * "unsupported" is silence too: a machine whose sshd_config does not read a
-	 * drop-in directory may still allow forwarding, and the page has no way to
-	 * tell. If the tunnel is refused, the Admin page names the setting. */
+	 * "allowed" is silence too, and the best of these answers: the machine's
+	 * own configuration already permits local forwarding — OpenSSH's default is
+	 * to permit it — so nothing was written and no privilege was asked for.
+	 *
+	 * "unsupported" is silence as well: a machine whose sshd_config reads no
+	 * drop-in directory cannot be helped this way, though it may well allow
+	 * forwarding already. If the tunnel is refused, the Admin page names the
+	 * setting. */
 	var FORWARDING_TEXT = {
 		'denied':
-			FCC._('The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator.'),
+			FCC._('The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time setup on the LAN machine” below has the command.'),
 		'foreign':
 			FCC._('A file named 00-fcc-local-forwarding.conf was already on the LAN machine and was left as it is. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration.'),
 		'invalid':
@@ -392,6 +397,39 @@
 		if (!d || !d.forwarding) { return ''; }
 		var map = (op === 'stop') ? FORWARDING_STOP_TEXT : FORWARDING_TEXT;
 		return map[d.forwarding] || '';
+	}
+
+	/* The command that settles the setting on a machine whose sshd refuses it,
+	 * fetched the first time it is wanted and kept: it names the account this
+	 * router is configured with, so a saved change to that account is the one
+	 * thing that invalidates it (saveRemoteConfig clears it). */
+	var remoteHelperBlock = '';
+
+	function showRemoteHelper(open) {
+		var panel = FCC.$('#fcc-remote-helper-panel');
+		if (!panel) { return; }
+		if (open === false) { panel.hidden = true; return; }
+		panel.hidden = false;
+		var text = FCC.$('#fcc-remote-helper-text');
+		var state = FCC.$('#fcc-remote-helper-state');
+		if (remoteHelperBlock) {
+			if (text) { text.textContent = remoteHelperBlock; }
+			return;
+		}
+		if (state) { state.textContent = FCC._('Reading the block from the router…'); }
+		FCC.api('remote_helper', {}, { method: 'GET' }).then(function (d) {
+			remoteHelperBlock = d.install || '';
+			if (text) { text.textContent = remoteHelperBlock; }
+			if (state) {
+				state.textContent = d.installed
+					? FCC._('The one-time setup is already in place on the LAN machine.')
+					: FCC._('The one-time setup has not been installed on the LAN machine yet.');
+			}
+		}).catch(function (err) {
+			if (state) {
+				state.textContent = remoteCaught(err, FCC._('Could not read the one-time setup.'));
+			}
+		});
 	}
 
 	function remoteErrorText(text) {
@@ -734,6 +772,12 @@
 		var show = FCC.$('#fcc-remote-showkey');
 		if (show) { show.hidden = !remote.key_ready; }
 
+		/* The one-time setup is the sshd_config.d drop-in, which only Linux
+		 * reads: an OpenWrt or macOS machine is never offered it. */
+		var helper = FCC.$('#fcc-remote-helper');
+		if (helper) { helper.hidden = remote.platform !== 'linux'; }
+		if (remote.platform !== 'linux') { showRemoteHelper(false); }
+
 		var fp = FCC.$('#fcc-remote-fingerprint');
 		if (fp && document.activeElement !== fp) { fp.value = remote.fingerprint || ''; }
 
@@ -840,6 +884,9 @@
 	function saveRemoteConfig() {
 		return FCC.api('remote_set', remoteFields(), { method: 'POST' })
 			.then(function (r) {
+				/* The generated block carries the account name, so a saved
+				 * settings change makes the copy stale. */
+				remoteHelperBlock = '';
 				/* A changed address or SSH port is a different host, and the
 				 * controller has already discarded the pinned key. Saying so is
 				 * the difference between "the buttons went grey for no reason"
@@ -981,6 +1028,10 @@
 			 * thing to retry — and when it worked but the setting did not, the
 			 * warning takes the place of "Done." so it is not read past. */
 			var warn = forwardingWarning(d, op);
+			/* The one refusal a person can fix from this page: open the block
+			 * with the command that makes the setting, rather than leaving the
+			 * warning as the end of the story. */
+			if (d.forwarding === 'denied') { showRemoteHelper(true); }
 			if (!d.ok) {
 				FCC.notice(remoteStatus(), 'fail',
 					remoteFailure(d, FCC._('The operation failed.')));
@@ -1418,6 +1469,10 @@
 				var text = FCC.$('#fcc-remote-pubkey');
 				if (text) { text.textContent = remote.public_key; }
 			}
+		});
+		FCC.$('#fcc-remote-helper').addEventListener('click', function () {
+			var panel = FCC.$('#fcc-remote-helper-panel');
+			showRemoteHelper(!panel || panel.hidden);
 		});
 		FCC.$('#fcc-remote-trust').addEventListener('click', remoteTrust);
 		FCC.$('#fcc-remote-trust-cancel').addEventListener('click', hideTrustPanel);

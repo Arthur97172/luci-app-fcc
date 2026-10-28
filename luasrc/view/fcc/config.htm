@@ -247,6 +247,23 @@
 					</div>
 				</div>
 
+				<!-- Opening the Admin page is an SSH tunnel, so that machine's
+				     sshd has to allow local forwarding. The buttons arrange the
+				     setting by themselves everywhere else; a machine whose SSH
+				     server is configured to refuse it needs one command run
+				     there once, as its administrator. This is where that
+				     command is written, with the account this router is set to
+				     use already in it. -->
+				<div class="fcc-remote-key">
+					<button type="button" id="fcc-remote-helper" class="cbi-button"><%:One-time setup on the LAN machine%></button>
+				</div>
+
+				<div id="fcc-remote-helper-panel" class="fcc-key-panel" hidden>
+					<p class="fcc-muted"><%:Only needed when the LAN machine's SSH server refuses local forwarding. Paste this block into a shell on that machine, as an administrator: it installs one small program and the sudoers rule that lets this router set, and take away, the single sshd setting the Admin tunnel needs.%></p>
+					<pre id="fcc-remote-helper-text" class="fcc-key-text"></pre>
+					<p class="fcc-muted" id="fcc-remote-helper-state"></p>
+				</div>
+
 				<details class="fcc-advanced" id="fcc-remote-advanced">
 					<summary><%:Advanced settings%></summary>
 

@@ -161,17 +161,34 @@ Windows 上这套查询走 PowerShell，尚待在真机上验证。
 `ssh -N -L 127.0.0.1:18082:127.0.0.1:<Admin 端口>`，再把请求交给隧道这一端——远程看到的是
 回环对端，浏览器访问仍经过 LuCI 登录。隧道在第一次打开 Admin 时建立，离开局域网模式时关闭。
 这要求那台机器的 sshd 允许**本地**转发（`AllowTcpForwarding`，默认 `yes`；只开本地用
-`local`）。Linux 机器上这件事由按钮自己完成，不用手工改配置：**启动** 先在那里写入
+`local`）。Linux 机器上这件事由按钮自己完成，而且多数机器上根本不用改配置：**启动** 先在没有
+root 的情况下读出那台机器 sshd 真正生效的值——主配置和它 `Include` 进来的
+`/etc/ssh/sshd_config.d/*.conf` 都是可读的，按 sshd 自己的顺序（先读到者为准）扫描；`sshd -T`
+回答的是同一个问题，但它要读只有 root 能读的主机密钥，在普通账户下跑不了。值本来就是 `yes`、
+`all` 或 `local`，或者压根没写（OpenSSH 默认就是 `yes`）时，隧道照样能通：不写任何文件，
+不要任何特权，页面把这一步记作 `allowed`。
+
+只有该机确实关掉了转发时 **启动** 才动手：先试已装好的 root helper
+`/usr/local/sbin/fcc-local-forwarding on`（见下），没有就写
 `/etc/ssh/sshd_config.d/00-fcc-local-forwarding.conf`（内容只有一行
-`AllowTcpForwarding local`），再用 `sshd -t` 校验、通过后重载 sshd，然后才启动服务器；
-**停止** 在服务器确实停掉之后才删掉这个文件并重载；**重启** 先删后写，再重启服务器。
-文件名排在其它 `sshd_config.d/*.conf` 之前，而 sshd 采用它读到的**第一个**值，所以即便
-那里早有一份 `AllowTcpForwarding no`，这个文件也能生效，那份文件本身保持原样。写入
-`/etc/ssh` 需要 root：账户是 root 就直接写，否则用 `sudo -n`（不需要整权的免密 sudo，
-`sudoers` 里只放行 `mkdir`、`tee`、`sshd -t` 和重载这几条命令就够）；两者都不行时按钮照常启停
-服务器，只把这一步的结果作为一句提醒显示出来——无权修改、同名文件不是本包写的、
-`sshd -t` 拒绝了这份配置（已回滚）、重载失败，各有各的说法，都不算启动或停止失败。
-macOS 和 OpenWrt 的 sshd 不读这个目录，这两类机器上不做任何改动。
+`AllowTcpForwarding local`）；两种方式都先用 `sshd -t` 校验、通过后重载 sshd，然后才启动
+服务器。**停止** 在服务器确实停掉之后才删掉这个文件并重载；**重启** 先删后写，再重启服务器。
+文件名排在其它 `sshd_config.d/*.conf` 之前，而 sshd 采用它读到的**第一个**值，所以即便那里
+早有一份 `AllowTcpForwarding no`，这个文件也能生效，那份文件本身保持原样。
+
+写入 `/etc/ssh` 需要 root：账户是 root 就直接写；否则有 helper 就走 helper，没有就用
+`sudo -n`（不需要整权的免密 sudo，`sudoers` 里只放行 `mkdir`、`tee`、`sshd -t` 和重载这几条
+命令也够用）。都不行时按钮照常启停服务器，只把这一步的结果作为一句提醒显示出来——无权修改、
+同名文件不是本包写的、`sshd -t` 拒绝了这份配置（已回滚）、重载失败，各有各的说法，都不算启动
+或停止失败。macOS 和 OpenWrt 的 sshd 不读这个目录，这两类机器上不做任何改动。
+
+那台机器确实关掉了转发、又不想把「用 `tee` 往 `/etc/ssh` 里写任意内容」的权限交给这个账户
+时，页面上 **局域网主机的一次性准备** 给出了一段可粘贴的命令：以管理员身份执行一次
+`sudo sh -s`（以 root 登录的机器上直接 `sh -s`），装上 helper 和一条只放行
+`fcc-local-forwarding on` 与 `fcc-local-forwarding off` 的 sudoers 规则。这个程序只认这两个
+词，也就只能改这一项设置，比放行一组命令安全得多；重载 sshd 的具体写法（systemd unit、SysV
+脚本、`/etc/init.d`）都收在 helper 里，各发行版不同之处只在这里。口令由那台机器的管理员自己
+输入，本包不保存也不索取。
 
 转发被关成 `no` 又没法从这里改时，打开 Admin 会得到 502，页面直接说明是那台机器的 sshd
 拒绝了转发并指出要改的设置，而不是只报一句 `Connection reset by peer`。

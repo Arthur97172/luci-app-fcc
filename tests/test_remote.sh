@@ -1147,6 +1147,81 @@ test_the_tunnel_setting_is_left_alone_outside_linux() {
 	drop_sandbox
 }
 
+test_a_machine_that_already_allows_forwarding_needs_nothing_written() {
+	# OpenSSH's own default is AllowTcpForwarding yes, and a machine that says
+	# yes, all or local needs no drop-in at all. The answer is worked out from
+	# the world-readable configuration by the account itself, so stock Linux —
+	# no sudo, no helper — opens the tunnel as it is.
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=allowed' run_remote control start)"
+	assert_contains "$out" '"ok":true' "the start is made"
+	assert_contains "$out" '"forwarding":"allowed"' \
+		"and a machine that already allows the tunnel says so"
+	_fw="$(ssh_command 1)"
+	_al="$(printf '%s\n' "$_fw" | grep -n 'echo forwarding=allowed' | head -n 1 | cut -d: -f1)"
+	_wr="$(printf '%s\n' "$_fw" | grep -n 'mkdir -p' | head -n 1 | cut -d: -f1)"
+	_pr="$(printf '%s\n' "$_fw" | grep -n 'id -u' | head -n 1 | cut -d: -f1)"
+	assert_eq "1" "$([ -n "$_al" ] && [ -n "$_wr" ] && [ -n "$_pr" ] && \
+		[ "$_al" -lt "$_wr" ] && [ "$_al" -lt "$_pr" ] && echo 1 || echo 0)" \
+		"the answer is reached without writing a file or asking for privilege"
+	assert_contains "$_fw" 'AllowTcpForwarding' "the setting it looks for is named"
+	assert_contains "$_fw" 'Include' \
+		"and the files sshd's Include lines splice in are followed too"
+	drop_sandbox
+}
+
+test_the_root_owned_helper_is_used_before_the_individual_commands() {
+	# Where an administrator has installed the helper, the account runs one
+	# program that accepts only on or off. The individual sudo commands stay
+	# below it for a machine that has no helper, so an old helper lying around
+	# cannot stop a full-sudo account from working.
+	fresh
+	ready_lan
+	out="$(SSH_FW_OUT='forwarding=on' run_remote control start)"
+	assert_contains "$out" '"forwarding":"on"' "the setting was placed"
+	_fw="$(ssh_command 1)"
+	assert_contains "$_fw" 'if [ -x "$h" ]; then _fw_hp=$h; fi' \
+		"an installed helper is looked for"
+	_hp="$(printf '%s\n' "$_fw" | grep -n '"\$_fw_hp" on' | head -n 1 | cut -d: -f1)"
+	_wr="$(printf '%s\n' "$_fw" | grep -n 'mkdir -p' | head -n 1 | cut -d: -f1)"
+	assert_eq "1" "$([ -n "$_hp" ] && [ -n "$_wr" ] && [ "$_hp" -lt "$_wr" ] && echo 1 || echo 0)" \
+		"and it is tried before the individual commands"
+	assert_contains "$_fw" '3) echo forwarding=invalid' \
+		"while the helper's exit codes still become the words the page knows"
+	drop_sandbox
+}
+
+test_the_one_time_setup_names_the_account_and_the_program() {
+	# The block the page offers is what an administrator pastes once on a
+	# machine that really does block forwarding: the helper, and a sudoers rule
+	# naming exactly this router's account and exactly the helper's two words.
+	fresh
+	ready_lan
+	uci_set remote_user arthur
+	out="$(run_remote helper)"
+	assert_contains "$out" '"ok":true' "the block is produced"
+	assert_contains "$out" '"user":"arthur"' "for the account this router uses"
+	assert_contains "$out" '"path":"/usr/local/sbin/fcc-local-forwarding"' \
+		"installed at the path the start looks for"
+	assert_contains "$out" '"installed":false' \
+		"and the machine is asked whether it is already there"
+	assert_contains "$out" 'sudo sh -s' \
+		"the paste asks that machine's administrator for their own password"
+	assert_contains "$out" 'arthur ALL=(root) NOPASSWD: /usr/local/sbin/fcc-local-forwarding on, /usr/local/sbin/fcc-local-forwarding off' \
+		"the rule names only the helper and only its two words"
+	assert_not_contains "$out" 'tee' \
+		"nothing that could write an arbitrary file is handed over"
+
+	fresh
+	ready_lan
+	uci_set remote_user arthur
+	out="$(SSH_OUT='helper=installed' run_remote helper)"
+	assert_contains "$out" '"installed":true' \
+		"a machine that already has the helper says so"
+	drop_sandbox
+}
+
 test_control_uses_the_windows_preset() {
 	fresh
 	ready_lan

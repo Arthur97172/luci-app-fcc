@@ -153,6 +153,9 @@ msgstr ""
 msgid "Could not attach to the session:"
 msgstr ""
 
+msgid "Could not read the one-time setup."
+msgstr ""
+
 msgid "Detecting versions…"
 msgstr ""
 
@@ -306,10 +309,16 @@ msgstr ""
 msgid "On the LAN side the agent itself runs on the other machine, over SSH."
 msgstr ""
 
+msgid "One-time setup on the LAN machine"
+msgstr ""
+
 msgid "Only an administrator on the LAN machine may control its FCC Server. Start it on that machine itself, or give this account the right to control the service."
 msgstr ""
 
 msgid "Only an administrator on the LAN machine may control its FCC Server. Start it on that machine itself."
+msgstr ""
+
+msgid "Only needed when the LAN machine's SSH server refuses local forwarding. Paste this block into a shell on that machine, as an administrator: it installs one small program and the sudoers rule that lets this router set, and take away, the single sshd setting the Admin tunnel needs."
 msgstr ""
 
 msgid "Only one FCC Server runs at a time. Switching to a side stops the other one."
@@ -328,6 +337,9 @@ msgid "Platform"
 msgstr ""
 
 msgid "Port"
+msgstr ""
+
+msgid "Reading the block from the router…"
 msgstr ""
 
 msgid "Reconnect"
@@ -540,7 +552,7 @@ msgstr ""
 msgid "The LAN machine refused the SSH key. Add the public key shown here to that account’s authorized_keys."
 msgstr ""
 
-msgid "The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator."
+msgid "The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time setup on the LAN machine” below has the command."
 msgstr ""
 
 msgid "The LAN machine’s SSH daemon rejected the forwarding setting, so it was taken away again. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration."
@@ -625,6 +637,12 @@ msgid "The installer will add the missing packages before it starts:"
 msgstr ""
 
 msgid "The mode could not be switched."
+msgstr ""
+
+msgid "The one-time setup has not been installed on the LAN machine yet."
+msgstr ""
+
+msgid "The one-time setup is already in place on the LAN machine."
 msgstr ""
 
 msgid "The operation failed."
