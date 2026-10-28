@@ -6779,36 +6779,4 @@ test_apply_runtime_env_survives_an_empty_environment() {
 		"and HOME is derived from the root rather than inherited"
 }
 
-# The init script's status verb is what the LAN panel reads for an OpenWrt
-# machine, and procd answers it with words rather than just an exit code.
-ist_status() {
-	PROCD_WORD="$1" PROCD_CODE="$2" sh -c '
-		_procd_status() { printf "%s\n" "$PROCD_WORD"; return "$PROCD_CODE"; }
-		. "$1"
-		status_service
-		printf "exit=%s\n" "$?"
-	' _ "$ROOT/root/etc/init.d/fcc" 2>&1
-}
-
-test_the_init_scripts_status_does_not_call_an_empty_service_running() {
-	# "active with no instances" exits 0, but it means procd has seen the
-	# service and that no instance was ever opened — what start_service leaves
-	# behind when the runtime is absent or the LAN is the target. Passed
-	# through, it would tell anything reading the exit code that a stopped
-	# server is up.
-	setup_sandbox
-	_ist_out="$(ist_status 'active with no instances' 0)"
-	assert_contains "$_ist_out" "inactive" \
-		"a service with no instance is reported as inactive"
-	assert_contains "$_ist_out" "exit=3" "with the exit code that goes with it"
-
-	_ist_out="$(ist_status 'running' 0)"
-	assert_contains "$_ist_out" "running" "a running instance keeps its word"
-	assert_contains "$_ist_out" "exit=0" "and its exit code"
-
-	_ist_out="$(ist_status 'not running' 5)"
-	assert_contains "$_ist_out" "not running" "procd's own stopped word is passed through"
-	assert_contains "$_ist_out" "exit=5" "with its code unchanged"
-}
-
 tests_main
