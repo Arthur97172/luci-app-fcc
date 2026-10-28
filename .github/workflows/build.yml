@@ -642,9 +642,17 @@ jobs:
           # Tag and release name are the same string, and it is the package's
           # version rather than the ref: 0.1.1-r2, carrying
           # luci-app-fcc_0.1.1-r2_all.ipk. Nothing here retypes it.
+          #
+          # --target is what keeps the tag on the commit these packages were
+          # built from. Without it gh tags the default branch's current tip,
+          # which on 2026-10-28 put 1.0.6-r8 — built from b4f1ed3 — on the
+          # commit of the next push, so checking out that tag gave code the
+          # release does not carry. Section 62 wants the tag to name the bytes;
+          # GITHUB_SHA is the commit every job in this run checked out.
           ver="${{ steps.version.outputs.PKGVER }}"
           [ -n "$ver" ] || { echo "::error::no version to release"; exit 1; }
           gh release create "$ver" \
+            --target "$GITHUB_SHA" \
             --title "$ver" \
             --notes-file release-notes.md \
             release/*

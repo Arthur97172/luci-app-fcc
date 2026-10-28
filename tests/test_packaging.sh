@@ -1210,6 +1210,12 @@ test_the_release_is_named_after_the_package_version() {
 		"and named with the same string"
 	assert_not_contains "$_ts_r" 'GITHUB_REF_NAME' \
 		"neither of them comes from the ref"
+	# The tag has to land on the commit this run built, not on whatever the
+	# default branch points at when the release job finally runs: two pushes in
+	# quick succession otherwise leave the first release's tag on the second
+	# commit, and checking out that tag gives code the release does not carry.
+	assert_contains "$_ts_r" '--target "$GITHUB_SHA"' \
+		"and it is placed on the commit the packages came from"
 	case "$_ts_r" in
 		*'v$full'*|*'v$ver'*)
 			fail "the release name is the version with a v put in front of it" ;;
