@@ -200,7 +200,11 @@ is said plainly, rather than the buttons promising more than they do. The
 installer wrote added to PATH first — lists its agents and can start them there.
 The server state is asked of the service manager first and, when there is no
 such unit or service, read from the process list, so a hand-started server is
-not reported as stopped.
+not reported as stopped. On OpenWrt a start run through the init script is then
+watched for up to fifteen seconds: a start that never puts `fcc-server` in that
+machine's process list counts as failed, and the last lines of
+`logs/fcc-server.log` under the install path are shown with it. A machine
+without `pgrep` skips that check rather than passing on a guess.
 
 While the server is running the LAN panel shows the same six lines as
 `[This router]`: running, version, process ID, uptime, memory (RSS) and
@@ -213,7 +217,9 @@ Windows from `Get-NetTCPConnection`, falling back to `netstat -ano` where that
 cmdlet does not exist — and the version from `fcc-server --version` (upstream
 documents running it as safe). Whatever cannot be read shows `—` rather than a
 guess. On Windows the questions are asked through PowerShell and have yet to be
-verified on a real machine.
+verified on a real machine. While the server is running those six lines are
+re-read every 30 seconds; once it is not running, or the page leaves LAN mode,
+the refresh stops.
 
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.
@@ -259,8 +265,8 @@ macOS and OpenWrt do not read that directory, so nothing is changed on those
 machines.
 
 For a machine that does block forwarding and whose administrator does not want
-to hand that account `tee` into `/etc/ssh`, the page's **One-time setup on the
-LAN machine** gives a block to paste once: `sudo sh -s` as an administrator
+to hand that account `tee` into `/etc/ssh`, the page's **One-time
+authorization** gives a block to paste once: `sudo sh -s` as an administrator
 (`sh -s` where that machine logs in as root), which installs the helper and a
 `sudoers` rule allowing only `fcc-local-forwarding on` and
 `fcc-local-forwarding off`. The program accepts those two words and nothing

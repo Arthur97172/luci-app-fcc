@@ -1237,6 +1237,44 @@ fcc_remote_or_bare_cmd() {
 		"if $1 >/dev/null 2>&1; then $3; else $2; fi")"
 }
 
+fcc_remote_openwrt_control_cmd() {
+	# fcc_remote_openwrt_control_cmd <service> <op>
+	#
+	# The init script this package installs when it is there, the launcher when
+	# it is not — a machine carrying only the upstream install has nothing in
+	# /etc/init.d to run.
+	#
+	# A start is not taken at its word. start_service() returns 0 without
+	# opening an instance when the runtime is absent, and when the stored
+	# control target is the LAN machine: that is deliberate, so that booting a
+	# router whose runtime has not been installed is not an error, but it means
+	# the exit code alone would let this page say "Done." for a server that is
+	# not there. So the process list is asked the same question the launcher
+	# route asks, within the same 15 seconds, and a server that did not appear
+	# is reported with the tail of the package's log — where the init script's
+	# own "runtime not installed" line lands. Restart is verified the same way.
+	# Stop is not: procd's stop is what the init script already waits on.
+	#
+	# The launcher's name is assembled at run time here as everywhere else. A
+	# plain "fcc-server" would sit on the command line of the shell running
+	# this script, and the probe would find that shell instead of the server.
+	# The package's log is <install path>/logs/<that name>.log, so the name
+	# builds the path too rather than being written into it.
+	#
+	# Without pgrep there is nothing to ask, and a working start must not be
+	# turned into a failure by the check: the init script's own exit code
+	# stands, as it did before the check existed.
+	case "$2" in
+		start|restart)
+			_oc_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; s=fcc; s=\${s}-server; log=\"\"; if command -v uci >/dev/null 2>&1; then r=\"\$(uci -q get fcc.main.install_path 2>/dev/null)\"; case \"\$r\" in /*) : ;; *) r=/opt ;; esac; case \"\$r\" in */fcc) : ;; *) r=\"\$r/fcc\" ;; esac; log=\"\$r/logs/\$s.log\"; fi; state() { if pgrep -f \"[f]cc-server\" 2>/dev/null | grep -vx \"\$\$\" | grep -q .; then echo server running; else echo server stopped; fi; }; "
+			_oc_tail='if ! command -v pgrep >/dev/null 2>&1; then exit 0; fi; _oc_i=0; while [ "$_oc_i" -lt 15 ]; do if [ "$(state)" = "server running" ]; then echo server running; exit 0; fi; sleep 1; _oc_i=$((_oc_i + 1)); done; echo "the FCC Server did not start"; [ -n "$log" ] && tail -n 5 "$log" 2>/dev/null; exit 1'
+			_oc_run="/etc/init.d/$1 $2; $_oc_head$_oc_tail" ;;
+		*)
+			_oc_run="/etc/init.d/$1 $2" ;;
+	esac
+	printf 'sh -c %s' "$(fcc_shquote "if [ -x /etc/init.d/$1 ]; then $_oc_run; else $(fcc_remote_bare_control_script "$2"); fi")"
+}
+
 # ---------------------------------------------------------------------------
 # A Windows machine that runs only the upstream install
 # ---------------------------------------------------------------------------
@@ -1714,10 +1752,10 @@ fcc_remote_control() {
 		openwrt)
 			# This package's own init script when it is there; the launcher
 			# when it is not, so a machine carrying only the upstream install
-			# can still be started and stopped from this page.
-			_cc_remote="$(fcc_remote_or_bare_cmd "[ -x /etc/init.d/$_cc_service ]" \
-				"$(fcc_remote_bare_control_script "$_cc_op")" \
-				"/etc/init.d/$_cc_service $_cc_op")" ;;
+			# can still be started and stopped from this page. A start is
+			# checked against the process list afterwards, because the init
+			# script reports success for a server it did not start.
+			_cc_remote="$(fcc_remote_openwrt_control_cmd "$_cc_service" "$_cc_op")" ;;
 		windows)
 			_cc_remote="$(fcc_remote_win_cmd "$(fcc_remote_win_control_script "$_cc_op" "$_cc_service")")" ;;
 		*)

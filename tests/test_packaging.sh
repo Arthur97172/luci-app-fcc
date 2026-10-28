@@ -1536,6 +1536,29 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	assert_not_contains "$(sed -n '/^mutating_actions()/,/^}/p' "$ROOT/tests/test_security.sh")" \
 		'act_remote_running' "and it is not listed as state-changing"
 
+	# That answer goes stale in a way the switch position does not: uptime and
+	# memory move, and a server can die on its own. So the six lines are read
+	# again every thirty seconds — and only then: the timer is armed by an
+	# answer that says the server is running, and stopped by any other answer,
+	# a failed check, or the panel leaving the LAN side.
+	assert_contains "$(cat "$_ts_js")" 'var REMOTE_POLL_MS = 30000;' \
+		"the LAN state is re-read every 30 seconds"
+	assert_contains "$(cat "$_ts_js")" 'remotePollTimer = setInterval(' \
+		"through a timer of its own"
+	assert_contains "$(cat "$_ts_js")" 'keepRemotePolling(remote.server_running === true);' \
+		"armed only while the server is running"
+	assert_contains "$(cat "$_ts_js")" 'checkRemoteRunning(true);' \
+		"and refreshed without blanking the card that is already up"
+
+	# The one-time helper is about the key's place in sshd, not a third kind of
+	# key, so it sits on the key row after Show public key rather than on a row
+	# of its own further down.
+	_ts_keys="$(sed -n '/id="fcc-remote-keygen"/,/id="fcc-remote-helper"/p' "$_ts_view")"
+	assert_contains "$_ts_keys" 'id="fcc-remote-showkey"' \
+		"the one-time authorization button comes after Show public key"
+	assert_contains "$_ts_keys" '<%:One-time authorization%>' \
+		"under the name it now carries"
+
 	# The page is translated and remote.sh is not. A failure must not carry the
 	# script's English sentence into a Chinese interface, and ssh's own warning
 	# must not be the first line of every error.

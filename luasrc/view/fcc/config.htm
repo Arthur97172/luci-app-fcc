@@ -215,12 +215,21 @@
 					</div>
 				</div>
 
+				<!-- Opening the Admin page is an SSH tunnel, so that machine's
+				     sshd has to allow local forwarding. The buttons arrange the
+				     setting by themselves everywhere else; a machine whose SSH
+				     server is configured to refuse it needs one command run
+				     there once, as its administrator. That command is written in
+				     the panel below, with the account this router is set to use
+				     already in it. Only Linux reads the directory the command
+				     writes to, so the button is hidden for the other platforms. -->
 				<div class="fcc-remote-key">
 					<span id="fcc-remote-key-state" class="fcc-key-state"></span>
 					<button type="button" id="fcc-remote-keygen" class="cbi-button"
 						hidden><%:Generate and configure key%></button>
 					<button type="button" id="fcc-remote-showkey" class="cbi-button"
 						hidden><%:Show public key%></button>
+					<button type="button" id="fcc-remote-helper" class="cbi-button"><%:One-time authorization%></button>
 				</div>
 
 				<div id="fcc-remote-key-panel" class="fcc-key-panel" hidden>
@@ -245,17 +254,6 @@
 						<button type="button" id="fcc-remote-trust" class="cbi-button cbi-button-apply"><%:Trust this host%></button>
 						<button type="button" id="fcc-remote-trust-cancel" class="cbi-button cbi-button-reset"><%:Cancel%></button>
 					</div>
-				</div>
-
-				<!-- Opening the Admin page is an SSH tunnel, so that machine's
-				     sshd has to allow local forwarding. The buttons arrange the
-				     setting by themselves everywhere else; a machine whose SSH
-				     server is configured to refuse it needs one command run
-				     there once, as its administrator. This is where that
-				     command is written, with the account this router is set to
-				     use already in it. -->
-				<div class="fcc-remote-key">
-					<button type="button" id="fcc-remote-helper" class="cbi-button"><%:One-time setup on the LAN machine%></button>
 				</div>
 
 				<div id="fcc-remote-helper-panel" class="fcc-key-panel" hidden>

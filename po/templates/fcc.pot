@@ -309,7 +309,7 @@ msgstr ""
 msgid "On the LAN side the agent itself runs on the other machine, over SSH."
 msgstr ""
 
-msgid "One-time setup on the LAN machine"
+msgid "One-time authorization"
 msgstr ""
 
 msgid "Only an administrator on the LAN machine may control its FCC Server. Start it on that machine itself, or give this account the right to control the service."
@@ -486,7 +486,7 @@ msgstr ""
 msgid "That agent is not one this package knows."
 msgstr ""
 
-msgid "The FCC Server did not start on the LAN machine. Its log on that machine, ~/.fcc/server.log, says why."
+msgid "The FCC Server did not start on the LAN machine. Its log there says why: ~/.fcc/server.log when the upstream install started it, or logs/fcc-server.log under the install path when the init script this package installs started it."
 msgstr ""
 
 msgid "The FCC Server did not stop on the LAN machine. Its process is still running there."
@@ -552,7 +552,7 @@ msgstr ""
 msgid "The LAN machine refused the SSH key. Add the public key shown here to that account’s authorized_keys."
 msgstr ""
 
-msgid "The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time setup on the LAN machine” below has the command."
+msgid "The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time authorization” above has the command."
 msgstr ""
 
 msgid "The LAN machine’s SSH daemon rejected the forwarding setting, so it was taken away again. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration."

@@ -1016,6 +1016,44 @@ test_control_uses_the_openwrt_preset() {
 	drop_sandbox
 }
 
+test_control_checks_that_an_openwrt_start_really_started() {
+	# The init script this package installs returns 0 for a server it did not
+	# start: start_service() stops early when the runtime is absent. Left at
+	# its word, the page would say "Done." for a server that is not there, so
+	# the process list is asked afterwards — in the same connection, with the
+	# same 15 seconds and the same probe the launcher route uses — and the
+	# package's own log is tailed when the server did not appear.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(SSH_OUT='server running' SSH_EXIT=0 run_remote control start)" || true
+	assert_contains "$out" '"ok":true' "a start that came up is a success"
+	_oc_cmd="$(ssh_command 1)"
+	assert_contains "$_oc_cmd" 'then /etc/init.d/fcc start' \
+		"the init script is still what starts it"
+	assert_contains "$_oc_cmd" 'the FCC Server did not start' \
+		"and the process list is asked before the answer is given"
+	assert_contains "$_oc_cmd" 'pgrep -f "[f]cc-server"' \
+		"the same probe the launcher route uses"
+	assert_contains "$_oc_cmd" 'logs/$s.log' \
+		"the package's log is where the tail is taken from"
+	assert_not_contains "$_oc_cmd" 'fcc-server' \
+		"and the launcher's name is still never spelled out"
+
+	out="$(SSH_OUT='the FCC Server did not start' SSH_EXIT=1 \
+		run_remote control start)" || true
+	assert_contains "$out" '"ok":false' \
+		"a server that did not come up is reported as a failure"
+	assert_contains "$out" '"reason":"start-failed"' \
+		"with the reason the page turns into a sentence"
+
+	: > "$TMP/ssh.log"
+	run_remote control stop >/dev/null 2>&1 || true
+	assert_not_contains "$(ssh_command 1)" 'the FCC Server did not start' \
+		"stop is not checked: the init script already waits for procd"
+	drop_sandbox
+}
+
 # ---------------------------------------------------------------------------
 # The sshd setting the Admin tunnel needs
 # ---------------------------------------------------------------------------

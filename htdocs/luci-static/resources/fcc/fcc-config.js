@@ -241,6 +241,16 @@
 		server_error: ''
 	};
 
+	/* While the LAN machine's server is up, the six lines are re-read every
+	 * thirty seconds: uptime and memory move, and a server can die on its own.
+	 * Thirty is slow enough for one SSH round trip to be no load on the router
+	 * and fast enough that a person watching the panel never sees it go stale.
+	 * The timer belongs to the page, and is stopped the moment an answer says
+	 * the server is not running, the side in use stops being the LAN one, or
+	 * the LAN machine stops answering. */
+	var REMOTE_POLL_MS = 30000;
+	var remotePollTimer = null;
+
 	/* remote.sh is a shell script, and a shell script's sentences are not in the
 	 * translation catalogue. Shown as they arrive, a Chinese page carries
 	 * English failures — which is what made a state check on a machine without
@@ -322,8 +332,12 @@
 			FCC._('The FCC Server is not installed on the LAN machine. Install it there, then try again.'),
 		/* The launcher ran and did not come up, or did not go away. Its own log
 		 * over there says which, and the page names the file to look at. */
+		/* Where that log is depends on what started the server: the upstream
+		 * install writes ~/.fcc/server.log, and this package's init script
+		 * uses <install path>/logs/fcc-server.log. Both are named rather than
+		 * the one that happens to be true on this router. */
 		'start-failed':
-			FCC._('The FCC Server did not start on the LAN machine. Its log on that machine, ~/.fcc/server.log, says why.'),
+			FCC._('The FCC Server did not start on the LAN machine. Its log there says why: ~/.fcc/server.log when the upstream install started it, or logs/fcc-server.log under the install path when the init script this package installs started it.'),
 		'stop-failed':
 			FCC._('The FCC Server did not stop on the LAN machine. Its process is still running there.'),
 		'no-pgrep':
@@ -372,7 +386,7 @@
 	 * setting. */
 	var FORWARDING_TEXT = {
 		'denied':
-			FCC._('The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time setup on the LAN machine” below has the command.'),
+			FCC._('The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time authorization” above has the command.'),
 		'foreign':
 			FCC._('A file named 00-fcc-local-forwarding.conf was already on the LAN machine and was left as it is. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration.'),
 		'invalid':
@@ -707,28 +721,72 @@
 
 	/* One SSH round trip, made only when the LAN panel is the one on screen and
 	 * the connection is ready. A page opened on the local side never waits for
-	 * a machine it is not using. */
-	function checkRemoteRunning() {
-		remote.server_running = null;
-		remote.server_details = null;
-		remote.server_error = '';
-		remote.server_pending = remote.target === 'lan' && remote.ready === true;
-		renderRemoteServerState();
-		if (!remote.server_pending) { return Promise.resolve(); }
+	 * a machine it is not using.
+	 *
+	 * `quiet` is the refresh: the panel is already showing a running server, so
+	 * that card stays up until the new answer arrives instead of blanking to
+	 * "Checking..." every half minute. */
+	function checkRemoteRunning(quiet) {
+		var asked = remote.target === 'lan' && remote.ready === true;
+		if (!(quiet && asked && remote.server_running === true)) {
+			remote.server_running = null;
+			remote.server_details = null;
+			remote.server_error = '';
+			remote.server_pending = asked;
+			renderRemoteServerState();
+		}
+		if (!asked) { keepRemotePolling(false); return Promise.resolve(); }
+		remote.server_pending = true;
 		return FCC.api('remote_running', {}, { method: 'GET' }).then(function (d) {
 			remote.server_pending = false;
 			if (d && d.ok === true && d.checked === true) {
 				remote.server_running = d.running === true;
 				remote.server_details = d.details || null;
 			} else {
+				/* The last card is an answer that no longer has anything behind
+				 * it: a refresh that failed has to say so, not keep showing
+				 * uptime from a minute ago. */
+				remote.server_running = null;
+				remote.server_details = null;
 				remote.server_error = remoteFailure(d, FCC._('the machine did not answer'));
 			}
 			renderRemoteServerState();
+			keepRemotePolling(remote.server_running === true);
 		}).catch(function (err) {
 			remote.server_pending = false;
+			remote.server_running = null;
+			remote.server_details = null;
 			remote.server_error = remoteCaught(err, FCC._('the machine did not answer'));
 			renderRemoteServerState();
+			keepRemotePolling(false);
 		});
+	}
+
+	/* The timer is started by the first answer that says the server is up —
+	 * the one a Start just asked for, or the one the page asked for when it
+	 * loaded — and left running while that stays true. Asking again on every
+	 * pass would restart the clock each time, so a running timer is kept as it
+	 * is. */
+	function keepRemotePolling(on) {
+		if (!on) {
+			if (remotePollTimer) {
+				clearInterval(remotePollTimer);
+				remotePollTimer = null;
+			}
+			return;
+		}
+		if (remotePollTimer) { return; }
+		remotePollTimer = setInterval(function () {
+			/* The panel can be switched to this router, or the connection
+			 * settings edited away, while the timer is still armed. */
+			if (remote.target !== 'lan' || remote.ready !== true) {
+				keepRemotePolling(false);
+				return;
+			}
+			/* A check already on its way is this tick's answer. */
+			if (remote.server_pending) { return; }
+			checkRemoteRunning(true);
+		}, REMOTE_POLL_MS);
 	}
 
 	/* The one thing standing between the place the page is in and a working

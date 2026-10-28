@@ -103,6 +103,22 @@ EOF
 		"every <%:…%> and FCC._(…) string is in the template"
 }
 
+test_no_translatable_string_hides_an_escaped_quote() {
+	# Both the generator and the extraction above stop at the first bare quote,
+	# which is what lets them be a grep instead of a parser: every string in
+	# this package is one line and carries none. A backslash inside one breaks
+	# that assumption quietly — the match ends early, the string never reaches
+	# the .pot, and the Chinese page renders it in English with nothing in the
+	# build to say so. A start failure that named "this package\'s service"
+	# went missing exactly that way. So the assumption is checked rather than
+	# trusted, and the message is reworded instead.
+	_ts_bad="$(grep -n "FCC\._('" "$JS"/*.js 2>/dev/null | grep -F "\\'" || true)"
+	assert_eq "" "$_ts_bad" "no single-quoted FCC._(…) string carries an escaped quote"
+
+	_ts_bad="$(grep -n 'FCC\._("' "$JS"/*.js 2>/dev/null | grep -F '\"' || true)"
+	assert_eq "" "$_ts_bad" "no double-quoted FCC._(…) string carries an escaped quote"
+}
+
 test_pot_has_no_orphans() {
 	# The other direction: an entry nobody references means a string was deleted
 	# from the UI but left in the template, which would ship a dead translation.
