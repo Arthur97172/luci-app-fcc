@@ -1456,39 +1456,56 @@ fcc_remote_win_control_script() {
 	# Both ops then wait for the machine to agree. A start that returns before
 	# the process exists, or a stop that returns before it is gone, is the reason
 	# a page could say "done" over a server that was not there.
+	#
+	# The service branch waits too. Start-Service and Stop-Service return when
+	# the service manager has finished, and a wrapper such as NSSM reports that
+	# window itself rather than the server it launched — so the service can read
+	# Running while fcc-server has not bound its port yet, or after the wrapped
+	# program has already exited. The same process list the service is expected
+	# to run therefore decides the answer in both branches, and the page gets the
+	# same words whichever one applied.
 	_wc_op="$1"
 	_wc_service="$2"
 	_wc_path="$(fcc_remote_win_path_script)"
-	_wc_kill="$(cat <<'FCCEOF'
+	_wc_proc_stop="$(cat <<'FCCEOF'
 $s = @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue) | Stop-Process -Force -ErrorAction Stop;
-$n = 0;
-while ($n -lt 10 -and @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Start-Sleep -Milliseconds 500; $n++ };
-if (@(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'the FCC Server did not stop'; exit 1 } else { Write-Output 'server stopped' }
 FCCEOF
 )"
-	_wc_launch="$(cat <<'FCCEOF'
+	_wc_proc_start="$(cat <<'FCCEOF'
 $q = [char]34;
 $exe = (Get-Command 'fcc-server' -ErrorAction Stop).Source;
 $rv = -1;
 try { $rv = (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ($q + $exe + $q) }).ReturnValue } catch { $rv = -1 };
 if ($rv -ne 0) { Start-Process -WindowStyle Hidden -FilePath $exe };
+FCCEOF
+)"
+	_wc_wait_up="$(cat <<'FCCEOF'
 $n = 0;
 while ($n -lt 15 -and @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -eq 0) { Start-Sleep -Seconds 1; $n++ };
 if (@(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'server running' } else { Write-Output 'the FCC Server did not start'; exit 1 }
 FCCEOF
 )"
+	_wc_wait_down="$(cat <<'FCCEOF'
+$n = 0;
+while ($n -lt 10 -and @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Start-Sleep -Milliseconds 500; $n++ };
+if (@(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'the FCC Server did not stop'; exit 1 } else { Write-Output 'server stopped' }
+FCCEOF
+)"
+	_wc_kill="$_wc_proc_stop $_wc_wait_down"
+	_wc_launch="$_wc_proc_start $_wc_wait_up"
 	case "$_wc_op" in
 		start)   _wc_proc="$_wc_launch" ;;
 		stop)    _wc_proc="$_wc_kill" ;;
 		restart) _wc_proc="$_wc_kill; Start-Sleep -Milliseconds 500; $_wc_launch" ;;
 	esac
-	_wc_proc="$(printf '%s' "$_wc_proc" | tr '\n' ' ')"
 	case "$_wc_op" in
-		start)   _wc_verb="Start-Service" ;;
-		stop)    _wc_verb="Stop-Service" ;;
-		restart) _wc_verb="Restart-Service" ;;
+		start)   _wc_svc="Start-Service -Name '$_wc_service' -ErrorAction Stop; $_wc_wait_up" ;;
+		stop)    _wc_svc="Stop-Service -Name '$_wc_service' -ErrorAction Stop; $_wc_wait_down" ;;
+		restart) _wc_svc="Restart-Service -Name '$_wc_service' -ErrorAction Stop; $_wc_wait_up" ;;
 	esac
-	printf '%s' "$_wc_path; if (Get-Service -Name '$_wc_service' -ErrorAction SilentlyContinue) { $_wc_verb -Name '$_wc_service' -ErrorAction Stop } else { $_wc_proc }"
+	_wc_proc="$(printf '%s' "$_wc_proc" | tr '\n' ' ')"
+	_wc_svc="$(printf '%s' "$_wc_svc" | tr '\n' ' ')"
+	printf '%s' "$_wc_path; if (Get-Service -Name '$_wc_service' -ErrorAction SilentlyContinue) { $_wc_svc } else { $_wc_proc }"
 }
 
 fcc_remote_win_session_script() {

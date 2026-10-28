@@ -1338,6 +1338,14 @@ test_control_uses_the_windows_preset() {
 	assert_contains "$cmd" "if (Get-Service -Name 'fcc' -ErrorAction SilentlyContinue)" \
 		"Windows asks whether a service of that name exists"
 	assert_contains "$cmd" "Start-Service -Name 'fcc'" "and starts it when it does"
+	# The service manager says Running before the program the service launched
+	# has bound its port, and it keeps saying that after that program has died.
+	# So a start waits on the process list here too, exactly as the branch below
+	# does — the two counts are one for each branch.
+	assert_contains "$cmd" "Start-Service -Name 'fcc' -ErrorAction Stop" \
+		"a service that will not start is an error, not an empty answer"
+	assert_eq 2 "$(printf '%s' "$cmd" | grep -o 'the FCC Server did not start' | wc -l | tr -d ' ')" \
+		"and both branches wait for the server before reporting success"
 	assert_contains "$cmd" "Start-Process -WindowStyle Hidden" \
 		"falling back to the upstream install's fcc-server when it does not"
 	assert_contains "$cmd" '$env:Path' "with the installer's directories on PATH"
@@ -1366,6 +1374,8 @@ test_control_on_windows_stops_and_restarts_the_process_without_a_service() {
 		"never by a name list that errors when a name is absent"
 	assert_contains "$cmd" "the FCC Server did not stop" \
 		"and says so when the process outlives the stop"
+	assert_eq 2 "$(printf '%s' "$cmd" | grep -o 'the FCC Server did not stop' | wc -l | tr -d ' ')" \
+		"a service stop waits for the process too"
 
 	run_remote control restart >/dev/null
 	cmd="$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')"

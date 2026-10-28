@@ -190,9 +190,16 @@ machine: Windows, Linux, macOS or OpenWrt, one at a time.
      down at the moment `start` reported success (seen on Windows 11). The start
      therefore goes through `Win32_Process.Create`, which is outside that job, so
      it outlives the connection; `Start-Process` stays only as the fallback for
-     a machine where WMI refuses. Both start and stop then wait for the process
-     list to agree — up to fifteen seconds for a start, five for a stop — and
-     report a failure if it never does, rather than reporting success first.
+     a machine where WMI refuses. Both branches then wait for the process list
+     to agree — up to fifteen seconds for a start, five for a stop — and report
+     a failure if it never does, rather than reporting success first. The
+     service branch waits too: the service manager returns as soon as the
+     service reads Running, which can be before the `fcc-server` a service wraps
+     has bound its port, and it goes on saying Running after that program has
+     died. That branch was checked on a real Windows 11 machine with a temporary
+     service registered around `fcc-server.exe`: start, stop and restart went
+     through the service manager, the wrapped process tree disappeared on stop,
+     and the Admin proxy kept answering.
 
    A service name may contain only letters, digits and `.` `-` `_`.
 
@@ -204,7 +211,10 @@ did not come up has the location of `~/.fcc/server.log` written out; no `pgrep`
 is said plainly, rather than the buttons promising more than they do. The
 **Web Console** is unaffected: in LAN mode it asks that machine's own shell —
 `sh` on Linux and macOS, PowerShell on Windows, with the directories the
-installer wrote added to PATH first — lists its agents and can start them there.
+installer wrote added to PATH first — lists its agents and can start them there;
+on Windows that pane has been checked on a real machine: PowerShell starts
+`fcc-claude` and Claude Code's full-screen interface draws and takes input in
+the browser's terminal.
 The server state is asked of the service manager first and, when there is no
 such unit or service, read from the process list, so a hand-started server is
 not reported as stopped. On OpenWrt a start run through the init script is then
