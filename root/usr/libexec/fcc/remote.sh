@@ -1102,6 +1102,10 @@ FCCEOF
 # Installed or not is asked of the far side, so the page can say which state the
 # machine is in rather than guessing from a successful start.
 fcc_remote_helper_document() {
+	# The block names the account, and a rule with an empty one is not a rule
+	# sudo accepts. A target that is not configured has no block to give.
+	fcc_remote_config_ok \
+		|| { fcc_remote_error "the remote configuration is incomplete"; return 1; }
 	_hd_user="$(fcc_remote_user)"
 	_hd_path=/usr/local/sbin/fcc-local-forwarding
 	_hd_state="$(fcc_remote_ssh "PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; if [ -x $_hd_path ]; then echo helper=installed; else echo helper=missing; fi" \
@@ -1114,9 +1118,16 @@ cat > $_hd_path <<'FCC_HELPER'
 $(fcc_remote_helper_source)
 FCC_HELPER
 chmod 0755 $_hd_path
-printf '%s\n' '$_hd_user ALL=(root) NOPASSWD: $_hd_path on, $_hd_path off' > /etc/sudoers.d/50-fcc-local-forwarding
-chmod 0440 /etc/sudoers.d/50-fcc-local-forwarding
-if command -v visudo >/dev/null 2>&1; then visudo -cf /etc/sudoers.d/50-fcc-local-forwarding >/dev/null; fi
+_sd_rule=/etc/sudoers.d/50-fcc-local-forwarding
+_sd_tmp=/etc/sudoers.d/.50-fcc-local-forwarding.tmp
+printf '%s\n' '$_hd_user ALL=(root) NOPASSWD: $_hd_path on, $_hd_path off' > "\$_sd_tmp"
+chmod 0440 "\$_sd_tmp"
+if command -v visudo >/dev/null 2>&1 && ! visudo -cf "\$_sd_tmp" >/dev/null; then
+	rm -f "\$_sd_tmp"
+	echo "the sudoers rule was rejected; nothing was changed" >&2
+	exit 1
+fi
+mv "\$_sd_tmp" "\$_sd_rule"
 FCCEOF
 )"
 	printf '{"ok":true,"user":%s,"path":%s,"installed":%s,"install":%s}\n' \

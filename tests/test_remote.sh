@@ -1212,6 +1212,17 @@ test_the_one_time_setup_names_the_account_and_the_program() {
 		"the rule names only the helper and only its two words"
 	assert_not_contains "$out" 'tee' \
 		"nothing that could write an arbitrary file is handed over"
+	# A sudoers file that does not parse can take sudo away from everyone on
+	# that machine, so the rule is written somewhere sudo ignores, checked, and
+	# only then moved into place.
+	_vs="$(printf '%s\n' "$out" | grep -o 'visudo -cf[^\\]*' | head -n 1)"
+	assert_contains "$out" '/etc/sudoers.d/.50-fcc-local-forwarding.tmp' \
+		"the rule is first put in a file sudo's includedir skips"
+	assert_contains "$_vs" 'visudo -cf' "and parsed before it counts"
+	_vl="$(printf '%s' "$out" | sed 's/\\n/\n/g; s/\\"/"/g' | grep -n 'visudo -cf' | head -n 1 | cut -d: -f1)"
+	_mv="$(printf '%s' "$out" | sed 's/\\n/\n/g; s/\\"/"/g' | grep -n 'mv "\$_sd_tmp" "\$_sd_rule"' | head -n 1 | cut -d: -f1)"
+	assert_eq "1" "$([ -n "$_vl" ] && [ -n "$_mv" ] && [ "$_vl" -lt "$_mv" ] && echo 1 || echo 0)" \
+		"and it is moved into place only after that check"
 
 	fresh
 	ready_lan
@@ -1219,6 +1230,17 @@ test_the_one_time_setup_names_the_account_and_the_program() {
 	out="$(SSH_OUT='helper=installed' run_remote helper)"
 	assert_contains "$out" '"installed":true' \
 		"a machine that already has the helper says so"
+	drop_sandbox
+}
+
+test_the_one_time_setup_needs_a_configured_target() {
+	# The block writes a sudoers rule naming the account this router uses. With
+	# no target configured there is no account to name, and an empty one is not
+	# a rule sudo accepts — so there is no block to paste.
+	fresh
+	out="$(run_remote helper)" || true
+	assert_contains "$out" '"ok":false' "an unconfigured target gets no block"
+	assert_not_contains "$out" 'ALL=(root)' "and no half-written rule"
 	drop_sandbox
 }
 

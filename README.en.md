@@ -265,7 +265,9 @@ LAN machine** gives a block to paste once: `sudo sh -s` as an administrator
 `sudoers` rule allowing only `fcc-local-forwarding on` and
 `fcc-local-forwarding off`. The program accepts those two words and nothing
 else, so it can change this one setting and nothing more — a far smaller grant
-than a list of commands. How sshd is reloaded here (systemd unit, SysV script,
+than a list of commands. The rule is written to a temporary file that sudo's
+includedir skips, checked with `visudo`, and moved into place only if that
+check passes. How sshd is reloaded here (systemd unit, SysV script,
 `/etc/init.d`) lives in the helper, which is the only part that differs between
 distributions. The password is typed by that machine's administrator and is
 never stored or asked for by this package.

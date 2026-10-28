@@ -186,9 +186,10 @@ root 的情况下读出那台机器 sshd 真正生效的值——主配置和它
 时，页面上 **局域网主机的一次性准备** 给出了一段可粘贴的命令：以管理员身份执行一次
 `sudo sh -s`（以 root 登录的机器上直接 `sh -s`），装上 helper 和一条只放行
 `fcc-local-forwarding on` 与 `fcc-local-forwarding off` 的 sudoers 规则。这个程序只认这两个
-词，也就只能改这一项设置，比放行一组命令安全得多；重载 sshd 的具体写法（systemd unit、SysV
-脚本、`/etc/init.d`）都收在 helper 里，各发行版不同之处只在这里。口令由那台机器的管理员自己
-输入，本包不保存也不索取。
+词，也就只能改这一项设置，比放行一组命令安全得多；规则先写进 `sudoers.d` 里 sudo 不读取的
+临时文件，用 `visudo` 校验通过后才移入正式位置，校验不过就什么都不改。重载 sshd 的具体写法
+（systemd unit、SysV 脚本、`/etc/init.d`）都收在 helper 里，各发行版不同之处只在这里。口令由
+那台机器的管理员自己输入，本包不保存也不索取。
 
 转发被关成 `no` 又没法从这里改时，打开 Admin 会得到 502，页面直接说明是那台机器的 sshd
 拒绝了转发并指出要改的设置，而不是只报一句 `Connection reset by peer`。
