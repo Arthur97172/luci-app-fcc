@@ -132,8 +132,13 @@ make package/luci-app-fcc/compile V=s
    - **macOS**：一律用启动器（上游安装不注册 launchd 任务）。
    - **Windows**：发送一行 PowerShell，先问那台机器有没有同名服务：有就跑
      `Start-Service`/`Stop-Service`/`Restart-Service`；没有服务——`install.ps1` 装完就是
-     这样——就改用上游安装自带的服务器，用 `fcc-server` 在后台隐藏启动、按进程列表停止，
-     因为那个安装脚本不注册 Windows 服务。
+     这样——就改用上游安装自带的服务器，按进程列表停止，因为那个安装脚本不注册 Windows
+     服务。启动不能只靠 `Start-Process`：Windows 的 sshd 把一条连接里的命令放进作业对象，
+     连接一断就连同它的子进程一起杀掉，服务器会在“启动成功”的那一刻消失（Windows 11 上
+     实测如此）。所以启动改由 `Win32_Process.Create` 发起，进程不在那个作业里，连接断开
+     后继续运行；`Start-Process` 只留给 WMI 被拒的机器当退路。启动和停止之后都会等那台
+     机器的进程列表改口——启动最多 15 秒，停止最多 5 秒——没改口就报失败，而不是先报
+     成功。
 
    服务名只接受字母、数字和 `.` `-` `_`。
 
@@ -155,8 +160,10 @@ shell——Linux 和 macOS 是 `sh`，Windows 是 PowerShell，都先把安装�
 PID、内存和运行时长取自该进程，监听地址取自它的监听套接字——`ss`、`lsof` 或 `netstat`，
 Windows 上用 `Get-NetTCPConnection`，没有这个 cmdlet 时退回 `netstat -ano`——版本来自
 `fcc-server --version`（上游说明该用法安全）。哪一项读不到就显示 `—`，不会编造。
-Windows 上这套查询走 PowerShell，尚待在真机上验证。服务器运行期间，这六行每 30 秒自动重读
-一次；服务器停掉或页面离开局域网模式，刷新也就停下。
+Windows 上这套查询走 PowerShell（已在 Windows 11 26200 上对着 free-claude-code 6.18.3
+验证）：上游的 `fcc-server` 只是个外壳，真正占着监听端口的是它拉起的 Python 进程，所以先按
+**Admin 端口**找出占用该端口的进程并描述它，找不到才退回按进程名找。服务器运行期间，这六行
+每 30 秒自动重读一次；服务器停掉或页面离开局域网模式，刷新也就停下。
 
 **只接受私有 IPv4 地址**（`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）；主机名一律
 拒绝，因为一个名字可能解析成公网地址。

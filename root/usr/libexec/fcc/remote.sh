@@ -1372,42 +1372,63 @@ fcc_remote_win_server_cmd() {
 # in the same key=value lines the POSIX script prints — so one parser and one
 # renderer serve all four platforms.
 #
-# The pid is the anchor: no process, no lines, and the answer stays the
-# one-line state. Memory and uptime come from the process object; the version
-# from the launcher, exactly as on the POSIX side and for the same reason
-# (upstream documents `--version` as safe); the socket from Get-NetTCPConnection
-# where it exists and from `netstat -ano` where it does not. A field the machine
-# cannot answer is left out rather than guessed, and the page draws a dash.
+# No pid, no lines, and the answer stays the one-line state. Memory and uptime
+# come from the process object; the version from the launcher, exactly as on the
+# POSIX side and for the same reason (upstream documents `--version` as safe);
+# the socket from Get-NetTCPConnection where it exists and from `netstat -ano`
+# where it does not. A field the machine cannot answer is left out rather than
+# guessed, and the page draws a dash.
 #
-# `fcc-desktop` is the other way the server is up, so it is the second choice
-# when no `fcc-server` process exists — the same pair the running check counts.
+# The process to describe is found by its socket first, by its name second. The
+# upstream launcher is a shim — the server itself is a python.exe it starts, and
+# that grandchild is what owns the listening port (seen on Windows 11 with
+# free-claude-code 6.18.3). Asking the process named `fcc-server` for its own
+# sockets would answer with none and draw a dash where the port belongs, so the
+# port this router tunnels to is looked up first and whoever holds it is the one
+# described. Only a process that could be this server is believed: another
+# program sitting on that port is ignored, and the name decides instead.
+#
+# `fcc-desktop` is the other way the server is up — the desktop app runs the
+# server inside itself — so it is the second name the running check counts and
+# the second choice here.
 #
 # Nothing here may contain a double quote or a newline: fcc_remote_win_cmd wraps
 # the whole script in the only pair cmd.exe is asked to understand, and the
 # remote command is a single line. The script is therefore written one
 # statement per line, each ending in `;`, and flattened at the end.
 fcc_remote_win_details_script() {
+	# <admin port> — the port this router tunnels to, which is the one the server
+	# is expected to listen on. Anything but a bare number falls back to 8082
+	# rather than being pasted into the script.
+	_wd_port="$1"
+	case "$_wd_port" in
+		''|*[!0-9]*) _wd_port=8082 ;;
+	esac
 	_wd_body="$(cat <<'FCCEOF'
-$s = @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue) | Sort-Object { $_.ProcessName -ne 'fcc-server' } | Select-Object -First 1;
+$l = $null;
+$s = $null;
+if (Get-Command 'Get-NetTCPConnection' -ErrorAction SilentlyContinue) { $l = @(Get-NetTCPConnection -State Listen -LocalPort __FCC_WIN_PORT__ -ErrorAction SilentlyContinue) | Select-Object -First 1 };
+if ($l) { $s = Get-Process -Id $l.OwningProcess -ErrorAction SilentlyContinue; if ($s -and @('fcc-server','fcc-desktop','python','pythonw') -notcontains $s.ProcessName) { $s = $null; $l = $null } };
+if (-not $s) { $s = @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue) | Select-Object -First 1 };
 if (-not $s) { exit 0 };
 Write-Output ('pid=' + $s.Id);
 try { Write-Output ('uptime=' + [int]((Get-Date) - $s.StartTime).TotalSeconds) } catch { };
 try { Write-Output ('rss_kb=' + [int]($s.WorkingSet64 / 1KB)) } catch { };
 $g = Get-Command 'fcc-server' -ErrorAction SilentlyContinue;
 if ($g) { $v = @(& $g.Source --version 2>$null) | Where-Object { $_ } | Select-Object -First 1; if ($v) { $w = ($v -split '\s+') | Where-Object { $_ } | Select-Object -Last 1; if ($w) { Write-Output ('version=' + $w) } } };
-$l = $null;
-if (Get-Command 'Get-NetTCPConnection' -ErrorAction SilentlyContinue) { $l = @(Get-NetTCPConnection -State Listen -OwningProcess $s.Id -ErrorAction SilentlyContinue) | Select-Object -First 1 };
+if (-not $l) { if (Get-Command 'Get-NetTCPConnection' -ErrorAction SilentlyContinue) { $l = @(Get-NetTCPConnection -State Listen -OwningProcess $s.Id -ErrorAction SilentlyContinue) | Select-Object -First 1 } };
 if ($l) { Write-Output ('port=' + $l.LocalPort); if ($l.LocalAddress) { Write-Output ('bind=' + $l.LocalAddress) } };
 if (-not $l) { $n = @(netstat -ano | Where-Object { $_ -match ('^\s*TCP\s+\S+\s+\S+\s+LISTENING\s+' + $s.Id + '\s*$') }) | Select-Object -First 1; if ($n) { $f = ($n.Trim() -split '\s+')[1]; $pt = ($f -split ':') | Select-Object -Last 1; Write-Output ('port=' + $pt); $ad = $f -replace ':\d+$',''; if ($ad) { Write-Output ('bind=' + $ad) } } };
 exit 0
 FCCEOF
 )"
+	_wd_body="$(printf '%s' "$_wd_body" | sed "s/__FCC_WIN_PORT__/$_wd_port/")"
 	printf '%s; %s' "$(fcc_remote_win_path_script)" \
 		"$(printf '%s' "$_wd_body" | tr '\n' ' ')"
 }
 
 fcc_remote_win_details_cmd() {
-	fcc_remote_win_cmd "$(fcc_remote_win_details_script)"
+	fcc_remote_win_cmd "$(fcc_remote_win_details_script "$1")"
 }
 
 fcc_remote_win_control_script() {
@@ -1417,16 +1438,51 @@ fcc_remote_win_control_script() {
 	# applies is a property of the machine, not of a setting this router can
 	# see. -ErrorAction Stop turns a failure into a non-zero exit, which is what
 	# the control verb reports.
+	#
+	# The process is stopped through a pipeline, not `Stop-Process -Name`: a name
+	# that is not present raises a non-terminating error, so a stop that had
+	# nothing left to do — the usual restart case, and any second Stop — exited 1
+	# and the page reported a failure that had not happened. A pipeline over an
+	# empty list has no error at all.
+	#
+	# The process is started through WMI, not with Start-Process alone. sshd on
+	# Windows runs a session's commands in a job object and kills the job when
+	# the connection closes, which killed the server the moment the start
+	# returned (seen on Windows 11 26200); Win32_Process.Create makes the process
+	# with the same logon token but outside that job, so it outlives the session.
+	# Start-Process stays as the fallback for a machine where WMI is refused —
+	# there it at least works when the far side is an interactive session.
+	#
+	# Both ops then wait for the machine to agree. A start that returns before
+	# the process exists, or a stop that returns before it is gone, is the reason
+	# a page could say "done" over a server that was not there.
 	_wc_op="$1"
 	_wc_service="$2"
 	_wc_path="$(fcc_remote_win_path_script)"
-	_wc_start="Start-Process -WindowStyle Hidden -FilePath (Get-Command 'fcc-server' -ErrorAction Stop).Source"
-	_wc_stop="Stop-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue"
+	_wc_kill="$(cat <<'FCCEOF'
+$s = @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue) | Stop-Process -Force -ErrorAction Stop;
+$n = 0;
+while ($n -lt 10 -and @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Start-Sleep -Milliseconds 500; $n++ };
+if (@(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'the FCC Server did not stop'; exit 1 } else { Write-Output 'server stopped' }
+FCCEOF
+)"
+	_wc_launch="$(cat <<'FCCEOF'
+$q = [char]34;
+$exe = (Get-Command 'fcc-server' -ErrorAction Stop).Source;
+$rv = -1;
+try { $rv = (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ($q + $exe + $q) }).ReturnValue } catch { $rv = -1 };
+if ($rv -ne 0) { Start-Process -WindowStyle Hidden -FilePath $exe };
+$n = 0;
+while ($n -lt 15 -and @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -eq 0) { Start-Sleep -Seconds 1; $n++ };
+if (@(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'server running' } else { Write-Output 'the FCC Server did not start'; exit 1 }
+FCCEOF
+)"
 	case "$_wc_op" in
-		start)   _wc_proc="$_wc_start" ;;
-		stop)    _wc_proc="$_wc_stop" ;;
-		restart) _wc_proc="$_wc_stop; Start-Sleep -Milliseconds 500; $_wc_start" ;;
+		start)   _wc_proc="$_wc_launch" ;;
+		stop)    _wc_proc="$_wc_kill" ;;
+		restart) _wc_proc="$_wc_kill; Start-Sleep -Milliseconds 500; $_wc_launch" ;;
 	esac
+	_wc_proc="$(printf '%s' "$_wc_proc" | tr '\n' ' ')"
 	case "$_wc_op" in
 		start)   _wc_verb="Start-Service" ;;
 		stop)    _wc_verb="Stop-Service" ;;
@@ -1962,10 +2018,12 @@ fcc_remote_details() {
 
 	# No document: ask the machine's own process list and launcher. The pid is
 	# the anchor — without it there is no server to describe, and the answer
-	# stays the one-line state.
+	# stays the one-line state. On Windows the admin port this router tunnels to
+	# is part of the question, because the process holding that socket is the
+	# server and the launcher of the same name is only its parent.
 	_dt_cmd="$(fcc_remote_bare_details_cmd)"
 	if [ "$(fcc_remote_platform)" = "windows" ]; then
-		_dt_cmd="$(fcc_remote_win_details_cmd)"
+		_dt_cmd="$(fcc_remote_win_details_cmd "$(fcc_remote_aport)")"
 	fi
 	_dt_raw="$(fcc_remote_ssh "$_dt_cmd" \
 		2>/dev/null | fcc_remote_output_filter | tr -d '\r')"
@@ -2031,7 +2089,13 @@ fcc_remote_running() {
 				"$(fcc_remote_bare_server_script)" \
 				"/etc/init.d/$_rn_service status")" ;;
 		windows)
-			_rn_cmd="powershell.exe -NoProfile -NonInteractive -Command \"(Get-Service -Name '$_rn_service').Status\"" ;;
+			# Silent, because the upstream install leaves no service: a missing
+			# name is the normal case, and PowerShell's red "Cannot find any
+			# service" was reaching the answer's `output` field on a host whose
+			# process list then said, correctly, that the server was up. With
+			# nothing printed the word is empty and the process-list probe below
+			# decides.
+			_rn_cmd="powershell.exe -NoProfile -NonInteractive -Command \"(Get-Service -Name '$_rn_service' -ErrorAction SilentlyContinue).Status\"" ;;
 		*)
 			fcc_remote_error "invalid platform"; return 1 ;;
 	esac

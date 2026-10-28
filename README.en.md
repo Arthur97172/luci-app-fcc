@@ -183,9 +183,16 @@ machine: Windows, Linux, macOS or OpenWrt, one at a time.
    - **Windows**: one PowerShell line that asks the machine whether it has a
      service of that name: if it does, `Start-Service` / `Stop-Service` /
      `Restart-Service`; if it does not — which is what install.ps1 leaves — the
-     upstream install's own server, started hidden with `fcc-server` and
-     stopped through its process list, because the installer registers no
-     Windows service.
+     upstream install's own server, stopped through its process list, because
+     the installer registers no Windows service. A start cannot be left to
+     `Start-Process` alone: Windows' sshd runs a connection's commands in a job
+     object and kills the job when the connection closes, which took the server
+     down at the moment `start` reported success (seen on Windows 11). The start
+     therefore goes through `Win32_Process.Create`, which is outside that job, so
+     it outlives the connection; `Start-Process` stays only as the fallback for
+     a machine where WMI refuses. Both start and stop then wait for the process
+     list to agree — up to fifteen seconds for a start, five for a stop — and
+     report a failure if it never does, rather than reporting success first.
 
    A service name may contain only letters, digits and `.` `-` `_`.
 
@@ -219,10 +226,13 @@ listening address from its listening socket in `ss`, `lsof` or `netstat` — on
 Windows from `Get-NetTCPConnection`, falling back to `netstat -ano` where that
 cmdlet does not exist — and the version from `fcc-server --version` (upstream
 documents running it as safe). Whatever cannot be read shows `—` rather than a
-guess. On Windows the questions are asked through PowerShell and have yet to be
-verified on a real machine. While the server is running those six lines are
-re-read every 30 seconds; once it is not running, or the page leaves LAN mode,
-the refresh stops.
+guess. On Windows the questions are asked through PowerShell, and were checked on
+a real machine running Windows 11 26200 with free-claude-code 6.18.3: the
+upstream `fcc-server` is only a shim, and the process that holds the listening
+socket is the Python one it starts, so the process owning the **Admin port** is
+described first and the name is the fallback. While the server is running those
+six lines are re-read every 30 seconds; once it is not running, or the page
+leaves LAN mode, the refresh stops.
 
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.

@@ -868,8 +868,19 @@ port=8082' run_remote running)" || true
 		"the questions are asked in PowerShell, not in a shell Windows lacks"
 	assert_contains "$_dt" 'WorkingSet64' "memory comes from the process itself"
 	assert_contains "$_dt" 'Get-NetTCPConnection' "and the socket from its owner"
+	assert_contains "$_dt" "Get-NetTCPConnection -State Listen -LocalPort 8082" \
+		"the process described is the one holding the Admin port"
 	assert_contains "$_dt" 'netstat -ano' "with netstat where that cmdlet is absent"
 	assert_not_contains "$_dt" 'sh -c' "no POSIX shell is assumed"
+
+	# The port is the setting, not a constant: the server may listen somewhere
+	# other than upstream's default, and the process holding that port is the
+	# one the panel should describe.
+	uci_set remote_admin_port 9099
+	SSH_OUT='Running' SSH_DETAILS_OUT='pid=4242' run_remote running >/dev/null || true
+	_dt="$(ssh_last_command)"
+	assert_contains "$_dt" "Get-NetTCPConnection -State Listen -LocalPort 9099" \
+		"the Admin port setting is the socket the question starts from"
 
 	# cmd.exe is handed the script as one argument, so the pair around it must be
 	# the only double quotes in the command: a second pair would end the argument
@@ -1346,8 +1357,15 @@ test_control_on_windows_stops_and_restarts_the_process_without_a_service() {
 	run_remote control stop >/dev/null
 	cmd="$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')"
 	assert_contains "$cmd" "Stop-Service -Name 'fcc'" "a service is stopped when there is one"
-	assert_contains "$cmd" "Stop-Process -Name 'fcc-server','fcc-desktop'" \
+	# A pipeline, not `Stop-Process -Name`: a name that is absent raises a
+	# non-terminating error, so a stop with nothing left to kill exited 1 and
+	# the page reported a failure that had not happened.
+	assert_contains "$cmd" "@(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue) | Stop-Process -Force" \
 		"and the processes otherwise"
+	assert_not_contains "$cmd" "Stop-Process -Name 'fcc-server','fcc-desktop'" \
+		"never by a name list that errors when a name is absent"
+	assert_contains "$cmd" "the FCC Server did not stop" \
+		"and says so when the process outlives the stop"
 
 	run_remote control restart >/dev/null
 	cmd="$(tail -n 1 "$TMP/ssh.log" | sed 's/^ARG //')"
