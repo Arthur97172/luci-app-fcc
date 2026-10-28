@@ -1130,6 +1130,27 @@ release_job() {
 	sed -n '/^  release:/,$p' "$WORKFLOW"
 }
 
+# The check job, up to the build job that follows it.
+check_job() {
+	sed -n '/^  check:/,/^  build:/p' "$WORKFLOW"
+}
+
+# A failing check has to be readable by whoever sees the red mark. The log is
+# not: it is served only to a signed-in session. Annotations are public, so the
+# failure lines are repeated as those, and the step still fails.
+test_the_check_job_reports_its_failures() {
+	_ts_c="$(check_job)"
+	assert_contains "$_ts_c" 'sh scripts/test.sh' "the gate runs the suite"
+	assert_contains "$_ts_c" '::error::' \
+		"and repeats each failing check as an annotation"
+	assert_contains "$_ts_c" 'head -10' \
+		"up to the ten a step may raise"
+	assert_contains "$_ts_c" 'exit 1' \
+		"while still failing the job"
+	assert_contains "$_ts_c" 'check.log' \
+		"keeping the run's own log for the rest"
+}
+
 test_the_build_collects_only_our_package() {
 	_ts_c="$(collect_step)"
 	assert_ne "" "$_ts_c" "the build job has a collect step"

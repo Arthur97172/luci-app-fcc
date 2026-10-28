@@ -82,7 +82,30 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
 
       - name: Run the check suite
-        run: sh scripts/test.sh
+        # The suite prints every failed check, but a run's log is readable only
+        # by someone signed in. Repeating the failure lines as annotations puts
+        # them on the run page and in the checks API, which is public — a red
+        # run can then be diagnosed without downloading the log.
+        #
+        # A step may raise ten annotations, so the first ten are sent and the
+        # rest are counted; ten failing checks are enough to name the suite.
+        run: |
+          if sh scripts/test.sh >"$RUNNER_TEMP/check.log" 2>&1; then
+            cat "$RUNNER_TEMP/check.log"
+            exit 0
+          fi
+          cat "$RUNNER_TEMP/check.log"
+          grep -E '^    FAIL|^failed checks:|^[0-9]+ of [0-9]+ suites FAILED' \
+            "$RUNNER_TEMP/check.log" >"$RUNNER_TEMP/failures.txt" || true
+          head -10 "$RUNNER_TEMP/failures.txt" \
+            | while IFS= read -r line; do
+                printf '::error::%s\n' "$(printf '%s' "$line" | sed 's/%/%25/g')"
+              done
+          n=$(wc -l <"$RUNNER_TEMP/failures.txt")
+          if [ "$n" -gt 10 ]; then
+            printf '::error::%d more failing checks are in the log\n' "$((n - 10))"
+          fi
+          exit 1
 
   # ---------------------------------------------------------------------------
   # Build matrix (section 61).
