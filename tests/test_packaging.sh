@@ -1389,6 +1389,11 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	# even before anything is configured.
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-key-state"' "the key status line exists"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-keygen"' "with the first-use button"
+	# The button makes the pair and shows the public half; putting it in place
+	# on the other machine is the step after it, said in the panel, so the
+	# label names only what the click does.
+	assert_contains "$(cat "$_ts_view")" '<%:Generate key%>' \
+		"whose label is the generating alone"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-pubkey"' "and somewhere to show the key"
 	# Where the key goes differs per platform, so the panel names all three:
 	# a Unix path is wrong on Windows and wrong for OpenWrt's Dropbear.
@@ -1459,12 +1464,14 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the LAN buttons follow the readiness flag"
 	assert_contains "$(cat "$_ts_js")" 'remote.ready = d.ready === true' \
 		"which is read from the backend rather than inferred"
-	# Stop reports the forwarding setting as well, but a denial there is no
-	# reason to open the one-time block: that block installs the very setting
-	# the stop is taking away, and opening it made Stop look like it had asked
-	# for authorization it never needs.
-	assert_contains "$(cat "$_ts_js")" "'denied' && op !== 'stop'" \
-		"the one-time block is offered for start and restart, never for stop"
+	# The one-time panel has one way in: its own button. A refused Start used
+	# to open it as well, and so did a Stop whose forwarding step was refused —
+	# the second showed the block that installs the very setting the stop was
+	# taking away, and both read as if the click had asked for authorization.
+	assert_not_contains "$(cat "$_ts_js")" 'showRemoteHelper(true)' \
+		"no control click opens the one-time panel"
+	assert_contains "$(cat "$_ts_js")" 'showRemoteHelper(!panel || panel.hidden)' \
+		"only the one-time authorization button does"
 	assert_contains "$(cat "$_ts_css")" '.fcc-mode-btn.on' \
 		"the selected side of the switch is styled"
 	assert_contains "$(cat "$_ts_css")" '.fcc-locked' \

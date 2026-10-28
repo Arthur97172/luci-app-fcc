@@ -149,10 +149,10 @@ The **FCC Server** section of the *Configuration* page carries a
 **Stop**, **Restart** and **Open FCC Admin** — drive the FCC server on one other
 machine: Windows, Linux, macOS or OpenWrt, one at a time.
 
-1. With **IP address** and **Username** filled in, press **Generate and
-   configure key**. The router creates an Ed25519 key pair under `/etc/fcc/ssh/`
-   and shows the public half; add it to the remote account's authorized_keys
-   file — the page names the exact path for the platform you chose:
+1. With **IP address** and **Username** filled in, press **Generate key**. The
+   router creates an Ed25519 key pair under `/etc/fcc/ssh/` and shows the public
+   half; add it to the remote account's authorized_keys file — the page names
+   the exact path for the platform you chose:
    `/home/<account>/.ssh/authorized_keys` on Linux (`/root/.ssh/authorized_keys`
    for root), `/Users/<account>/.ssh/authorized_keys` on macOS (where Remote
    Login also has to be switched on in System Settings → General → Sharing),

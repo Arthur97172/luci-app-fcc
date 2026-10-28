@@ -1113,14 +1113,10 @@
 			 * click. A failed operation keeps the page's one line — that is the
 			 * thing to retry — and when it worked but the setting did not, the
 			 * warning takes the place of "Done." so it is not read past. */
+			/* A warning here never opens the one-time panel as well: the
+			 * sentence says what happened and names the button that has the
+			 * command, and only that button opens it. */
 			var warn = forwardingWarning(d, op);
-			/* The one refusal a person can fix from this page: open the block
-			 * with the command that makes the setting, rather than leaving the
-			 * warning as the end of the story. Not for stop, though: that click
-			 * is taking the setting away, and the block installs it — opening it
-			 * there answers a question nobody asked and reads as if the stop had
-			 * asked for authorization. The stop sentence says what happened. */
-			if (d.forwarding === 'denied' && op !== 'stop') { showRemoteHelper(true); }
 			if (!d.ok) {
 				FCC.notice(remoteStatus(), 'fail',
 					remoteFailure(d, FCC._('The operation failed.')));
@@ -1559,6 +1555,9 @@
 				if (text) { text.textContent = remote.public_key; }
 			}
 		});
+		/* The only way this panel opens. A refused Start used to open it too,
+		 * which made a button that starts a server look like it had asked for
+		 * authorization; the warning sentence names this button instead. */
 		FCC.$('#fcc-remote-helper').addEventListener('click', function () {
 			var panel = FCC.$('#fcc-remote-helper-panel');
 			showRemoteHelper(!panel || panel.hidden);

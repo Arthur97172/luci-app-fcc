@@ -112,7 +112,7 @@ make package/luci-app-fcc/compile V=s
 **启动**、**停止**、**重启**、**Open FCC Admin** 作用于另一台机器上的 FCC 服务器——一次
 一台，Windows、Linux、macOS、OpenWrt 都可以。
 
-1. 填好 **IP 地址** 和 **用户名**，点 **生成并配置密钥**。路由器在 `/etc/fcc/ssh/` 下生成
+1. 填好 **IP 地址** 和 **用户名**，点 **生成密钥**。路由器在 `/etc/fcc/ssh/` 下生成
    Ed25519 密钥并显示公钥，把它加进远程账号的 authorized_keys——页面会按所选平台写出具体
    路径：Linux 是 `/home/<账号>/.ssh/authorized_keys`（root 为 `/root/.ssh/authorized_keys`），
    macOS 是 `/Users/<账号>/.ssh/authorized_keys`（还需在“系统设置 → 通用 → 共享”里打开

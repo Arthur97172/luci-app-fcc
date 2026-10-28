@@ -269,8 +269,8 @@ msgid ""
 "before the buttons work."
 msgstr "忘记已固定的主机密钥？按钮恢复可用前需要重新信任该远程主机。"
 
-msgid "Generate and configure key"
-msgstr "生成并配置密钥"
+msgid "Generate key"
+msgstr "生成密钥"
 
 msgid "Health"
 msgstr "健康状态"

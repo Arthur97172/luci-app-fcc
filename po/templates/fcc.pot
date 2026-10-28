@@ -210,7 +210,7 @@ msgstr ""
 msgid "Forget the pinned host key? The remote host will have to be trusted again before the buttons work."
 msgstr ""
 
-msgid "Generate and configure key"
+msgid "Generate key"
 msgstr ""
 
 msgid "Health"
