@@ -1433,10 +1433,17 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"and shows the fallback that starts fcc-server when it does not"
 	assert_contains "$(cat "$_ts_js")" "<PATH setup>" \
 		"with the PATH setup it shares with the backend abbreviated"
-	# macOS has no service at all — the upstream install writes no launchd job —
-	# so the preview says that rather than naming a command that cannot run.
-	assert_contains "$(cat "$_ts_js")" 'macOS has no fcc service' \
-		"macOS previews a sentence instead of a preset"
+	# macOS writes no launchd job either, but the launcher itself is what the
+	# buttons start and stop there — so the preview shows those commands rather
+	# than a sentence claiming the machine cannot be controlled from here.
+	assert_contains "$(cat "$_ts_js")" "nohup fcc-server" \
+		"macOS previews the launcher the buttons really start"
+	assert_contains "$(cat "$_ts_js")" 'kill $(pgrep -f fcc-server)' \
+		"and the pid-based stop they really run"
+	# OpenWrt runs its init script when there is one and the launcher when there
+	# is not, exactly as Linux does without a unit; the preview says so.
+	assert_contains "$(cat "$_ts_js")" 'Without an init script of that name the launcher is used instead' \
+		"the OpenWrt preview names the launcher fallback"
 	assert_contains "$(cat "$_ts_view")" 'value="macos"' \
 		"and macOS is one of the platform options"
 

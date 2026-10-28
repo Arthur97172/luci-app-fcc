@@ -771,6 +771,9 @@ msgstr ""
 msgid "Web Console"
 msgstr ""
 
+msgid "Without an init script of that name the launcher is used instead, as on a Linux machine without a unit."
+msgstr ""
+
 msgid "available"
 msgstr ""
 
@@ -790,9 +793,6 @@ msgid "installed"
 msgstr ""
 
 msgid "listening"
-msgstr ""
-
-msgid "macOS has no fcc service: start the FCC server on that machine itself."
 msgstr ""
 
 msgid "not checked"

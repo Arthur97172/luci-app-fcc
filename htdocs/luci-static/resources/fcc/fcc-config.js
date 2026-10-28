@@ -536,11 +536,15 @@
 		if (!box) { return; }
 		var v = remoteFields();
 		var service = v.service || 'fcc';
-		/* macOS has no preset: the upstream install writes no launchd job, and
-		 * a preview of a command that would not run would be a guess. Saying so
-		 * is the one thing the panel can honestly show here. */
+		/* macOS writes no launchd job, so there is no preset to print — but the
+		 * launcher itself is what the buttons act on there: started detached with
+		 * its output in the FCC log, and stopped by the pid the process list
+		 * yields. remote.sh runs exactly that over there, so the preview shows
+		 * the three commands instead of a preset that would not run. */
 		if (v.platform === 'macos') {
-			box.textContent = FCC._('macOS has no fcc service: start the FCC server on that machine itself.');
+			var macRun = 'nohup fcc-server >>~/.fcc/server.log 2>&1 &';
+			var macStop = 'kill $(pgrep -f fcc-server)';
+			box.textContent = [macRun, macStop, macStop + '; ' + macRun].join('\n');
 			return;
 		}
 		var lines = Object.keys(REMOTE_VERBS).map(function (op) {
@@ -558,6 +562,13 @@
 			}
 			return 'systemctl ' + verb + ' ' + service;
 		});
+		/* OpenWrt asks whether that init script exists first, and falls back to
+		 * the launcher when it does not — a machine carrying only the upstream
+		 * install has none. The note says so once rather than doubling each of
+		 * the three lines. */
+		if (v.platform === 'openwrt') {
+			lines.push(FCC._('Without an init script of that name the launcher is used instead, as on a Linux machine without a unit.'));
+		}
 		box.textContent = lines.join('\n');
 	}
 

@@ -395,8 +395,8 @@ msgid ""
 "and take away, the single sshd setting the Admin tunnel needs."
 msgstr ""
 "只有在局域网主机的 SSH 服务拒绝本地转发时才需要。请以管理员身份把下面这段内容"
-"粘贴到那台主机的终端里：它会安装一个小程序，以及一条 sudoers 规则，让这台路由器"
-"能够设置和撤销 Admin 隧道所需的那一项 sshd 设置。"
+"粘贴到那台主机的终端里：它会安装一个小程序，以及一条 sudoers 规则，让这台路由"
+"器能够设置和撤销 Admin 隧道所需的那一项 sshd 设置。"
 
 msgid ""
 "Only one FCC Server runs at a time. Switching to a side stops the other one."
@@ -988,6 +988,12 @@ msgstr "查看日志"
 msgid "Web Console"
 msgstr "Web 控制台"
 
+msgid ""
+"Without an init script of that name the launcher is used instead, as on a "
+"Linux machine without a unit."
+msgstr ""
+"没有同名的 init 脚本时改用启动器，如同没有 unit 的 Linux 机器。"
+
 msgid "available"
 msgstr "可用"
 
@@ -1008,9 +1014,6 @@ msgstr "已安装"
 
 msgid "listening"
 msgstr "监听中"
-
-msgid "macOS has no fcc service: start the FCC server on that machine itself."
-msgstr "macOS 上没有 fcc 服务：请在那台机器上直接启动 FCC Server。"
 
 msgid "not checked"
 msgstr "未检查"
@@ -1061,6 +1064,10 @@ msgid ""
 msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid ""
+#~ "macOS has no fcc service: start the FCC server on that machine itself."
+#~ msgstr "macOS 上没有 fcc 服务：请在那台机器上直接启动 FCC Server。"
 
 #~ msgid "Clear install record"
 #~ msgstr "清除安装记录"
