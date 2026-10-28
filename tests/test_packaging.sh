@@ -1459,6 +1459,12 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the LAN buttons follow the readiness flag"
 	assert_contains "$(cat "$_ts_js")" 'remote.ready = d.ready === true' \
 		"which is read from the backend rather than inferred"
+	# Stop reports the forwarding setting as well, but a denial there is no
+	# reason to open the one-time block: that block installs the very setting
+	# the stop is taking away, and opening it made Stop look like it had asked
+	# for authorization it never needs.
+	assert_contains "$(cat "$_ts_js")" "'denied' && op !== 'stop'" \
+		"the one-time block is offered for start and restart, never for stop"
 	assert_contains "$(cat "$_ts_css")" '.fcc-mode-btn.on' \
 		"the selected side of the switch is styled"
 	assert_contains "$(cat "$_ts_css")" '.fcc-locked' \

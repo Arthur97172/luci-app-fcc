@@ -1116,8 +1116,11 @@
 			var warn = forwardingWarning(d, op);
 			/* The one refusal a person can fix from this page: open the block
 			 * with the command that makes the setting, rather than leaving the
-			 * warning as the end of the story. */
-			if (d.forwarding === 'denied') { showRemoteHelper(true); }
+			 * warning as the end of the story. Not for stop, though: that click
+			 * is taking the setting away, and the block installs it — opening it
+			 * there answers a question nobody asked and reads as if the stop had
+			 * asked for authorization. The stop sentence says what happened. */
+			if (d.forwarding === 'denied' && op !== 'stop') { showRemoteHelper(true); }
 			if (!d.ok) {
 				FCC.notice(remoteStatus(), 'fail',
 					remoteFailure(d, FCC._('The operation failed.')));
