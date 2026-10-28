@@ -118,7 +118,10 @@ make package/luci-app-fcc/compile V=s
    macOS 是 `/Users/<账号>/.ssh/authorized_keys`（还需在“系统设置 → 通用 → 共享”里打开
    **远程登录**），OpenWrt 的 Dropbear 读 `/etc/dropbear/authorized_keys`，Windows 管理员账户用
    `C:\ProgramData\ssh\administrators_authorized_keys`、标准账户用
-   `C:\Users\<账号>\.ssh\authorized_keys`。本包不保存也不询问密码：连接只提供这把密钥
+   `C:\Users\<账号>\.ssh\authorized_keys`。Windows 那台机器还必须先跑起
+   **OpenSSH 服务器**——在「设置 → 系统 → 可选功能」里添加（或运行 OpenSSH 的 MSI 安装包），
+   把 `sshd` 服务设为自动启动，并让防火墙放行 22 端口的入站连接——页面上这两个路径旁边
+   就写着这句话。本包不保存也不询问密码：连接只提供这把密钥
    （`PreferredAuthentications=publickey`、`BatchMode=yes`、`IdentitiesOnly=yes`）。
 2. 点 **测试连接**。第一次显示远程主机密钥指纹并要求确认，确认后写入 UCI，此后每次连接都
    要求完全一致；指纹变了就拒绝并报告实际读到的值。

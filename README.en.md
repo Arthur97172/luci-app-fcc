@@ -158,7 +158,11 @@ machine: Windows, Linux, macOS or OpenWrt, one at a time.
    Login also has to be switched on in System Settings → General → Sharing),
    `/etc/dropbear/authorized_keys` for OpenWrt's Dropbear, and on Windows
    `C:\ProgramData\ssh\administrators_authorized_keys` for an administrator or
-   `C:\Users\<account>\.ssh\authorized_keys` for a standard account. No password
+   `C:\Users\<account>\.ssh\authorized_keys` for a standard account. A Windows
+   machine has to be running **OpenSSH Server** first — add it under Settings →
+   System → Optional features (or run the OpenSSH MSI), set the `sshd` service
+   to start automatically, and let inbound TCP 22 through the firewall — and the
+   page says so next to the two paths. No password
    is stored or asked for: the connection offers this key and nothing else
    (`PreferredAuthentications=publickey`, `BatchMode=yes`,
    `IdentitiesOnly=yes`).

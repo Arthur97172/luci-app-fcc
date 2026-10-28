@@ -621,7 +621,7 @@
 			path.textContent =
 				'C:\\Users\\' + (user || '<username>') + '\\.ssh\\authorized_keys\n' +
 				'C:\\ProgramData\\ssh\\administrators_authorized_keys';
-			note.textContent = FCC._('Use the first line for a standard account and the second for an administrator account. The second file must be writable only by Administrators and SYSTEM.');
+			note.textContent = FCC._('Use the first line for a standard account and the second for an administrator account. The second file must be writable only by Administrators and SYSTEM. That machine must already be running OpenSSH Server: add it under Settings → System → Optional features (or run the OpenSSH MSI), set its sshd service to start automatically, and let inbound TCP 22 through the firewall.');
 		} else if (remote.platform === 'openwrt') {
 			path.textContent = '/etc/dropbear/authorized_keys';
 			note.textContent = FCC._('Dropbear, the default OpenWrt SSH server, reads this file. An OpenSSH server on the same machine reads ~/.ssh/authorized_keys instead.');
