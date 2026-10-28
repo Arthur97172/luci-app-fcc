@@ -2026,18 +2026,21 @@ fcc_remote_running() {
 				stopped|startpending|stoppending|paused|pausepending) _rn_known=1 ;;
 			esac ;;
 		openwrt)
-			# The init script's status verb answers with an exit code, and the
-			# process-list probe answers with a line, so both are read.
+			# rc.common's status verb hands procd's own vocabulary through, and
+			# one of its answers is not a state: "active with no instances" exits
+			# 0, but it means a service procd has seen that never opened an
+			# instance — exactly what this package's init script leaves behind
+			# when the runtime is absent or the LAN is the target. Reading the
+			# exit code alone would call that a running server. So the words
+			# decide, and anything they do not settle is left to the process-list
+			# probe below, which also answers on a machine carrying only the
+			# upstream install.
 			case "$_rn_word" in
+				running|running\ *) _rn_running=true; _rn_known=1 ;;
+				'not running'|inactive) _rn_known=1 ;;
 				'server running') _rn_running=true; _rn_known=1 ;;
 				'server stopped') _rn_known=1 ;;
-			esac
-			if [ "$_rn_known" = "0" ]; then
-				case "$_rn_code" in
-					0) _rn_running=true; _rn_known=1 ;;
-					3) _rn_known=1 ;;
-				esac
-			fi ;;
+			esac ;;
 	esac
 
 	# A machine running only free-claude-code has no unit to ask about — Linux

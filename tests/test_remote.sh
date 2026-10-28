@@ -655,8 +655,8 @@ test_running_uses_the_openwrt_and_windows_presets() {
 	fresh
 	ready_lan
 	uci_set remote_platform openwrt
-	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
-	assert_contains "$out" '"running":true' "rc.common exits 0 when the service runs"
+	out="$(SSH_OUT='running' SSH_EXIT=0 run_remote running)" || true
+	assert_contains "$out" '"running":true' "procd's running word is a running server"
 	assert_contains "$(ssh_command 1)" 'then /etc/init.d/fcc status' \
 		"OpenWrt is asked through its init script"
 
@@ -666,6 +666,28 @@ test_running_uses_the_openwrt_and_windows_presets() {
 	assert_contains "$out" '"running":true' "PowerShell prints Running"
 	assert_contains "$(ssh_command 1)" 'Get-Service' \
 		"Windows is asked through PowerShell"
+	drop_sandbox
+}
+
+test_running_on_openwrt_reads_procds_words_not_its_exit_code() {
+	# rc.common's status verb answers with a word, and the exit code does not
+	# carry the same news: "active with no instances" exits 0 for a service
+	# that never opened one — what this package's init script leaves behind
+	# when the runtime is absent. The word decides, and the process list has
+	# the last word when the word settles nothing.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(SSH_OUT='active with no instances' SSH_EXIT=0 \
+		SSH_PROBE_OUT='server stopped' run_remote running)" || true
+	assert_contains "$out" '"running":false' \
+		"a service with no instance is not a running server"
+	out="$(SSH_OUT='not running' SSH_EXIT=5 run_remote running)" || true
+	assert_contains "$out" '"running":false' "procd's own stopped word is read"
+	assert_not_contains "$out" '"checked":false' "and it is an answer, not a failure"
+	out="$(SSH_OUT='running (1/2)' SSH_EXIT=0 run_remote running)" || true
+	assert_contains "$out" '"running":true' \
+		"a partly running service is running"
 	drop_sandbox
 }
 
@@ -726,7 +748,8 @@ test_running_reports_the_lan_servers_details() {
 	fresh
 	ready_lan
 	uci_set remote_platform openwrt
-	out="$(SSH_DETAIL_OUT='{"luci_fcc": {"version": "1.0.3"}, "fcc": {"installed": true, "version": "6.16.17"}, "server": {"running": true, "pid": 28483, "uptime": 151, "memory_rss_kb": 188000, "port": 8082, "bind": "127.0.0.1"}}' \
+	out="$(SSH_OUT='running' \
+		SSH_DETAIL_OUT='{"luci_fcc": {"version": "1.0.3"}, "fcc": {"installed": true, "version": "6.16.17"}, "server": {"running": true, "pid": 28483, "uptime": 151, "memory_rss_kb": 188000, "port": 8082, "bind": "127.0.0.1"}}' \
 		run_remote running)" || true
 	assert_contains "$out" '"running":true' "the state is still answered"
 	assert_contains "$out" '"details":{' "with the document's fields beside it"
@@ -890,7 +913,7 @@ test_the_platform_name_in_the_service_field_is_corrected() {
 	ready_lan
 	uci_set remote_platform openwrt
 	uci_set remote_service OpenWrt
-	out="$(SSH_OUT='' SSH_EXIT=0 run_remote running)" || true
+	out="$(SSH_OUT='running' SSH_EXIT=0 run_remote running)" || true
 	assert_contains "$out" '"running":true' "the check uses the real service"
 	assert_contains "$(ssh_command 1)" 'then /etc/init.d/fcc status' \
 		"not /etc/init.d/OpenWrt"

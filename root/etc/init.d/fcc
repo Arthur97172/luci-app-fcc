@@ -183,6 +183,24 @@ reload_service() {
 	start
 }
 
+status_service() {
+	# rc.common hands procd's vocabulary straight through, and one of its
+	# answers is not a state: "active with no instances", exit 0, says procd
+	# has seen this service and that no instance was ever opened. That is what
+	# start_service leaves behind when the runtime is absent or the LAN is the
+	# target, so the exit code would tell every caller that a stopped server is
+	# up. The word is the same one procd uses for a service it cannot see, and
+	# the exit code is the one that goes with it.
+	_ss_state="$(_procd_status fcc "$@")"
+	_ss_code=$?
+	if [ "$_ss_code" -eq 0 ] && [ "$_ss_state" = "active with no instances" ]; then
+		echo "inactive"
+		return 3
+	fi
+	[ -n "$_ss_state" ] && echo "$_ss_state"
+	return "$_ss_code"
+}
+
 service_triggers() {
 	procd_add_reload_trigger "fcc"
 }
