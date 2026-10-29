@@ -565,12 +565,12 @@ check("paths/sessions_dir",          paths.sessions_dir() == "/opt/fcc/sessions"
 -- agents — parsed from the real registry, the single source of truth
 -- ---------------------------------------------------------------------------
 local list = agents.load()
-check("agents/count", #list == 10, "expected 10 agents, got " .. #list)
+check("agents/count", #list == 11, "expected 11 agents, got " .. #list)
 
 local ids = {}
 for _, a in ipairs(list) do ids[#ids + 1] = a.id end
 eq("agents/ids", table.concat(ids, ","),
-	"claude,codex,pi,opencode,cline,hermes,dsh,grok,muse,aider")
+	"claude,codex,pi,opencode,cline,hermes,dsh,grok,muse,aider,agy")
 
 local claude = agents.get("claude")
 check("agents/get_claude", claude ~= nil)
@@ -587,6 +587,13 @@ eq("agents/hermes_probe_empty", agents.get("hermes").probe, "")
 
 -- DeepSeek Harness is fcc-dsh. "fcc-deepseek" does not exist upstream.
 eq("agents/dsh_launcher", agents.get("dsh").launcher, "fcc-dsh")
+
+-- Antigravity CLI is the only row whose id is not the launcher minus its
+-- prefix: the launcher is fcc-agy and the command it runs is `agy`, which
+-- shares no substring with it beyond the id. Reading either from the other is
+-- the mistake this row exists to catch.
+eq("agents/agy_launcher", agents.get("agy").launcher, "fcc-agy")
+eq("agents/agy_probe",    agents.get("agy").probe, "agy")
 
 -- Every launcher must be an fcc-* console script, and the probe must never be
 -- one: an fcc-* name is a launcher that would START the agent.

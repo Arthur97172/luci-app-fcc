@@ -2079,7 +2079,7 @@ cmd_runtime() {
 	# on what was asked for here: an explicit list, all of them declined, or no
 	# opinion. Handing the doctor the same three-way answer it would get from
 	# the UI is what keeps the report and the install from disagreeing — the
-	# bash requirement in particular, which applies to five of the ten agents.
+	# bash requirement in particular, which applies to six of the eleven agents.
 	FCC_AGENT_SELECTION="$_cr_agents"
 	FCC_AGENT_NONE="$_cr_none"
 	export FCC_AGENT_SELECTION FCC_AGENT_NONE

@@ -654,9 +654,9 @@ fcc_agent_by_launcher() {
 #
 # It is not the FCC launcher, and that distinction is the whole function.
 # `uv tool install free-claude-code` writes every fcc-* console script into
-# <root>/bin in one go — the installer's own transcript lists all sixteen — so
+# <root>/bin in one go — the installer's own transcript lists all seventeen — so
 # an fcc-* launcher being present says only that the FCC runtime is present.
-# That is true of all ten rows at once and is not the question anyone is
+# That is true of all eleven rows at once and is not the question anyone is
 # asking. What proves an agent is there is the CLI behind the launcher:
 # fcc-claude execs `claude`, and `claude` is what the installer installs,
 # verifies, and re-finds on its next run. Probing the launcher makes every row
@@ -884,9 +884,9 @@ fcc_unsupported_agents_in() {
 }
 
 # ---------------------------------------------------------------------------
-# bash: a prerequisite of five agents, and not a part of OpenWrt
+# bash: a prerequisite of six agents, and not a part of OpenWrt
 # ---------------------------------------------------------------------------
-# The upstream installer hands five of the ten agents to their own installers,
+# The upstream installer hands six of the eleven agents to their own installers,
 # which are bash scripts: it calls `require_command bash` first and stops with
 # "bash is required. Install it first, then rerun this installer." when it
 # cannot find one. OpenWrt ships busybox ash as /bin/sh and no bash at all, so
@@ -896,7 +896,12 @@ fcc_unsupported_agents_in() {
 #
 # The set is upstream's condition, not a guess: it is exactly the agents named
 # in that `if`. pi, cline, dsh and aider are not in it and install without bash.
-FCC_BASH_AGENTS="claude opencode hermes grok muse"
+# Antigravity CLI is the same requirement: upstream runs its bootstrapper with
+# bash, and the bootstrapper itself is a bash script (`#!/bin/bash`, `set -euo
+# pipefail`, `local`). It is the newest name in that condition — the list used
+# to stop at muse — so a router that has bash for Claude Code needs nothing new,
+# and one that has none still stops here rather than at the download.
+FCC_BASH_AGENTS="claude opencode hermes grok muse agy"
 
 fcc_agents_need_bash() {
 	# fcc_agents_need_bash "<id[,id...]|id id...>" -> 0 if any of them needs bash
@@ -913,9 +918,9 @@ fcc_agents_need_bash() {
 # Tools an agent installer needs, that this image's BusyBox may not provide
 # ---------------------------------------------------------------------------
 # Every entry here is a gap measured on a real router (OpenWrt 24.10.8 x86_64,
-# BusyBox v1.36.1), not a guess about what an installer might want. Two kinds
-# have been seen, and the second is the reason this is a table rather than a
-# single name.
+# BusyBox v1.36.1, and 25.12.6 x86_64 for the last of them), not a guess about
+# what an installer might want. Three kinds have been seen, and the second is
+# the reason this is a table rather than a single name.
 #
 # **The applet was not compiled in.** The Codex installer resolves the release
 # it is about to install before it downloads anything, by piping the release
@@ -970,7 +975,34 @@ fcc_agents_need_bash() {
 # below therefore asks for both halves, and the package it names is git-http:
 # that one depends on git, so installing it fills the gap either way.
 #
-# The three are why the check below asks a *capability* question per tool rather
+# **The applet is missing while a sibling one is not.** sha512sum, measured on
+# OpenWrt 25.12.6 x86_64 (BusyBox with sha256sum present) on 2026-10-29: this
+# BusyBox has no sha512 applet at all —
+#
+#     $ busybox sha512sum --help
+#     sha512sum: applet not found
+#
+# while `sha256sum` resolves to /usr/bin/sha256sum. The Antigravity CLI
+# bootstrapper verifies its download before it extracts anything, with
+#
+#     actual_hash=$(sha512sum "$staging_payload" | cut -d' ' -f1 || true)
+#
+# and compares it to the manifest's sha512. With the command absent the
+# substitution is empty (the `|| true` is why the script survives it) and the
+# comparison cannot succeed, so the installer stops at its own message —
+#
+#     Security Halt: The downloaded payload checksum does not match the manifest.
+#     The file may be corrupted or compromised. Installation aborted.
+#
+# which reads as a tampered download and is neither true nor retryable. Measured
+# on the same router: with `apk add coreutils-sha512sum` the identical run
+# printed "✓ Download complete and checksum verified.", extracted the musl
+# build and `agy --version` answered 1.4.10. This one *is* answered by presence
+# — the command is either there or not — but it is the reason the table names
+# the exact command rather than a class: "there is a hash tool here" is answered
+# yes by sha256sum, which is a different algorithm.
+#
+# The four are why the check below asks a *capability* question per tool rather
 # than testing for the binary: for sleep, "is it installed" is the wrong
 # question and answers yes.
 #
@@ -978,7 +1010,7 @@ fcc_agents_need_bash() {
 # not a claim about the ones not listed: install.sh reports the tool name out of
 # the installer's own transcript, so a gap this table has never heard of still
 # reaches the log with the command in it and the line it failed on.
-FCC_INSTALLER_TOOLS="fold sleep git"
+FCC_INSTALLER_TOOLS="fold sleep git sha512sum"
 
 fcc_tool_package() {
 	# fcc_tool_package <tool> -> the package that provides it here
@@ -986,18 +1018,20 @@ fcc_tool_package() {
 	# git-http, not git: the binary comes with git, but the HTTPS transport the
 	# Hermes clone needs does not, and git-http depends on git.
 	case "$1" in
-		fold)  printf 'coreutils-fold' ;;
-		sleep) printf 'coreutils-sleep' ;;
-		git)   printf 'git-http' ;;
+		fold)     printf 'coreutils-fold' ;;
+		sleep)    printf 'coreutils-sleep' ;;
+		git)      printf 'git-http' ;;
+		sha512sum) printf 'coreutils-sha512sum' ;;
 	esac
 }
 
 fcc_tool_agents() {
 	# fcc_tool_agents <tool> -> space separated ids whose installer needs it
 	case "$1" in
-		fold)  printf 'codex' ;;
-		sleep) printf 'pi' ;;
-		git)   printf 'hermes' ;;
+		fold)      printf 'codex' ;;
+		sleep)     printf 'pi' ;;
+		git)       printf 'hermes' ;;
+		sha512sum) printf 'agy' ;;
 	esac
 }
 
@@ -1020,6 +1054,13 @@ fcc_tool_works() {
 			_fgw_exec="$(git --exec-path 2>/dev/null)" || return 1
 			[ -n "$_fgw_exec" ] && [ -x "$_fgw_exec/git-remote-https" ]
 			;;
+		sha512sum)
+			# Either name the bootstrapper itself accepts: it uses shasum on
+			# darwin and sha512sum everywhere else, and both answer the same
+			# question. Presence is the whole test — unlike fold, there is no
+			# half-working version of it.
+			command -v sha512sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1
+			;;
 		*)     command -v "$1" >/dev/null 2>&1 ;;
 	esac
 }
@@ -1027,9 +1068,10 @@ fcc_tool_works() {
 fcc_tool_purpose() {
 	# fcc_tool_purpose <tool> -> one clause saying what needs it
 	case "$1" in
-		fold)  printf 'the Codex installer reads the latest release through it' ;;
-		sleep) printf 'the Pi installer animates its logo with fractional sleeps' ;;
-		git)   printf 'the Hermes installer clones its repository and cannot without the HTTPS transport' ;;
+		fold)      printf 'the Codex installer reads the latest release through it' ;;
+		sleep)     printf 'the Pi installer animates its logo with fractional sleeps' ;;
+		git)       printf 'the Hermes installer clones its repository and cannot without the HTTPS transport' ;;
+		sha512sum) printf 'the Antigravity CLI installer verifies its download with it' ;;
 	esac
 }
 
@@ -2221,7 +2263,7 @@ fcc_server_health() {
 # respawned every few seconds, while /etc/init.d/fcc stop — which only knows
 # procd's instance — leaves the detached one running. These helpers find such a
 # process by the rules upstream uses and end it.
-FCC_PROCESS_NAMES="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-aider fcc-doctor fcc-update fcc-init free-claude-code"
+FCC_PROCESS_NAMES="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-aider fcc-agy fcc-doctor fcc-update fcc-init free-claude-code"
 
 fcc_process_ids() {
 	# fcc_process_ids <name> [root] -> one PID per line.

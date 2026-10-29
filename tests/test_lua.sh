@@ -193,7 +193,7 @@ test_agent_registry_parity() {
 	_ts_sh_ids="$(FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
 		sh -c '. "$1/common.sh"; fcc_agents_each | cut -d"|" -f1 | tr "\n" ","' _ \
 		"$ROOT/root/usr/libexec/fcc" | sed 's/,$//')"
-	assert_eq "claude,codex,pi,opencode,cline,hermes,dsh,grok,muse,aider" \
+	assert_eq "claude,codex,pi,opencode,cline,hermes,dsh,grok,muse,aider,agy" \
 		"$_ts_sh_ids" "the shell reads the registry the Lua tests assert on"
 }
 

@@ -10,7 +10,7 @@
 
 | 页面 | 作用 |
 | --- | --- |
-| **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider 的真正交互式终端——每个 Agent 一个 tmux 会话，直接在浏览器里用。 |
+| **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider、Antigravity CLI 的真正交互式终端——每个 Agent 一个 tmux 会话，直接在浏览器里用。 |
 | **配置** | 服务器设置（地址、端口、日志级别）、安装与备份路径、Agent 选择、安装/卸载/彻底卸载、更新、启动/停止/重启、诊断报告、FCC Admin 入口（运行信息每 2 秒刷新，后台标签页暂停），以及通过 SSH 控制局域网内另一台机器。 |
 | **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储。 |
 
@@ -240,8 +240,8 @@ luci-base  luci-compat  curl  ca-bundle  tmux
   `tar xf … --no-same-owner --strip-components 1` 解包，busybox 两个选项都不支持。诊断报告
   会**真的解一次归档**来判定。不能直接列成依赖，是因为 25.12 上的变体门控（`TAR_XZ` 开、
   `xz-utils` 关）会让本包无法被选中——改为在安装前自动补齐。
-* **`bash`**：Claude Code、OpenCode、Hermes、Grok Build、Muse Code 的安装脚本需要它。未被
-  选中时诊断只给 WARN，选中时给 FAIL 并附安装命令；安装前预检会自动装上。
+* **`bash`**：Claude Code、OpenCode、Hermes、Grok Build、Muse Code、Antigravity CLI 的
+  安装脚本需要它。未被选中时诊断只给 WARN，选中时给 FAIL 并附安装命令；安装前预检会自动装上。
 * **`cline`** 装不了：Cline 只发布 glibc 构建，没有 musl 版本，而 OpenWrt 是 musl。它会被
   从选中的集合里去掉并说明原因；若它是唯一要装的 Agent，安装以 `AGENT_UNSUPPORTED` 拒绝。
   上游的 musl 构建请求见 [cline/cline#15271](https://github.com/cline/cline/issues/15271)。
@@ -262,10 +262,11 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 | --- | --- | --- |
 | tar | `tar` | GNU tar，支持 `--strip-components` 和 `--no-same-owner` |
 | tmux | `tmux` | 终端与安装器，始终需要 |
-| bash | `bash` | Claude Code、OpenCode、Hermes、Grok Build、Muse Code |
+| bash | `bash` | Claude Code、OpenCode、Hermes、Grok Build、Muse Code、Antigravity CLI |
 | fold | `coreutils-fold` | Codex 的安装脚本 |
 | sleep | `coreutils-sleep` | Pi 的安装脚本（它的 sleep 要接受小数秒） |
 | git | `git-http` | Hermes 安装器克隆代码仓库（含 `git`） |
+| sha512sum | `coreutils-sha512sum` | Antigravity CLI 的安装脚本校验下载（BusyBox 没有这个 applet） |
 | Node 的 C++ 运行库 | `libstdcpp6`，必要时 `libgcc1` | Pi、DeepSeek Harness 和 Hermes 取回的 musl Node |
 | curl | `curl` | 下载安装器与运行时 |
 
@@ -384,7 +385,7 @@ JavaScript 和 shell），x86_64 SDK 产出的文件在 ARM、MIPS 和 x86 上�
 * **Agent 版本是探测得来的**：以 5 秒超时从底层 CLI 读取并缓存 60 秒；CLI 改了输出格式的
   Agent 会显示一个陌生的字符串。
 * **终端和安装器都需要 `tmux`**：缺少时终端报告依赖缺失、安装在开始前就被拒绝。
-* **五个 Agent 需要 `bash`**：安装前会自动补齐，只有补不上时安装才在下载前被拒绝。
+* **六个 Agent 需要 `bash`**：安装前会自动补齐，只有补不上时安装才在下载前被拒绝。
 * **Cline 在 OpenWrt 上装不了**：只有 glibc 构建，诊断标为 WARN，安装时自动跳过。
 * **安装整个注册表是全有或全无**：一个 Agent 装不上就全部回滚；此时用下拉框逐个安装。
 * **更新必须先写完新运行时才能丢弃旧的**：剩余空间预检按一份运行时计算，而不是零。

@@ -266,14 +266,14 @@ else
 		tmux
 fi
 
-# bash — required by five of the ten agents, and absent from every stock image.
+# bash — required by six of the eleven agents, and absent from every stock image.
 #
-# The upstream installer hands Claude Code, OpenCode, Hermes, Grok Build and
-# Muse Code to their own installers, which are bash scripts, and stops with
-# "bash is required. Install it first, then rerun this installer." when it
-# cannot find one. OpenWrt ships busybox ash as /bin/sh and no bash at all, so
-# before this check existed the install failed several minutes in, after the
-# download, with the reason buried in logs/installer.out.
+# The upstream installer hands Claude Code, OpenCode, Hermes, Grok Build, Muse
+# Code and Antigravity CLI to their own installers, which are bash scripts, and
+# stops with "bash is required. Install it first, then rerun this installer."
+# when it cannot find one. OpenWrt ships busybox ash as /bin/sh and no bash at
+# all, so before this check existed the install failed several minutes in, after
+# the download, with the reason buried in logs/installer.out.
 #
 # Which agents count is not fixed. FCC_AGENT_SELECTION carries the set the user
 # asked for, FCC_AGENT_NONE says the user unchecked all of them, and neither

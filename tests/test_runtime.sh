@@ -196,8 +196,8 @@ test_agent_fields() {
 	assert_eq "claude"      "$(sh_common 'fcc_agent_probe claude')" "the probe is read"
 	assert_eq "fcc-dsh"     "$(sh_common 'fcc_agent_command dsh')"  "DeepSeek Harness is fcc-dsh"
 	assert_eq ""            "$(sh_common 'fcc_agent_probe hermes')" "hermes has no probe"
-	assert_eq "10"          "$(sh_common 'fcc_agents_each | wc -l | tr -d " "')" "the registry has 10 agents"
-	assert_eq "10"          "$(sh_common 'fcc_agents_each | cut -d"|" -f1 | sort -u | wc -l | tr -d " "')" \
+	assert_eq "11"          "$(sh_common 'fcc_agents_each | wc -l | tr -d " "')" "the registry has 11 agents"
+	assert_eq "11"          "$(sh_common 'fcc_agents_each | cut -d"|" -f1 | sort -u | wc -l | tr -d " "')" \
 		"every agent id is unique"
 }
 
@@ -1568,7 +1568,7 @@ test_a_session_asks_whether_the_agent_is_installed_not_whether_the_launcher_is_o
 		"the launcher finds its CLI from inside the pane"
 
 	# An agent that is genuinely absent is still refused. Every launcher is
-	# present — uv writes all sixteen in one go — so a predicate that reads the
+	# present — uv writes all seventeen in one go — so a predicate that reads the
 	# launcher accepts this one too, which is the same confusion in the other
 	# direction.
 	assert_no "an agent whose CLI is absent is still refused" \
@@ -1597,7 +1597,7 @@ test_the_pane_environment_puts_the_agent_cli_on_path() {
 	# extended from nothing.
 	#
 	# The bug: session_env_exports() was a hand-written second copy of the
-	# runtime environment and its PATH held only <root>/bin, where the sixteen
+	# runtime environment and its PATH held only <root>/bin, where the seventeen
 	# fcc-* launchers live and no agent CLI does. Every session therefore
 	# reached its launcher and died inside it with exit code 127.
 	_pe_base="$(setup_installed_root)"
@@ -3622,6 +3622,14 @@ test_installer_answers_follow_the_agent_that_was_asked_about() {
 	assert_eq "y" \
 		"$(sh_install 'installer_answer_for "Install DeepSeek Harness for fcc-dsh? [Y/n]" "dsh" set')" \
 		"the launcher is what identifies the agent, not the friendly name"
+	# Antigravity CLI is the row this catches hardest: "Antigravity CLI" and
+	# `agy` have nothing in common, so only the launcher lookup can answer it.
+	assert_eq "y" \
+		"$(sh_install 'installer_answer_for "Install Antigravity CLI for fcc-agy? [Y/n]" "agy" set')" \
+		"a selected Antigravity CLI is answered yes"
+	assert_eq "n" \
+		"$(sh_install 'installer_answer_for "Install Antigravity CLI for fcc-agy? [Y/n]" "claude aider" set')" \
+		"and no when it was not selected"
 
 	# --no-agents: everything still being offered is declined.
 	assert_eq "n" \
@@ -4197,7 +4205,7 @@ test_runtime_env_has_one_source_of_truth() {
 		"the rendered exports reproduce the environment when sourced"
 }
 
-# The bash gate: five of the ten agents are installed by a bash script, and
+# The bash gate: six of the eleven agents are installed by a bash script, and
 # OpenWrt ships no bash. Which agents count follows the selection, so the check
 # has to reason about the set the install will actually end up with.
 test_bash_requirement_follows_the_agent_set() {
@@ -4207,9 +4215,12 @@ test_bash_requirement_follows_the_agent_set() {
 	assert_no "pi on its own does not" sh_common 'fcc_agents_need_bash pi'
 	assert_no "an empty set does not"  sh_common 'fcc_agents_need_bash ""'
 	assert_ok "a set with one such agent does" sh_common 'fcc_agents_need_bash "aider muse"'
+	# Upstream runs the Antigravity CLI bootstrapper with bash, and the
+	# bootstrapper is a bash script, so agy belongs to this set.
+	assert_ok "antigravity cli needs bash" sh_common 'fcc_agents_need_bash agy'
 
 	# The set upstream installs when it is not told which ones.
-	assert_eq "claude,codex,pi,opencode,hermes,dsh,grok,muse,aider" \
+	assert_eq "claude,codex,pi,opencode,hermes,dsh,grok,muse,aider,agy" \
 		"$(sh_common 'fcc_default_agents' | sed 's/^ //;s/ /,/g')" \
 		"the defaults are the registry's default column"
 
@@ -4218,6 +4229,8 @@ test_bash_requirement_follows_the_agent_set() {
 		"a launcher maps back to its agent"
 	assert_eq "dsh" "$(sh_common 'fcc_agent_by_launcher fcc-dsh')" \
 		"and for an agent whose name is not its id"
+	assert_eq "agy" "$(sh_common 'fcc_agent_by_launcher fcc-agy')" \
+		"and for the one whose command shares nothing with its launcher"
 	assert_eq "" "$(sh_common 'fcc_agent_by_launcher fcc-nope')" \
 		"an unknown launcher maps to nothing"
 
@@ -4226,7 +4239,7 @@ test_bash_requirement_follows_the_agent_set() {
 	#
 	# The tools are restricted rather than inherited: "which agents are
 	# installed?" is answered by looking for their own CLIs, and a development
-	# machine that has them on PATH would answer with all ten and quietly make
+	# machine that has them on PATH would answer with all eleven and quietly make
 	# this assertion about nothing.
 	assert_eq "claude" \
 		"$(sh_common_tools 'grep awk sed cut tr' 'fcc_effective_agents claude' \
@@ -4236,8 +4249,8 @@ test_bash_requirement_follows_the_agent_set() {
 	# Installed means the CLI, in one of the runtime's own bin directories —
 	# <root>/data/.local/bin is where the installer's log shows `claude`
 	# landing. The launcher goes in beside it, because on a real box it is
-	# always there: uv writes all sixteen at once, and a predicate that reads
-	# them would call all ten agents installed.
+	# always there: uv writes all seventeen at once, and a predicate that reads
+	# them would call all eleven agents installed.
 	mkdir -p "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data/.local/bin"
 	printf '#!/bin/sh\n' > "$SANDBOX/opt/fcc/bin/fcc-codex"
 	chmod +x "$SANDBOX/opt/fcc/bin/fcc-codex"
@@ -4387,8 +4400,8 @@ sh_doctor_tools() {
 # nslookup, which reach the network.
 DOCTOR_TOOLS='sed awk grep cut tr uname dirname df timeout head'
 
-# The bash check, which exists because the upstream installer hands five of the
-# ten agents to bash installers and OpenWrt ships no bash at all. Before it
+# The bash check, which exists because the upstream installer hands six of the
+# eleven agents to bash installers and OpenWrt ships no bash at all. Before it
 # existed the install failed several minutes in, after the download, with the
 # reason buried in logs/installer.out.
 #
@@ -4435,7 +4448,7 @@ test_doctor_bash_check_follows_the_agent_set() {
 	# Installed means claude's own CLI, where the installer's log shows it
 	# landing. The fcc-* launcher is written too, and deliberately: it is
 	# present on every box that has the runtime at all, so a predicate that
-	# read it would count all ten agents and this assertion would hold for the
+	# read it would count all eleven agents and this assertion would hold for the
 	# wrong reason.
 	mkdir -p "$SANDBOX/opt/fcc/bin" "$SANDBOX/opt/fcc/data/.local/bin"
 	: > "$SANDBOX/opt/fcc/bin/fcc-claude"
@@ -4527,6 +4540,64 @@ test_doctor_fold_check_follows_the_agent_set() {
 		'"install_allowed": true' \
 		"and it does not block an install that would work"
 	rm -rf "$SANDBOX/opt/fcc"
+}
+
+# The sha512sum row, added for Antigravity CLI. Its bootstrapper verifies its
+# download before it extracts anything —
+#
+#     actual_hash=$(sha512sum "$staging_payload" | cut -d' ' -f1 || true)
+#
+# — and this image's BusyBox has no sha512 applet, so the substitution is empty
+# and the only thing the user sees is "Security Halt: The downloaded payload
+# checksum does not match the manifest. The file may be corrupted or
+# compromised.", which reads as a tampered download. Measured on the test router
+# (OpenWrt 25.12.6 x86_64) on 2026-10-29: the identical run printed "✓ Download
+# complete and checksum verified." once coreutils-sha512sum was installed.
+#
+# The row follows the agent set like the other two: a FAIL only when Agy's
+# installer will actually run, a WARN when nothing selected needs it, and OK
+# with the command present.
+test_doctor_sha512sum_check_follows_the_agent_set() {
+	setup_sandbox
+	make_standin_tool curl 'exit 0' >/dev/null
+	_ds5_tools="$DOCTOR_TOOLS tmux bash $SANDBOX/standin/curl mktemp mkdir rm tar"
+
+	_ds5_fail="$(sh_doctor_tools "$_ds5_tools" 'FCC_AGENT_SELECTION=agy' --json |
+		grep '"name": "sha512sum"')"
+	assert_contains "$_ds5_fail" '"status": "FAIL"' \
+		"a selected Antigravity CLI with no sha512sum is a failure"
+	assert_contains "$_ds5_fail" 'opkg install coreutils-sha512sum' \
+		"and the report says which package provides it"
+	assert_contains "$_ds5_fail" 'Required by Antigravity CLI' \
+		"and names the agent whose installer needs it"
+	assert_contains "$(sh_doctor_tools "$_ds5_tools" 'FCC_AGENT_SELECTION=agy' --json)" \
+		'"install_allowed": false' "and a missing sha512sum is what closes the gate"
+
+	# An agent whose installer never asks for it: a warning, so an install of
+	# something else is not refused for a tool it will not use.
+	_ds5_warn="$(sh_doctor_tools "$_ds5_tools" 'FCC_AGENT_SELECTION=codex' --json |
+		grep '"name": "sha512sum"')"
+	assert_contains "$_ds5_warn" '"status": "WARN"' \
+		"an agent that does not need sha512sum does not fail the check"
+	assert_contains "$_ds5_warn" 'Not needed by the selected agents' \
+		"and the report says why it is only a warning"
+
+	# Present: OK, and nothing left for the preflight to install.
+	make_standin_tool sha512sum 'exit 0' >/dev/null
+	_ds5_ok="$(sh_doctor_tools "$_ds5_tools $SANDBOX/standin/sha512sum" \
+		'FCC_AGENT_SELECTION=agy' --json | grep '"name": "sha512sum"')"
+	assert_contains "$_ds5_ok" '"status": "OK"' "sha512sum present is OK"
+	assert_contains "$(sh_doctor_tools "$_ds5_tools $SANDBOX/standin/sha512sum" \
+		'FCC_AGENT_SELECTION=agy' --json)" \
+		'"install_allowed": true' "and installing it is what reopens the gate"
+
+	# The table itself, which is what install_prerequisite_packages reads when
+	# the gate names a package: the tool, its package, and the one agent whose
+	# installer needs it.
+	assert_eq "coreutils-sha512sum" "$(sh_common 'fcc_tool_package sha512sum')" \
+		"sha512sum is filled by coreutils-sha512sum"
+	assert_eq "agy" "$(sh_common 'fcc_tool_agents sha512sum')" \
+		"and Antigravity CLI is the agent it is recorded for"
 }
 
 # The sleep check, which exists for the same reason as the fold one and was
@@ -5124,7 +5195,7 @@ test_doctor_blocking_names_what_failed_and_what_to_do() {
 #
 # The second, made while fixing the first: the copies were pointed at the
 # launcher. That is worse than the bug it fixed. `uv tool install
-# free-claude-code` writes *all sixteen* fcc-* console scripts into <root>/bin
+# free-claude-code` writes *all seventeen* fcc-* console scripts into <root>/bin
 # in one go — the installer's own transcript lists every one of them — so an
 # fcc-* launcher being present says only that the FCC runtime is present. Every
 # row then reads 已安装 the moment FCC itself is installed, which is what the
@@ -5178,7 +5249,7 @@ make_agentless_path() {
 # The state a successful `agent install claude` leaves behind, reproduced
 # faithfully rather than conveniently.
 #
-# All sixteen launchers, because uv writes them all — the names are the
+# All seventeen launchers, because uv writes them all — the names are the
 # installer's own transcript, and reproducing only fcc-claude would let a
 # launcher-probing predicate pass this suite while failing on a real router.
 # And exactly one CLI, because Claude Code is what was asked for. The two
@@ -5190,7 +5261,7 @@ setup_installed_root() {
 	rm -rf "$SANDBOX/installed"
 	mkdir -p "$_ir_base/fcc/bin" "$_ir_base/fcc/logs" \
 	         "$_ir_base/fcc/cache" "$_ir_base/fcc/data/.local/bin"
-	for _ir_l in _fcc-update-check fcc-aider fcc-claude fcc-cline fcc-codex \
+	for _ir_l in _fcc-update-check fcc-agy fcc-aider fcc-claude fcc-cline fcc-codex \
 	             fcc-desktop fcc-doctor fcc-dsh fcc-grok fcc-hermes fcc-muse \
 	             fcc-opencode fcc-pi fcc-update fcc-update.cmd; do
 		printf '#!/bin/sh\nexit 0\n' > "$_ir_base/fcc/bin/$_ir_l"
@@ -5270,7 +5341,7 @@ test_an_installed_agent_is_reported_installed_without_being_on_path() {
 	# The precondition, asserted rather than assumed. If this PATH could still
 	# resolve a launcher or an agent CLI, the assertions below would pass for a
 	# reason that has nothing to do with the code under test.
-	for _tr_n in fcc-claude claude codex pi opencode cline hermes dsh grok muse aider; do
+	for _tr_n in fcc-claude claude codex pi opencode cline hermes dsh grok muse aider agy; do
 		assert_no "the test PATH cannot resolve $_tr_n" \
 			env PATH="$_tr_path" sh -c 'command -v "$1"' _ "$_tr_n"
 	done
@@ -5278,7 +5349,7 @@ test_an_installed_agent_is_reported_installed_without_being_on_path() {
 	# common.sh holds the rule the other five call, so it is asserted directly
 	# first — everything after this is a statement that they agree with it.
 	#
-	# The CLI, not the launcher. This is the regression: all sixteen launchers
+	# The CLI, not the launcher. This is the regression: all seventeen launchers
 	# are present and only claude's CLI is, so a predicate that probes the
 	# launcher says "yes" to both of these and the second one is the bug the
 	# 配置 page showed.
@@ -5326,7 +5397,7 @@ test_an_installed_agent_is_reported_installed_without_being_on_path() {
 	# The update path's own copy, which decides the --agents set an update
 	# reinstalls. Getting this wrong does not merely mislabel a row: install.sh
 	# hands the set to the installer as the answers to its agent prompts, so a
-	# set of all ten means an update installs all ten agents onto a device that
+	# set of all eleven means an update installs all eleven agents onto a device that
 	# had one.
 	_tr_set="$(sh_update "$_tr_path" "$_tr_base" 'installed_agents')"
 	assert_contains "$_tr_set" ' claude' "the update path counts the installed agent"
@@ -5406,13 +5477,13 @@ test_install_runtime_takes_the_whole_registry() {
 
 	# The registry, read here by a second implementation so the assertion is
 	# "these two agree" rather than "this equals a list copied from the file".
-	# A hardcoded list of ten would keep passing after an eleventh agent was
+	# A hardcoded list of eleven would keep passing after a twelfth agent was
 	# added — and that agent would never be installed, which is the failure the
 	# page would then show as an agent that cannot be used.
 	_tr_ids="$(sed -n 's/^\([A-Za-z0-9_-]*\)|.*/\1/p' "$AGENTS_CONF" \
 		| LC_ALL=C sort | tr '\n' ' ')"
-	assert_eq "10" "$(printf '%s' "$_tr_ids" | wc -w | tr -d ' ')" \
-		"the registry read here holds ten agents"
+	assert_eq "11" "$(printf '%s' "$_tr_ids" | wc -w | tr -d ' ')" \
+		"the registry read here holds eleven agents"
 
 	# common.sh holds the rule: every id, and nothing else.
 	_tr_all="$(sh_common 'fcc_all_agents' | tr ' ' '\n' | grep . \
@@ -5602,8 +5673,8 @@ test_cline_is_left_out_on_musl() {
 		"--all-agents no longer hands Cline to the installer on musl"
 	assert_contains "$_all" 'Cline is not installed' \
 		"and the job says it was left out rather than dropping it silently"
-	assert_contains "$_all" 'SET=[claude codex pi opencode hermes dsh grok muse aider]' \
-		"the other nine are still there, in registry order"
+	assert_contains "$_all" 'SET=[claude codex pi opencode hermes dsh grok muse aider agy]' \
+		"the other ten are still there, in registry order"
 
 	# Asking for Cline alone is refused before anything is downloaded: upstream
 	# would otherwise re-ask until the deadline, because a chooser with every
@@ -6493,7 +6564,7 @@ make_node_release_fixture() {
 
 # The Node this package fetches for the npm agents, before the installer runs.
 #
-# Three of the ten agents are npm packages — Pi, DeepSeek Harness and Cline —
+# Three of the eleven agents are npm packages — Pi, DeepSeek Harness and Cline —
 # and all three want a Node this image's own node is below. The Pi installer
 # will offer to install one, but its remedy is nodejs.org/dist, which publishes
 # no musl build: what it leaves behind cannot execute on this image at all, and

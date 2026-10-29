@@ -9,7 +9,7 @@ Three pages, one package:
 
 | Page | What it does |
 | --- | --- |
-| **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and Aider — one tmux session per agent, in the browser. |
+| **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, Aider and Antigravity CLI — one tmux session per agent, in the browser. |
 | **Configuration** | Server settings (address, port, log level), install and backup paths, the agent picker, install/uninstall/complete uninstall, updates, start/stop/restart, the diagnostics report, the FCC Admin link (the runtime panel refreshes every two seconds and pauses while the tab is hidden), and control of the FCC server on one other machine over SSH. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
 
@@ -344,8 +344,9 @@ luci-base  luci-compat  curl  ca-bundle  tmux
   (`TAR_XZ` on, `xz-utils` off by default) that makes this package
   unselectable; the preflight installs it instead.
 * **`bash`** is needed by the installers of Claude Code, OpenCode, Hermes, Grok
-  Build and Muse Code. When the selected set needs it the diagnostics report a
-  FAIL with the install command, otherwise a WARN; the preflight installs it.
+  Build, Muse Code and Antigravity CLI. When the selected set needs it the
+  diagnostics report a FAIL with the install command, otherwise a WARN; the
+  preflight installs it.
 * **`cline`** cannot be fixed by any package: Cline publishes glibc Linux builds
   only and OpenWrt is musl. It is dropped from the selected set with a line
   saying why, and when it was the only agent asked for the install is refused
@@ -373,10 +374,11 @@ HTTPS, no Node build for the CPU — refuses the install with the full report.
 | --- | --- | --- |
 | tar | `tar` | GNU tar, for `--strip-components` and `--no-same-owner` |
 | tmux | `tmux` | The console and the installer, always |
-| bash | `bash` | Claude Code, OpenCode, Hermes, Grok Build, Muse Code |
+| bash | `bash` | Claude Code, OpenCode, Hermes, Grok Build, Muse Code, Antigravity CLI |
 | fold | `coreutils-fold` | Codex's installer |
 | sleep | `coreutils-sleep` | Pi's installer, whose sleep must take fractions |
 | git | `git-http` | The Hermes installer clones its repository (includes `git`) |
+| sha512sum | `coreutils-sha512sum` | The Antigravity CLI installer verifies its download (BusyBox has no such applet) |
 | Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node fetched by Pi, DeepSeek Harness and Hermes |
 | curl | `curl` | Downloading the installer and the runtime |
 
@@ -523,7 +525,7 @@ demand over the network, so there is no prebuilt runtime tarball in the release.
 * **The console and the runtime installer both need `tmux`.** Without it the
   console reports the missing dependency and an install is refused before it
   starts.
-* **Five agents need `bash`.** See *Requirements*; the preflight installs it.
+* **Six agents need `bash`.** See *Requirements*; the preflight installs it.
 * **Cline cannot be installed on OpenWrt.** It ships glibc builds only, so the
   diagnostics report it as a WARN and an install drops it with a line saying why.
 * **A whole-registry install is all-or-nothing.** Upstream stops at the first

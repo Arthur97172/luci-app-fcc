@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.0.7))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -78,10 +78,10 @@ define Package/luci-app-fcc/description
   FCC (Free Claude Code) manager for OpenWrt / ImmortalWrt.
 
   Provides a Web Console (a real interactive terminal for Claude Code, Codex,
-  Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code and
-  Aider), an FCC Server Manager (start/stop/restart, link to FCC Admin) and a
-  Runtime Monitor (versions, PID, uptime, RSS memory, system memory, storage,
-  update status).
+  Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, Aider
+  and Antigravity CLI), an FCC Server Manager (start/stop/restart, link to FCC
+  Admin) and a Runtime Monitor (versions, PID, uptime, RSS memory, system
+  memory, storage, update status).
 
   The FCC runtime itself is installed separately, on demand, under /opt/fcc.
 endef
