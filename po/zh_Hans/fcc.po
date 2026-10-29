@@ -546,9 +546,6 @@ msgstr "状态"
 msgid "Status"
 msgstr "状态"
 
-msgid "Status and versions"
-msgstr "状态与版本"
-
 msgid "Stop"
 msgstr "停止"
 
@@ -992,6 +989,9 @@ msgstr "用户名"
 
 msgid "Version"
 msgstr "版本"
+
+msgid "Version status"
+msgstr "版本状态"
 
 msgid "Versions updated."
 msgstr "版本已更新。"

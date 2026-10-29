@@ -1590,14 +1590,19 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	assert_contains "$(cat "$_ts_js")" 'checkRemoteRunning(true);' \
 		"and refreshed without blanking the card that is already up"
 
-	# The one-time helper is about the key's place in sshd, not a third kind of
-	# key, so it sits on the key row after Show public key rather than on a row
-	# of its own further down.
+	# The one-time helper is about the LAN machine's sshd, not a third kind of
+	# key, so it stays on the key row rather than on a row of its own further
+	# down — the one-time command first, the public key for that account after
+	# it.
 	_ts_keys="$(sed -n '/id="fcc-remote-keygen"/,/id="fcc-remote-helper"/p' "$_ts_view")"
-	assert_contains "$_ts_keys" 'id="fcc-remote-showkey"' \
-		"the one-time authorization button comes after Show public key"
+	assert_contains "$_ts_keys" 'id="fcc-remote-keygen"' \
+		"the key row starts with the control that makes a key"
 	assert_contains "$_ts_keys" '<%:One-time authorization%>' \
 		"under the name it now carries"
+	_ts_helper_line="$(grep -n 'id="fcc-remote-helper"' "$_ts_view" | cut -d: -f1)"
+	_ts_show_line="$(grep -n 'id="fcc-remote-showkey"' "$_ts_view" | cut -d: -f1)"
+	assert_ok "Show public key comes after the one-time authorization button" \
+		test "$_ts_helper_line" -lt "$_ts_show_line"
 
 	# The page is translated and remote.sh is not. A failure must not carry the
 	# script's English sentence into a Chinese interface, and ssh's own warning
@@ -1843,7 +1848,7 @@ test_agent_information_is_opt_in_and_named() {
 	# One button for state and versions, and a second one that puts the
 	# section back to empty.
 	_ts_toolbar="$(sed -n '/id="fcc-info-agent-versions"/,/<\/div>/p' "$_ts_info")"
-	assert_contains "$(cat "$_ts_info")" '<%:Status and versions%>' \
+	assert_contains "$(cat "$_ts_info")" '<%:Version status%>' \
 		"the agent button names what it shows"
 	assert_not_contains "$(cat "$_ts_info")" '<%:Re-detect versions%>' \
 		"and no longer says re-detect"
@@ -1865,7 +1870,7 @@ test_agent_information_is_opt_in_and_named() {
 	assert_not_contains "$_ts_init" 'agent_versions' \
 		"opening the tab does not run a version detection"
 
-	# Status and versions turns the table on before it asks the backend;
+	# Version status turns the table on before it asks the backend;
 	# Clear information turns it off and empties what is on screen.
 	assert_contains "$(cat "$_ts_js")" 'agentShown = true;' \
 		"the button shows the table"

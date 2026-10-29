@@ -447,9 +447,6 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-msgid "Status and versions"
-msgstr ""
-
 msgid "Stop"
 msgstr ""
 
@@ -766,6 +763,9 @@ msgid "Username"
 msgstr ""
 
 msgid "Version"
+msgstr ""
+
+msgid "Version status"
 msgstr ""
 
 msgid "Versions updated."
