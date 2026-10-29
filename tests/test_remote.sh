@@ -279,6 +279,26 @@ ssh_last_command() {
 	ssh_command "$(awk '/^CALL$/ { n++ } END { print n + 0 }' "$TMP/ssh.log" 2>/dev/null)"
 }
 
+# The details script of the last run_remote, unwrapped from the `sh -c '...'`
+# word ssh carried it in. Tests that make the far side's own script answer a
+# question — rather than a canned answer standing in for the machine — run this
+# against a PATH of their own: a fake ps, lsof or pgrep.
+details_script() {
+	_ds_n=1
+	_ds_s=""
+	while :; do
+		_ds_c="$(ssh_command "$_ds_n")"
+		[ -n "$_ds_c" ] || break
+		case "$_ds_c" in
+		*'ps -o etimes='*) _ds_s="$_ds_c" ;;
+		esac
+		_ds_n=$((_ds_n + 1))
+	done
+	_ds_s=${_ds_s#"sh -c '"}
+	_ds_s=${_ds_s%"'"}
+	printf '%s' "$_ds_s"
+}
+
 # A key pair the fake ssh-keygen agrees is a pair: "PRIVATE KEY" parses, and
 # its derived public half is the same line the .pub holds. Written by one
 # helper so a fixture cannot half-disagree and turn another test's failure into
@@ -2057,8 +2077,7 @@ test_uptime_ignores_a_ps_that_answers_with_keywords() {
 	SSH_PROBE_OUT='server running' run_remote running >/dev/null 2>&1 || true
 	_cmd="$(ssh_command 2)"
 	assert_contains "$_cmd" 'ps -o etimes=' "the details script asks the process list"
-	_body=${_cmd#"sh -c '"}
-	_body=${_body%"'"}
+	_body="$(details_script)"
 	mkdir -p "$TMP/macps"
 	cat > "$TMP/macps/pgrep" <<'EOS'
 #!/bin/sh
@@ -2079,6 +2098,50 @@ EOS
 	assert_contains "$_out" 'uptime=41' "and reads the uptime etime reported"
 	assert_not_contains "$_out" '%cpu' "never passing the keyword list on"
 	assert_contains "$_out" 'rss_kb=202640' "with the memory beside it"
+	drop_sandbox
+}
+
+test_a_wildcard_bind_is_spelled_as_an_address() {
+	# lsof prints a listening wildcard as `*`, and the panel draws the field as
+	# an address — so a macOS target reported `*:8082`, which reads as an
+	# incomplete answer next to the `0.0.0.0:8082` a Linux or Windows target
+	# gives for the same socket. The row's type column says which wildcard it
+	# is, and the script reports it in the notation the other platforms use.
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	SSH_PROBE_OUT='server running' run_remote running >/dev/null 2>&1 || true
+	_body="$(details_script)"
+	mkdir -p "$TMP/macbind"
+	cat > "$TMP/macbind/pgrep" <<'EOS'
+#!/bin/sh
+printf '4242\n'
+EOS
+	cat > "$TMP/macbind/ps" <<'EOS'
+#!/bin/sh
+case "$*" in
+	*etime*) printf '00:41\n'; exit 0 ;;
+	*rss*) printf ' 202640\n'; exit 0 ;;
+esac
+exit 1
+EOS
+	chmod +x "$TMP/macbind/pgrep" "$TMP/macbind/ps"
+	for _type in IPv4 IPv6; do
+		cat > "$TMP/macbind/lsof" <<EOS
+#!/bin/sh
+printf '%s\n' 'COMMAND    PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME'
+printf '%s\n' 'python3.1 4242 arthur    4u  $_type 0x80cbb9a56ae8848      0t0  TCP *:8082 (LISTEN)'
+EOS
+		chmod +x "$TMP/macbind/lsof"
+		_out="$(PATH="$TMP/macbind:$PATH" sh -c "$_body" 2>/dev/null)"
+		assert_contains "$_out" 'port=8082' "$_type: the port is read"
+		if [ "$_type" = IPv4 ]; then
+			assert_contains "$_out" 'bind=0.0.0.0' "$_type: the wildcard is 0.0.0.0"
+		else
+			assert_contains "$_out" 'bind=::' "$_type: and an IPv6 one is ::"
+		fi
+		assert_not_contains "$_out" 'bind=*' "$_type: never a bare star"
+	done
 	drop_sandbox
 }
 

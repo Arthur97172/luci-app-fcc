@@ -846,6 +846,16 @@ if [ -n "$_bds_a" ]; then
 	_bds_b="${_bds_a%:*}"
 	_bds_b="${_bds_b#[}"
 	_bds_b="${_bds_b%]}"
+	# lsof spells the wildcard `*`, and the type column of that row says which
+	# one it is: an IPv4 `*` is 0.0.0.0 and an IPv6 one is ::. They are the same
+	# address in the notation the other platforms report, and the page draws the
+	# field as an address — `*:8082` there reads as an incomplete answer.
+	if [ "$_bds_b" = "*" ]; then
+		case "$_bds_l" in
+		*IPv4*|*tcp4*) _bds_b=0.0.0.0 ;;
+		*IPv6*|*tcp6*) _bds_b="::" ;;
+		esac
+	fi
 	[ -n "$_bds_b" ] && echo "bind=$_bds_b"
 fi
 exit 0'
