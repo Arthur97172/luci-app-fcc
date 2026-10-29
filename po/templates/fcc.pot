@@ -156,6 +156,9 @@ msgstr ""
 msgid "Could not read the one-time setup."
 msgstr ""
 
+msgid "DeepSeek Harness did not print its address; showing its pane instead."
+msgstr ""
+
 msgid "Detecting versions…"
 msgstr ""
 
@@ -433,6 +436,9 @@ msgid "Start on boot"
 msgstr ""
 
 msgid "Start the FCC server automatically and keep it supervised by procd."
+msgstr ""
+
+msgid "Starting DeepSeek Harness…"
 msgstr ""
 
 msgid "State"

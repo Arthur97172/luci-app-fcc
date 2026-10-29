@@ -10,7 +10,7 @@
 
 | 页面 | 作用 |
 | --- | --- |
-| **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider、Antigravity CLI 的真正交互式终端——每个 Agent 一个 tmux 会话，直接在浏览器里用。 |
+| **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider、Antigravity CLI 的交互式会话——每个 Agent 一个 tmux 会话，直接在浏览器里用（DeepSeek Harness 只有浏览器界面，见下文）。 |
 | **配置** | 服务器设置（地址、端口、日志级别）、安装与备份路径、Agent 选择、安装/卸载/彻底卸载、更新、启动/停止/重启、诊断报告、FCC Admin 入口（运行信息每 2 秒刷新，后台标签页暂停），以及通过 SSH 控制局域网内另一台机器。 |
 | **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储。 |
 
@@ -295,6 +295,18 @@ WebSocket 支持。所以后端以**绝对偏移量**暴露输出，浏览器长
 会话也可以离开 LuCI：工具栏的 **在浏览器中打开** 把当前会话放进独立窗口，**关闭窗口就会
 结束该会话**（刷新不会，重连会取消延迟关闭）；**结束全部会话** 只结束 `fcc-*` 命名空间；
 **清理已结束的会话** 只回收进程已退出的会话及其遗留文件。
+
+**DeepSeek Harness 是唯一的例外**：它没有字符界面，`fcc-dsh` 启动的是 `dsh web`，一个默认
+只在那台机器回环地址上监听的浏览器界面，所以窗格里只会打印一行
+`dsh web: http://127.0.0.1:3080/?token=…`。局域网模式下，面板会替它加上
+`--host <那台机器的局域网地址> --no-open`，于是窗格里打印的是
+`http://192.168.x.x:3080/?token=…`，可以直接在驱动这个面板的浏览器里打开——URL 里的
+token 就是访问凭据，不要外传。Windows 目标不改启动参数，仍是上游默认行为。
+
+对 dsh 会话点 **在浏览器中打开** 时，弹出的窗口会直接导航到那个地址，而不是再开一个终端
+窗格：面板从该会话自己的输出里取出地址（每次启动 token 都不同，只有窗格知道）。这个窗口
+**不拥有会话**——关掉它不会结束会话，dsh 界面背后的服务仍在运行；要结束它，用会话标签上的
+× 或结束全部会话。
 
 ---
 

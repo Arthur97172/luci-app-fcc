@@ -197,6 +197,9 @@ msgstr "无法连接到会话："
 msgid "Could not read the one-time setup."
 msgstr "无法读取一次性准备命令。"
 
+msgid "DeepSeek Harness did not print its address; showing its pane instead."
+msgstr "DeepSeek Harness 没有打印出地址，改为显示它的窗格。"
+
 msgid "Detecting versions…"
 msgstr "正在检测版本…"
 
@@ -534,6 +537,9 @@ msgstr "开机自启"
 msgid "Start the FCC server automatically and keep it supervised by procd."
 msgstr "自动启动 FCC 服务器，并由 procd 持续守护。"
 
+msgid "Starting DeepSeek Harness…"
+msgstr "正在启动 DeepSeek Harness…"
+
 msgid "State"
 msgstr "状态"
 
@@ -591,9 +597,9 @@ msgid ""
 "server.log under the install path when the init script this package installs "
 "started it."
 msgstr ""
-"局域网主机上的 FCC Server 未能启动。那台机器上的日志会说明原因：由上游安装启动"
-"时看 ~/.fcc/server.log，由本包安装的 init 脚本启动时看安装路径下的 "
-"logs/fcc-server.log。"
+"局域网主机上的 FCC Server 未能启动。那台机器上的日志会说明原因：由上游安装启"
+"动时看 ~/.fcc/server.log，由本包安装的 init 脚本启动时看安装路径下的 logs/"
+"fcc-server.log。"
 
 msgid ""
 "The FCC Server did not stop on the LAN machine. Its process is still running "

@@ -9,7 +9,7 @@ Three pages, one package:
 
 | Page | What it does |
 | --- | --- |
-| **Web Console** | A real interactive terminal for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, Aider and Antigravity CLI — one tmux session per agent, in the browser. |
+| **Web Console** | An interactive session for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, Aider and Antigravity CLI — one tmux session per agent, in the browser (DeepSeek Harness has a browser UI of its own; see below). |
 | **Configuration** | Server settings (address, port, log level), install and backup paths, the agent picker, install/uninstall/complete uninstall, updates, start/stop/restart, the diagnostics report, the FCC Admin link (the runtime panel refreshes every two seconds and pauses while the tab is hidden), and control of the FCC server on one other machine over SSH. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
 
@@ -420,6 +420,22 @@ reattach cancels the delayed close. **End all sessions** ends every session this
 console created after a confirmation — only the `fcc-*` namespace. **Clean up
 finished sessions** reaps only sessions whose process has already exited, and
 their leftover files.
+
+**DeepSeek Harness is the one exception**: it has no character interface.
+`fcc-dsh` boots `dsh web`, a browser UI that by default listens only on that
+machine's loopback, so the pane can print nothing more useful than
+`dsh web: http://127.0.0.1:3080/?token=…`. In LAN mode the panel adds
+`--host <that machine's LAN address> --no-open` for it, so the pane prints
+`http://192.168.x.x:3080/?token=…` and that URL opens directly in the browser
+driving this panel — the token in it is the credential, so keep it to yourself.
+Windows targets keep the bare launcher and upstream's default.
+
+For a dsh session, **Open in browser** navigates its window straight to that
+address instead of opening another terminal pane: the panel reads the address
+from the session's own output, because the token differs on every launch and
+only the pane knows it. That window **does not own the session** — closing it
+leaves the session running, since it is what serves the UI; end it with the × on
+the session's tab or with End all sessions.
 
 ---
 

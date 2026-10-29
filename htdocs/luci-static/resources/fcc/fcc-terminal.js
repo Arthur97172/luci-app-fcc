@@ -444,7 +444,51 @@
 	/** The agent a session belongs to, from the last session list we fetched. */
 	function agentOf(name) {
 		var match = state.sessions.filter(function (s) { return s.name === name; })[0];
-		return match ? match.agent : '';
+		if (match && match.agent) { return match.agent; }
+		/* The name carries the agent id — `fcc-<agent>-<nnn>` — so a session
+		 * the list does not hold yet (just created, or a list that failed to
+		 * load) still answers this question. */
+		match = /^fcc-([a-z0-9]+)-[0-9]{3}$/.exec(name || '');
+		return match ? match[1] : '';
+	}
+
+	/*
+	 * The browser UI DeepSeek Harness prints when it boots.
+	 *
+	 * It is the one agent with no terminal interface: `fcc-dsh` runs `dsh web`,
+	 * which serves a browser UI and prints its address — token included — once,
+	 * on the pane's first screen. The token is new on every launch, so that
+	 * screen is the only place the address exists. The escape character is
+	 * excluded from the match so it cannot swallow a repaint sequence that
+	 * follows the address.
+	 */
+	var DSH_URL = /https?:\/\/[^\s"'<>\x1b]+[?&]token=[A-Za-z0-9_-]+/g;
+
+	function dshUrlIn(data) {
+		var text;
+		try { text = new TextDecoder('utf-8').decode(FCC.b64ToBytes(data)); }
+		catch (e) { return ''; }
+		var found = text.match(DSH_URL);
+		return found ? found[found.length - 1] : '';
+	}
+
+	/**
+	 * Ask a dsh session for its address until it has printed one.
+	 *
+	 * offset 0 asks for everything the pane has kept, so a session that was
+	 * already running is answered on the first try, while one this click
+	 * created needs a few seconds. `alive` ends the wait early: a pane that has
+	 * died will never print an address, and the fallback shows why.
+	 */
+	function waitForDshUrl(name, deadline, cb) {
+		FCC.api('session_output', { name: name, offset: 0, wait: 0 }, { method: 'GET' })
+			.then(function (r) {
+				var url = dshUrlIn(r && r.data);
+				if (url) { cb(url); return; }
+				if (!r || !r.alive || Date.now() > deadline) { cb(''); return; }
+				setTimeout(function () { waitForDshUrl(name, deadline, cb); }, 700);
+			})
+			.catch(function () { cb(''); });
 	}
 
 	function bannerAction(label, style, fn) {
@@ -645,6 +689,10 @@
 	 * That window owns the session: closing it ends the session, reloading it
 	 * does not (see fcc-popout.js). The console page is unaffected and can
 	 * still attach to the same session while the window is open.
+	 *
+	 * DeepSeek Harness is the exception. It has no terminal — only a browser UI
+	 * — so for it the window receives that UI instead of a second copy of a
+	 * pane that can never take keystrokes.
 	 */
 	function openInBrowser() {
 		var win = window.open('', '_blank');
@@ -656,12 +704,42 @@
 
 		var popout = window.FCC_POPOUT || '';
 
-		function go(name) {
+		function goTerminal(name) {
 			win.location.href = popout + '?session=' + encodeURIComponent(name);
 		}
 
+		/**
+		 * Point the window at the harness's own UI once the pane has printed
+		 * its address. The session stays alive while the UI is open and the
+		 * window deliberately does not adopt the popout's ownership: closing
+		 * the UI tab must not kill the harness the session is serving.
+		 */
+		function goDsh(name) {
+			try {
+				win.document.title = 'DeepSeek Harness';
+				win.document.body.style.cssText = 'font:14px sans-serif;padding:2em';
+				win.document.body.textContent = FCC._('Starting DeepSeek Harness…');
+			} catch (e) { /* the window may already be closed */ }
+			waitForDshUrl(name, Date.now() + 30000, function (url) {
+				if (url) {
+					try { win.location.href = url; } catch (e) { /* closed */ }
+					return;
+				}
+				/* No address: the pane's own screen says why (an error, a
+				 * missing integration) better than a blank window would. */
+				FCC.notice(status, 'warn',
+					FCC._('DeepSeek Harness did not print its address; showing its pane instead.'));
+				goTerminal(name);
+			});
+		}
+
+		function go(name, agent) {
+			if ((agent || agentOf(name)) === 'dsh') { goDsh(name); return; }
+			goTerminal(name);
+		}
+
 		if (state.active) { go(state.active); return; }
-		if (state.sessions.length) { go(state.sessions[0].name); return; }
+		if (state.sessions.length) { go(state.sessions[0].name, state.sessions[0].agent); return; }
 
 		var sel = FCC.$('#fcc-agent-select');
 		var agent = sel ? sel.value : '';
@@ -678,7 +756,9 @@
 			.then(function (r) {
 				if (r && r.ok === false) { abort(consoleReason(r)); return; }
 				loadSessions();
-				go(r.name);
+				/* The list has not reloaded yet, so the agent the click chose is
+				 * passed along rather than read back from it. */
+				go(r.name, agent);
 			})
 			.catch(function (err) { abort(err.message); });
 	}

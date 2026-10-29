@@ -1655,6 +1655,28 @@ fcc_remote_console() {
 	return 1
 }
 
+fcc_remote_pane_args() {
+	# fcc_remote_pane_args <agent> -> extra words for the launcher, or nothing.
+	#
+	# DeepSeek Harness is the one agent without a terminal interface: `fcc-dsh`
+	# boots `dsh web`, which serves a browser UI on the loopback of whatever
+	# machine the pane runs on. A pane that inherits that default can only print
+	# a URL no browser outside that machine can open — the user looking at this
+	# panel included. Handing it the LAN address makes the printed URL work from
+	# that browser; --no-open keeps the pane from seizing the far side's own
+	# desktop browser as well. The address is a validated private IPv4 literal
+	# (fcc_remote_valid_host), so it is one safe word.
+	#
+	# Windows keeps the bare launcher: dsh's Windows story is unproven here, and
+	# the PowerShell script takes no arguments.
+	case "${1:-}" in
+	dsh)
+		[ "$(fcc_remote_platform)" = windows ] && return 0
+		printf ' web --host %s --no-open' "$(fcc_remote_host)"
+		;;
+	esac
+}
+
 fcc_remote_session_command() {
 	# fcc_remote_session_command <agent> -> the command a pane runs, one line.
 	#
@@ -1673,6 +1695,9 @@ fcc_remote_session_command() {
 		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
 
 	_sc_launcher="$(fcc_agent_command "$_sc_agent")"
+	# The few words only a pane needs; see fcc_remote_pane_args. Empty for every
+	# agent but DeepSeek Harness.
+	_sc_args="$(fcc_remote_pane_args "$_sc_agent")"
 	# What the far side runs. OpenWrt carries this package, so its runtime
 	# environment is applied there by fcc-env. A Linux, macOS or Windows machine
 	# carries only the upstream install: the launcher is resolved from the same
@@ -1684,7 +1709,7 @@ fcc_remote_session_command() {
 	case "$(fcc_remote_platform)" in
 		linux|macos)
 			_sc_probe="$(fcc_remote_bare_probe_cmd)"
-			_sc_remote="$(fcc_shquote "export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher")" ;;
+			_sc_remote="$(fcc_shquote "export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher$_sc_args")" ;;
 		windows)
 			_sc_probe="$(fcc_remote_win_probe_cmd)"
 			# cmd.exe parses the one double-quoted argument and hands the script
@@ -1692,7 +1717,7 @@ fcc_remote_session_command() {
 			# on this side, so ssh sends it as one command.
 			_sc_remote="$(fcc_shquote "$(fcc_remote_win_cmd "$(fcc_remote_win_session_script "$_sc_launcher")")")" ;;
 		*)
-			_sc_remote="/usr/bin/fcc-env $_sc_launcher" ;;
+			_sc_remote="/usr/bin/fcc-env $_sc_launcher$_sc_args" ;;
 	esac
 	if [ -n "$_sc_probe" ]; then
 		# Asked before the pane starts: a session whose launcher is gone would

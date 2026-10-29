@@ -1918,6 +1918,46 @@ test_session_command_names_a_bare_machine_that_cannot_be_reached() {
 	drop_sandbox
 }
 
+test_session_command_puts_deepseek_harness_on_the_lan_address() {
+	# DeepSeek Harness has no terminal UI: `fcc-dsh` boots `dsh web`, which
+	# serves a browser UI on the loopback of the machine the pane runs on. The
+	# pane's URL is therefore useless to the browser driving this panel unless
+	# the harness is told to listen on the LAN address the panel already knows.
+	# Every other agent stays a bare launcher, so this is pinned both ways.
+	fresh
+	ready_lan
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' run_remote session-command dsh)" || true
+	assert_contains "$out" 'exec fcc-dsh web --host 192.168.5.20 --no-open' \
+		"the harness is bound to the LAN address the page will print"
+	assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" \
+		"and still reaches ssh as one line"
+
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' run_remote session-command claude)" || true
+	assert_not_contains "$out" '--host' \
+		"a terminal agent gets no arguments it did not ask for"
+
+	# An OpenWrt machine behind this panel also carries the harness, and runs it
+	# through fcc-env — which passes the words on.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(run_remote session-command dsh)" || true
+	assert_contains "$out" '/usr/bin/fcc-env fcc-dsh web --host 192.168.5.20 --no-open' \
+		"fcc-env runs the harness with the same words"
+
+	# Windows is left on the bare launcher: dsh's Windows story is unproven and
+	# the PowerShell script is not given arguments.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' run_remote session-command dsh)" || true
+	assert_not_contains "$out" '--host' "Windows keeps the bare launcher"
+	drop_sandbox
+}
+
 test_console_reads_a_windows_machine_from_the_powershell_probe() {
 	# A Windows machine that only ran install.ps1 has no sh, no status.sh and no
 	# fcc-env, so the console cannot ask it the POSIX way. It is asked with one
