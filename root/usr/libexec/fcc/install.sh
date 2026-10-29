@@ -1855,6 +1855,11 @@ rollback_runtime() {
 	# A runtime.json still in place says the same thing about the box itself: an
 	# update copies it into the backup rather than moving it, so it outlives the
 	# failed attempt that followed.
+	#
+	# Only an update's. cmd_runtime writes this file after the health check, so a
+	# first install that fails there never writes one and is read as what it
+	# is — nothing installed before, nothing to restore (see the note where the
+	# write happens).
 	[ -f "$ROOT/runtime.json" ] && _rb_had=1
 
 	if [ "$_rb_had" -eq 0 ]; then
@@ -1930,9 +1935,24 @@ rollback_runtime() {
 	fcc_cache_set fcc_version ""
 	fcc_cache_set version_probed_at 0
 
-	[ "$_rb_was" = true ] && /etc/init.d/fcc start >/dev/null 2>&1
+	# Section 79's last step is "start, health check", and on a router whose
+	# control target is the LAN machine that step cannot succeed: init.d refuses
+	# to start this side's server, so a restore that worked perfectly would be
+	# reported as ROLLBACK_FAILED and its consumed backup kept on the box. The
+	# question the check answers is "is the previous tree usable again", and on
+	# such a router the launcher the restore put back is the whole of the
+	# evidence — the server it would have started is on the other machine and
+	# was never touched by this install.
+	_rb_check=1
+	if [ "$(fcc_uci_get main control_target local)" = "lan" ]; then
+		_rb_check=0
+		fcc_log "$LOG" "control target is the LAN; this router's server is not started, so the restore is checked by the tree alone"
+	fi
 
-	if [ -x "$ROOT/bin/fcc-server" ] && wait_for_health "$FCC_HEALTH_TIMEOUT"; then
+	[ "$_rb_check" = 1 ] && [ "$_rb_was" = true ] && /etc/init.d/fcc start >/dev/null 2>&1
+
+	if [ -x "$ROOT/bin/fcc-server" ] \
+			&& { [ "$_rb_check" = 0 ] || wait_for_health "$FCC_HEALTH_TIMEOUT"; }; then
 		# The previous tree is live again — runtime/ and bin/ were moved back,
 		# and data/ was restored from this directory — so what is left here is a
 		# duplicate of the device's own state, and by far the largest thing a
@@ -2234,12 +2254,14 @@ cmd_runtime() {
 		return 1
 	fi
 
-	write_runtime_metadata
-	# write_runtime_metadata() has just written the version it detected into the
-	# cache as well, so there is no stale entry left to drop here. Clearing it —
-	# which is what this line used to do — refreshed the cache file's mtime with
-	# an empty value, and the page then showed "—" for the version until the
-	# entry expired.
+	# runtime.json is written after the health check rather than before it, and
+	# that is what tells rollback_runtime whether this box had a runtime at all.
+	# It reads the file as the record of a previous install; written this early,
+	# it was only this attempt's own record. A first install that failed the
+	# health check was therefore "an update with something to restore", restored
+	# nothing, and reported ROLLBACK_FAILED — with the file left on the box
+	# claiming an agent that had just been rolled away. See the note on _rb_had.
+	# Nothing between here and the write below reads it.
 
 	# --- sections 23 steps 11-12: start, then check -----------------------
 	#
@@ -2289,12 +2311,12 @@ cmd_runtime() {
 	# the first moment that is safe, since before the health check the backup
 	# is what a rollback restores, and a tool moved out of it would be lost
 	# with the new tree.
-	if keep_previous_agent_tools "$_cr_backup"; then
-		# runtime.json was written before the health check, and the agents
-		# carried over were not installed by this run, so it has to be told
-		# about them now.
-		write_runtime_metadata
-	fi
+	#
+	# runtime.json is written once, here, so that it describes the finished
+	# tree: the tools carried over above were not installed by this run, and a
+	# record written before them would not name the agents they belong to.
+	keep_previous_agent_tools "$_cr_backup" >/dev/null 2>&1
+	write_runtime_metadata
 	commit_backup "$_cr_backup"
 
 	_cr_after="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"

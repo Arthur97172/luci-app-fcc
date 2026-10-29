@@ -1765,6 +1765,8 @@ test_a_lan_session_is_an_ssh_pane_and_says_where_it_runs() {
 	lan_script close "$_lc_name" >/dev/null
 	assert_no "closing removes the sidecar with the session" \
 		test -f "$SANDBOX/opt/fcc/sessions/$_lc_name.target"
+
+	rm -f "$SANDBOX/uci/fcc.main.control_target"
 }
 
 test_a_lan_refusal_is_relayed_to_the_page_unchanged() {
@@ -1788,6 +1790,8 @@ test_a_lan_refusal_is_relayed_to_the_page_unchanged() {
 	assert_eq "$_lf_before" \
 		"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c '^fcc-claude-')" \
 		"a refused create leaves no session behind"
+
+	rm -f "$SANDBOX/uci/fcc.main.control_target"
 }
 
 test_closing_all_sessions_removes_every_sidecar() {
@@ -1968,6 +1972,11 @@ sh_common_path() {
 # A stand-in for uci: only `-q get <section>.<option>` is implemented, reading
 # $UCI_SHIM_DIR/<section>.<option>. None of uci's other surface is used by the
 # code under test, and a developer machine has no uci at all.
+#
+# The directory is shared by every test in this file, so a test that writes a
+# setting owns removing it before it returns. control_target is the one that
+# bites: install and rollback read it, so a test that leaves `lan` behind
+# silently changes every later install test's subject.
 make_uci_shim() {
 	mkdir -p "$SANDBOX/bin" "$SANDBOX/uci"
 	cat > "$SANDBOX/bin/uci" <<'SHIM'
@@ -3180,6 +3189,66 @@ test_failed_install_reports_the_reason_in_the_runtime_log() {
 	rm -f "$SANDBOX/bin/curl" "$SANDBOX/bin/nslookup" "$SANDBOX/bin/tmux"
 }
 
+# A rollback on that same router.
+#
+# The restore's last step is "start the server, health check", which cannot
+# succeed where init.d refuses to start it — so a restore that worked perfectly
+# ended on section 79's "FCC Server remains stopped" and ROLLBACK_FAILED, and
+# kept the backup it had just consumed. The question the check is asking is
+# whether the previous tree is usable again, and on this router the launcher the
+# restore put back is the whole of the evidence.
+test_a_lan_rollback_is_not_judged_by_a_local_server() {
+	setup_sandbox
+	make_uci_shim
+
+	_rl_build() { # _rl_build <root>
+		mkdir -p "$1/fcc/bin" "$1/fcc/runtime" "$1/bk/bin" "$1/bk/data"
+		printf '#!/bin/sh\necho "fcc-server 6.18.5"\n' > "$1/bk/bin/fcc-server"
+		chmod +x "$1/bk/bin/fcc-server"
+		printf '{"fcc_version": "6.18.5"}\n' > "$1/bk/runtime.json"
+	}
+
+	# --- control target is the LAN machine -------------------------------
+	printf 'lan' > "$SANDBOX/uci/fcc.main.control_target"
+	_rl_build "$SANDBOX/lan-rb"
+	_rl_out="$(sh_install "rollback_runtime '$SANDBOX/lan-rb/bk' false; echo \"rc=\$?\"" \
+		"$SANDBOX/lan-rb")"
+	_rl_log="$(cat "$SANDBOX/lan-rb/fcc/logs/fcc-runtime.log" 2>/dev/null)"
+
+	assert_contains "$_rl_out" 'ROLLED_BACK' \
+		"a restore on a LAN-target router reports what it did: [$_rl_out]"
+	assert_not_contains "$_rl_out" 'ROLLBACK_FAILED' \
+		"rather than a failure that is only the local server's absence"
+	assert_contains "$_rl_log" 'control target is the LAN' \
+		"the log says why the server was not started"
+	assert_not_contains "$_rl_log" 'remains stopped' \
+		"and does not report a server that was never started as stopped"
+	assert_ok "the previous launcher is back in place" \
+		test -x "$SANDBOX/lan-rb/fcc/bin/fcc-server"
+	assert_no "and the backup it consumed is gone" test -d "$SANDBOX/lan-rb/bk"
+
+	# --- control target is this router -----------------------------------
+	# The same restore, with the server this router does run: the health check is
+	# the answer, and with nothing listening it fails. This leg is what keeps the
+	# one above from passing because the check had simply been removed.
+	#
+	# The port is pointed at one nothing listens on, because the health probe
+	# reads it from uci and the machine running the suite may well have an FCC
+	# server of its own on 8082 — which would make this leg pass without
+	# anything having been restored.
+	rm -f "$SANDBOX/uci/fcc.main.control_target"
+	printf '47399' > "$SANDBOX/uci/fcc.main.port"
+	_rl_build "$SANDBOX/local-rb"
+	_rl_out="$(sh_install "rollback_runtime '$SANDBOX/local-rb/bk' false; echo \"rc=\$?\"" \
+		"$SANDBOX/local-rb")"
+	assert_contains "$_rl_out" 'ROLLBACK_FAILED' \
+		"a local-target restore whose server does not answer still fails: [$_rl_out]"
+	assert_ok "and keeps the backup it could not confirm" \
+		test -d "$SANDBOX/local-rb/bk"
+
+	rm -f "$SANDBOX/uci/fcc.main.port"
+}
+
 # One server, and it is on the LAN.
 #
 # init.d refuses to start this router's server while control_target is lan, and
@@ -3281,6 +3350,9 @@ EOF
 	}
 
 	# --- the control: target is this router, so the check must still happen ---
+	# On a port nothing listens on: the machine running the suite may have an FCC
+	# server of its own on 8082, which would answer for this sandbox too.
+	printf '47399' > "$SANDBOX/uci/fcc.main.port"
 	_lt_root="$SANDBOX/local-base/fcc"
 	_lt_installer "$_lt_root"
 	_lt_local="$(_lt_run "$SANDBOX/local-base")"
@@ -3288,6 +3360,15 @@ EOF
 		"a local-target install whose server never answers still fails: [$_lt_local]"
 	assert_contains "$(cat "$_lt_root/logs/fcc-runtime.log" 2>/dev/null)" \
 		'health check FAILED' "and says the health check is why"
+	# And it failed as a first install, which is what it was. runtime.json is
+	# written only once the server has answered, so a run that dies at the check
+	# leaves no record behind to be read as a previous runtime on the next try.
+	assert_contains "$_lt_local" 'INSTALL_FAILED' \
+		"and reports it as a first install with nothing to restore"
+	assert_not_contains "$_lt_local" 'ROLLBACK_FAILED' \
+		"rather than a rollback of a version that never existed here"
+	assert_no "no runtime.json is left claiming an install" \
+		test -f "$_lt_root/runtime.json"
 
 	# --- the LAN: nothing local was started, so there is nothing to check -----
 	_lt_root="$SANDBOX/lan-base/fcc"
@@ -3313,8 +3394,10 @@ EOF
 		"and so is everything else it wrote"
 
 	# The sandbox is shared: a curl left here answers the health probe of every
-	# later sh_install with an empty 200.
+	# later sh_install with an empty 200, and a control_target left here changes
+	# what every later install test is actually testing.
 	rm -f "$SANDBOX/bin/curl" "$SANDBOX/bin/nslookup" "$SANDBOX/bin/tmux"
+	rm -f "$SANDBOX/uci/fcc.main.control_target" "$SANDBOX/uci/fcc.main.port"
 }
 
 # Section 3.6.5 lets the user uncheck every agent. Upstream's chooser will not
