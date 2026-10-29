@@ -266,7 +266,7 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 | fold | `coreutils-fold` | Codex 的安装脚本 |
 | sleep | `coreutils-sleep` | Pi 的安装脚本（它的 sleep 要接受小数秒） |
 | git | `git-http` | Hermes 安装器克隆代码仓库（含 `git`） |
-| sha512sum | `coreutils-sha512sum` | Antigravity CLI 的安装脚本校验下载（BusyBox 没有这个 applet） |
+| sha512sum | `coreutils-sha512sum` | Antigravity CLI 的安装脚本校验下载（BusyBox 没有这个 applet；有的镜像还会把 `/usr/bin/sha512sum` 做成指向 BusyBox 的空链接，命令存在但一跑就报 `applet not found`） |
 | Node 的 C++ 运行库 | `libstdcpp6`，必要时 `libgcc1` | Pi、DeepSeek Harness 和 Hermes 取回的 musl Node |
 | curl | `curl` | 下载安装器与运行时 |
 

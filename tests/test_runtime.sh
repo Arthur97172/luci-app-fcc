@@ -4591,6 +4591,34 @@ test_doctor_sha512sum_check_follows_the_agent_set() {
 		'FCC_AGENT_SELECTION=agy' --json)" \
 		'"install_allowed": true' "and installing it is what reopens the gate"
 
+	# Present and answering "applet not found": the image ships
+	# /usr/bin/sha512sum as a link to a BusyBox without the applet, so the name
+	# resolves and the command fails. This is the exact shape that got an
+	# install past the preflight and into a Security Halt on 2026-10-29, so a
+	# presence test would let it through again.
+	rm -rf "$SANDBOX/brokentool"
+	mkdir -p "$SANDBOX/brokentool"
+	printf '#!/bin/sh\necho "sha512sum: applet not found" >&2\nexit 127\n' \
+		> "$SANDBOX/brokentool/sha512sum"
+	chmod +x "$SANDBOX/brokentool/sha512sum"
+	_ds5_broken="$(sh_doctor_tools "$_ds5_tools $SANDBOX/brokentool/sha512sum" \
+		'FCC_AGENT_SELECTION=agy' --json | grep '"name": "sha512sum"')"
+	assert_contains "$_ds5_broken" '"status": "FAIL"' \
+		"a sha512sum that answers applet not found fails the check"
+	assert_contains "$_ds5_broken" 'coreutils-sha512sum' \
+		"and the report still names the package that replaces the link"
+	assert_contains "$(sh_doctor_tools "$_ds5_tools $SANDBOX/brokentool/sha512sum" \
+		'FCC_AGENT_SELECTION=agy' --json)" \
+		'"install_allowed": false' "and a broken one closes the gate as well"
+
+	# macOS has no sha512sum at all; the bootstrapper uses shasum there, so the
+	# same question is asked of it and a working one is enough.
+	make_standin_tool shasum 'case "$*" in *"-a 512"*) exit 0 ;; esac; exit 1' >/dev/null
+	_ds5_shasum="$(sh_doctor_tools "$_ds5_tools $SANDBOX/standin/shasum" \
+		'FCC_AGENT_SELECTION=agy' --json | grep '"name": "sha512sum"')"
+	assert_contains "$_ds5_shasum" '"status": "OK"' \
+		"shasum -a 512 answers the same question on darwin"
+
 	# The table itself, which is what install_prerequisite_packages reads when
 	# the gate names a package: the tool, its package, and the one agent whose
 	# installer needs it.

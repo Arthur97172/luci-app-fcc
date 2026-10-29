@@ -378,7 +378,7 @@ HTTPS, no Node build for the CPU — refuses the install with the full report.
 | fold | `coreutils-fold` | Codex's installer |
 | sleep | `coreutils-sleep` | Pi's installer, whose sleep must take fractions |
 | git | `git-http` | The Hermes installer clones its repository (includes `git`) |
-| sha512sum | `coreutils-sha512sum` | The Antigravity CLI installer verifies its download (BusyBox has no such applet) |
+| sha512sum | `coreutils-sha512sum` | The Antigravity CLI installer verifies its download (BusyBox has no such applet; some images also ship `/usr/bin/sha512sum` as a link to BusyBox, so the command exists and answers `applet not found`) |
 | Node's C++ runtime | `libstdcpp6`, plus `libgcc1` if needed | The musl Node fetched by Pi, DeepSeek Harness and Hermes |
 | curl | `curl` | Downloading the installer and the runtime |
 

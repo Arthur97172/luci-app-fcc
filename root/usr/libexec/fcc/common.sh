@@ -997,10 +997,29 @@ fcc_agents_need_bash() {
 # which reads as a tampered download and is neither true nor retryable. Measured
 # on the same router: with `apk add coreutils-sha512sum` the identical run
 # printed "✓ Download complete and checksum verified.", extracted the musl
-# build and `agy --version` answered 1.4.10. This one *is* answered by presence
-# — the command is either there or not — but it is the reason the table names
-# the exact command rather than a class: "there is a hash tool here" is answered
-# yes by sha256sum, which is a different algorithm.
+# build and `agy --version` answered 1.4.10. It is also why the table names the
+# exact command rather than a class: "is there a hash tool here" is answered yes
+# by sha256sum, which is a different algorithm.
+#
+# **The command exists and still cannot do it.** Found the hard way, on
+# 2026-10-29, by installing Antigravity CLI from the panel on a router that had
+# already been shown to have this gap: the image ships /usr/bin/sha512sum as a
+# symlink to /bin/busybox —
+#
+#     $ command -v sha512sum
+#     /usr/bin/sha512sum
+#     $ ls -l /usr/bin/sha512sum
+#     lrwxrwxrwx  /usr/bin/sha512sum -> /bin/busybox
+#     $ sha512sum --help
+#     sha512sum: applet not found
+#
+# — and `apk info -W /usr/bin/sha512sum` attributes that link to the busybox
+# package itself, so it is the image's own state rather than something a person
+# did. A presence test answers yes for it, the preflight passes, and the install
+# dies at the Security Halt above: exactly the failure the absence causes, but
+# carrying a fix that looks already applied. The check below therefore hashes
+# the empty string — a working sha512sum answers a hash and exits 0, while the
+# dangling applet link exits nonzero.
 #
 # The four are why the check below asks a *capability* question per tool rather
 # than testing for the binary: for sleep, "is it installed" is the wrong
@@ -1039,11 +1058,13 @@ fcc_tool_works() {
 	# fcc_tool_works <tool> -> 0 when the tool is usable *here*
 	#
 	# A capability probe, not a presence test. fold is asked whether it exists,
-	# because BusyBox either has the applet or does not. sleep is asked to do the
-	# thing the Pi installer asks of it, because the applet is present on every
-	# image and only some of them can do it. git is asked for its exec-path and
-	# then for git-remote-https in it, because a git that cannot clone over HTTPS
-	# is present and useless for the Hermes install.
+	# because BusyBox either has the applet compiled in or does not. sleep is
+	# asked to do the thing the Pi installer asks of it, because the applet is
+	# present on every image and only some of them can do it. git is asked for
+	# its exec-path and then for git-remote-https in it, because a git that
+	# cannot clone over HTTPS is present and useless for the Hermes install.
+	# sha512sum is asked to hash, because an image can ship the name without the
+	# applet behind it. Presence alone is never enough here.
 	case "$1" in
 		fold)  command -v fold >/dev/null 2>&1 ;;
 		sleep) sleep 0.075 2>/dev/null ;;
@@ -1057,9 +1078,13 @@ fcc_tool_works() {
 		sha512sum)
 			# Either name the bootstrapper itself accepts: it uses shasum on
 			# darwin and sha512sum everywhere else, and both answer the same
-			# question. Presence is the whole test — unlike fold, there is no
-			# half-working version of it.
-			command -v sha512sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1
+			# question. Asked to hash, not merely found: this image ships
+			# /usr/bin/sha512sum as a link to a BusyBox that has no such applet,
+			# so the name resolves and the command fails (the comment above
+			# has the transcript). Hashing the empty string is the smallest
+			# question that separates the two.
+			printf '' | sha512sum >/dev/null 2>&1 ||
+				printf '' | shasum -a 512 >/dev/null 2>&1
 			;;
 		*)     command -v "$1" >/dev/null 2>&1 ;;
 	esac
