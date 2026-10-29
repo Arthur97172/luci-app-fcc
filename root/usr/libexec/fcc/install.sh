@@ -143,9 +143,9 @@ install_prerequisite_packages() {
 	[ -n "$_ipr_pkgs" ] || return 2
 
 	_ipr_list="$(printf '%s ' $_ipr_pkgs)"
-	fcc_log "$LOG" "preflight: installing prerequisites:${_ipr_list% }"
+	fcc_log "$LOG" "preflight: installing prerequisites: ${_ipr_list% }"
 	if _ipr_out="$(fcc_pkg_install $_ipr_pkgs 2>&1 </dev/null)"; then
-		fcc_log "$LOG" "preflight: installed${_ipr_list% }"
+		fcc_log "$LOG" "preflight: installed ${_ipr_list% }"
 		return 0
 	fi
 	# The package manager's own last words, so a package that could not be
@@ -2242,16 +2242,34 @@ cmd_runtime() {
 	# entry expired.
 
 	# --- sections 23 steps 11-12: start, then check -----------------------
-	_cr_autostart="$(fcc_uci_get main auto_start 1)"
-	if [ "$_cr_autostart" = "1" ]; then
-		/etc/init.d/fcc enable >/dev/null 2>&1
-		/etc/init.d/fcc start  >/dev/null 2>&1
+	#
+	# A router whose control target is the LAN machine never starts this side's
+	# server: init.d refuses for that target, and refusing is right — one server
+	# at a time, and switching the target is what stops this one. Enabling it
+	# here would only make every boot log a refusal, and health-checking it would
+	# wait out the timeout for a server nobody asked to start. That is how a
+	# finished install destroyed itself on 2026-10-29: /opt/fcc, the FCC runtime
+	# and the Antigravity CLI binary were all in place, and the install reported a
+	# failed health check and rolled every one of them away.
+	_cr_target="$(fcc_uci_get main control_target local)"
+	_cr_check=0
+	if [ "$_cr_target" = "lan" ]; then
+		fcc_log "$LOG" "control target is the LAN; this router's server is not started, so there is no health check"
+	else
+		_cr_autostart="$(fcc_uci_get main auto_start 1)"
+		if [ "$_cr_autostart" = "1" ]; then
+			/etc/init.d/fcc enable >/dev/null 2>&1
+			/etc/init.d/fcc start  >/dev/null 2>&1
+		fi
+		# Section 49: the update is not finished until the server answers. Only
+		# checked when something is supposed to be listening, so an install with
+		# auto_start off (and nothing running before) is not a failure.
+		if [ "$_cr_autostart" = "1" ] || [ "$_cr_was_running" = true ]; then
+			_cr_check=1
+		fi
 	fi
 
-	# Section 49: the update is not finished until the server answers. Only
-	# checked when something is supposed to be listening, so an install with
-	# auto_start off (and nothing running before) is not reported as a failure.
-	if [ "$_cr_autostart" = "1" ] || [ "$_cr_was_running" = true ]; then
+	if [ "$_cr_check" = 1 ]; then
 		if wait_for_health "$FCC_HEALTH_TIMEOUT"; then
 			fcc_log "$LOG" "health check passed: $(fcc_server_health)"
 		else

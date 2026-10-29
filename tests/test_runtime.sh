@@ -3180,6 +3180,143 @@ test_failed_install_reports_the_reason_in_the_runtime_log() {
 	rm -f "$SANDBOX/bin/curl" "$SANDBOX/bin/nslookup" "$SANDBOX/bin/tmux"
 }
 
+# One server, and it is on the LAN.
+#
+# init.d refuses to start this router's server while control_target is lan, and
+# refuses on purpose: the two machines would answer the same Admin port and the
+# panel would talk to whichever one the tunnel happened to reach. install.sh did
+# not know that. It started the server, waited out the full health timeout,
+# reported the server as failed, and rolled a finished install — runtime,
+# launchers, every agent CLI — back off the box. Installing Antigravity CLI from
+# the panel is how that was found, on a router whose target had been lan for
+# weeks: the runtime.json said "agy: true" and nothing was left to run it with.
+#
+# The two runs below are the same install in the same harness, differing only in
+# control_target, so the LAN leg cannot pass by the health check having been
+# deleted altogether: the local leg still fails exactly where it should.
+test_a_lan_control_target_installs_without_a_local_server() {
+	setup_sandbox
+	make_uci_shim
+	mkdir -p "$SANDBOX/bin" "$SANDBOX/tmux-state"
+
+	# curl, serving one local file: the upstream installer. The doctor's HTTPS
+	# probe is the -o /dev/null form and is answered with a 200-shaped nothing.
+	cat > "$SANDBOX/bin/curl" <<-'EOF'
+	#!/bin/sh
+	_out=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--output|-o) _out="$2"; shift 2 ;;
+			*) shift ;;
+		esac
+	done
+	[ -n "$_out" ] || exit 1
+	[ "$_out" = /dev/null ] && exit 0
+	cp "$FAKE_INSTALLER_SRC" "$_out"
+	EOF
+	chmod +x "$SANDBOX/bin/curl"
+	printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/bin/nslookup"
+	chmod +x "$SANDBOX/bin/nslookup"
+
+	# tmux, reduced to what run_installer uses, with pipe-pane really running the
+	# command it is given so the transcript is written the way the real one is.
+	cat > "$SANDBOX/bin/tmux" <<-'EOF'
+	#!/bin/sh
+	S="$FAKE_TMUX_DIR"
+	case "$1" in -V|--version) echo "tmux 3.4"; exit 0 ;; esac
+	case "$1" in
+	new-session)
+		shift
+		for a in "$@"; do cmd="$a"; done
+		cmd="$(printf '%s' "$cmd" | sed -e 's/^[[:space:]]*sleep 300$//')"
+		rm -f "$S/stream"
+		mkfifo "$S/stream" 2>/dev/null
+		( sh -c "$cmd" ) > "$S/stream" 2>&1 &
+		;;
+	pipe-pane)
+		for a in "$@"; do last="$a"; done
+		printf '%s' "$last" | sed -n 's/^cat >> //p' | tr -d "'" > "$S/pipe-target"
+		( eval "$last" < "$S/stream" ) >/dev/null 2>&1 &
+		;;
+	capture-pane)
+		sed 's/[[:space:]]*$//' "$(cat "$S/pipe-target" 2>/dev/null)" 2>/dev/null
+		;;
+	send-keys|kill-session) : ;;
+	esac
+	exit 0
+	EOF
+	chmod +x "$SANDBOX/bin/tmux"
+
+	# The upstream installer, reduced to what the run below checks: it puts down
+	# a runtime tree whose fcc-server answers --version, and leaves a marker for
+	# this test to look for after the run. Everything else — the download, the
+	# uv tool install, the agent CLIs — is upstream's business, not ours. It is
+	# written in terms of $_lt_root, which the caller sets first.
+	_lt_installer() {
+		cat > "$SANDBOX/ok-installer.sh" <<EOF
+#!/bin/sh
+printf '==> Installing uv\n'
+mkdir -p '$_lt_root/bin'
+printf '#!/bin/sh\necho "fcc-server 9.9.9"\n' > '$_lt_root/bin/fcc-server'
+chmod +x '$_lt_root/bin/fcc-server'
+: > '$_lt_root/installed-this-run'
+printf 'Installation complete.\n'
+exit 0
+EOF
+		chmod +x "$SANDBOX/ok-installer.sh"
+	}
+
+	_lt_run() { # _lt_run <base> <target-or-empty>
+		if [ -n "$2" ]; then
+			printf '%s' "$2" > "$SANDBOX/uci/fcc.main.control_target"
+		else
+			rm -f "$SANDBOX/uci/fcc.main.control_target"
+		fi
+		mkdir -p "$1"
+		FCC_DEFAULT_BACKUP="$1/backup" \
+		FAKE_TMUX_DIR="$SANDBOX/tmux-state" \
+		FAKE_INSTALLER_SRC="$SANDBOX/ok-installer.sh" \
+		FCC_MIN_FREE_MB=0 FCC_REQUIRED_FREE_MB=0 \
+		sh_install 'cmd_runtime runtime --agents claude; echo "rc=$?"' "$1"
+	}
+
+	# --- the control: target is this router, so the check must still happen ---
+	_lt_root="$SANDBOX/local-base/fcc"
+	_lt_installer "$_lt_root"
+	_lt_local="$(_lt_run "$SANDBOX/local-base")"
+	assert_contains "$_lt_local" 'rc=1' \
+		"a local-target install whose server never answers still fails: [$_lt_local]"
+	assert_contains "$(cat "$_lt_root/logs/fcc-runtime.log" 2>/dev/null)" \
+		'health check FAILED' "and says the health check is why"
+
+	# --- the LAN: nothing local was started, so there is nothing to check -----
+	_lt_root="$SANDBOX/lan-base/fcc"
+	_lt_installer "$_lt_root"
+	_lt_lan="$(_lt_run "$SANDBOX/lan-base" lan)"
+	_lt_log="$(cat "$_lt_root/logs/fcc-runtime.log" 2>/dev/null)"
+
+	assert_contains "$_lt_lan" 'rc=0' \
+		"a LAN-target install succeeds: [$_lt_lan]"
+	assert_contains "$_lt_lan" 'OK' "and says so"
+	assert_contains "$_lt_log" 'control target is the LAN' \
+		"the log says why no server was started"
+	assert_not_contains "$_lt_log" 'health check passed' \
+		"and no health check was waited out for a server nobody asked to start"
+	assert_not_contains "$_lt_log" 'health check FAILED' \
+		"nor reported as failed"
+	assert_not_contains "$_lt_lan" 'ROLLBACK_FAILED' \
+		"nothing was rolled back"
+	assert_not_contains "$_lt_lan" 'INSTALL_FAILED' "and no install was reported failed"
+	assert_contains "$(cat "$_lt_root/bin/fcc-server" 2>/dev/null)" 'fcc-server 9.9.9' \
+		"the runtime the installer put down is still there"
+	assert_file "$_lt_root/installed-this-run" \
+		"and so is everything else it wrote"
+
+	# The sandbox is shared: a curl left here answers the health probe of every
+	# later sh_install with an empty 200.
+	rm -f "$SANDBOX/bin/curl" "$SANDBOX/bin/nslookup" "$SANDBOX/bin/tmux"
+}
+
 # Section 3.6.5 lets the user uncheck every agent. Upstream's chooser will not
 # accept that on a first install — it re-asks until one is chosen — so the
 # request cannot be honoured and is refused before anything is downloaded.
