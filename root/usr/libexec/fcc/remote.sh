@@ -788,6 +788,13 @@ fi
 [ -n "$_bds_p" ] || exit 0
 echo "pid=$_bds_p"
 _bds_u="$(ps -o etimes= -p "$_bds_p" 2>/dev/null | tr -d " ")"
+# macOS has no etimes, and when asked for one its ps writes the whole keyword
+# list to stdout — not stderr, so 2>/dev/null does not drop it. An answer that
+# is not all digits was never an uptime; it is discarded here and the etime
+# fallback below answers instead, which is the form macOS does understand.
+case "$_bds_u" in
+""|*[!0-9]*) _bds_u="" ;;
+esac
 if [ -z "$_bds_u" ]; then
 	_bds_e="$(ps -o etime= -p "$_bds_p" 2>/dev/null | tr -d " ")"
 	if [ -n "$_bds_e" ]; then

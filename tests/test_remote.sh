@@ -2044,6 +2044,44 @@ test_running_on_macos_asks_only_the_process_list() {
 	drop_sandbox
 }
 
+test_uptime_ignores_a_ps_that_answers_with_keywords() {
+	# macOS's ps has no etimes, and when asked for one it writes its whole
+	# keyword list to stdout — not stderr, so the redirect does not drop it.
+	# Taken as the answer, that list became the uptime and the page drew a dash
+	# where the seconds belong. A non-numeric answer is discarded instead, and
+	# etime — which macOS does have — is asked for the same fact. The far
+	# side's own script is run here, against a ps that behaves like macOS's.
+	fresh
+	ready_lan
+	uci_set remote_platform macos
+	SSH_PROBE_OUT='server running' run_remote running >/dev/null 2>&1 || true
+	_cmd="$(ssh_command 2)"
+	assert_contains "$_cmd" 'ps -o etimes=' "the details script asks the process list"
+	_body=${_cmd#"sh -c '"}
+	_body=${_body%"'"}
+	mkdir -p "$TMP/macps"
+	cat > "$TMP/macps/pgrep" <<'EOS'
+#!/bin/sh
+printf '4242\n'
+EOS
+	cat > "$TMP/macps/ps" <<'EOS'
+#!/bin/sh
+case "$*" in
+	*etimes*) printf '%s\n' '%cpu%memacflagacflgargscommcommandetimegidpidrss'; exit 1 ;;
+	*etime*) printf '00:41\n'; exit 0 ;;
+	*rss*) printf ' 202640\n'; exit 0 ;;
+esac
+exit 1
+EOS
+	chmod +x "$TMP/macps/pgrep" "$TMP/macps/ps"
+	_out="$(PATH="$TMP/macps:$PATH" sh -c "$_body" 2>/dev/null)"
+	assert_contains "$_out" 'pid=4242' "the script finds the server"
+	assert_contains "$_out" 'uptime=41' "and reads the uptime etime reported"
+	assert_not_contains "$_out" '%cpu' "never passing the keyword list on"
+	assert_contains "$_out" 'rss_kb=202640' "with the memory beside it"
+	drop_sandbox
+}
+
 test_control_on_macos_runs_the_launcher() {
 	# The upstream install writes no launchd job, so the launcher is the
 	# service there too: the click starts it detached, and stops it by the pid
