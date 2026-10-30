@@ -863,6 +863,28 @@ EOF
 	return 1
 }
 
+fcc_agy_connected() {
+	# fcc_agy_connected <root> -> 0 when Antigravity CLI has been connected to
+	# FCC on this router.
+	#
+	# Antigravity CLI is the one agent that will not start on its own:
+	# upstream's launcher asks antigravity_integration.status() first and exits
+	# 1 with "Connect it on the Integrations page first" when the answer is no.
+	# That page is FCC's own admin UI, so the agent needs a one-time setup step
+	# that the other ten do not.
+	#
+	# The test is the connection record upstream itself reads:
+	# <HOME>/.fcc/antigravity-integration.json, where HOME is the directory the
+	# panes run with (<root>/data — see fcc_runtime_env_exports()). A record
+	# that is absent is a definite "not connected": status() answers None
+	# before it looks at anything else. A record that is present is not judged
+	# here — deciding whether it is usable means parsing JSON the way upstream
+	# does, and being wrong in that direction would refuse a session that would
+	# have worked. That case is left to the launcher and reported from its own
+	# output.
+	[ -f "${1:-$(fcc_root)}/data/.fcc/antigravity-integration.json" ]
+}
+
 fcc_installed_agents() {
 	# Prints the installed agents as a space-separated set (leading space, so
 	# callers can match with `case " $set " in`).

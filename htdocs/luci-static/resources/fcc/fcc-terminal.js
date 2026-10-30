@@ -98,6 +98,11 @@
 			/* session.sh's own code: remote.sh is missing or not executable,
 			 * which is a broken install rather than anything the user set. */
 			return FCC._('This router is missing its SSH helper, so the LAN machine cannot be reached. Reinstall luci-app-fcc.');
+		case 'agy-not-connected':
+			/* Nothing is wrong with the router: Antigravity CLI is the one agent
+			 * that runs only after FCC has connected it, and that has not been
+			 * done on the machine the session would start on. */
+			return FCC._('Antigravity CLI has not been connected to FCC yet. Connect it on the Integrations page, then start the session again.');
 		}
 		return FCC._('The LAN machine’s state could not be read.') +
 			(r.error ? ' (' + r.error + ')' : '');
@@ -499,6 +504,28 @@
 		});
 	}
 
+	/**
+	 * A link to FCC's Integrations page, or null.
+	 *
+	 * That page is FCC's own admin UI rather than a LuCI view, and it is served
+	 * through this package's reverse proxy (luasrc/fcc/adminproxy.lua): the FCC
+	 * server refuses every admin route to anything that is not on the machine
+	 * itself, so the proxy is the only way a browser elsewhere can reach it.
+	 * console.htm hands the proxy's base over as FCC_ADMIN; a page opened
+	 * without it still gets the sentence, just not the button.
+	 */
+	function integrationsLink() {
+		var base = (typeof FCC_ADMIN === 'string') ? FCC_ADMIN : '';
+		if (!base) { return null; }
+		return FCC.el('a', {
+			class: 'cbi-button cbi-button-action',
+			href: base + '/admin/integrations',
+			target: '_blank',
+			rel: 'noopener',
+			text: FCC._('Open the Integrations page')
+		});
+	}
+
 	function exitCodeLine(code) {
 		return FCC._('Exit code: %d').replace('%d', code);
 	}
@@ -553,12 +580,26 @@
 				? FCC._('Session has exited.')
 				: FCC._('Agent exited unexpectedly.')];
 			if (code !== null) { lines.push(exitCodeLine(code)); }
+			/* Antigravity CLI exits 1 on its own until it has been connected on
+			 * the Integrations page, and the sentence it prints points at the
+			 * server's loopback — an address this browser cannot open. A local
+			 * session is refused before it starts when this router's record is
+			 * missing, so what lands here is the same requirement on the other
+			 * machine (or a record the launcher could not use): say where the
+			 * page is instead of leaving upstream's loopback as the only clue. */
+			if (opts.agent === 'agy') {
+				lines.push(FCC._('Antigravity CLI starts only after it has been connected on the Integrations page of the machine it runs on.'));
+			}
 			buttons = [
 				bannerAction(FCC._('View Log'), 'reset', showLog),
 				bannerAction(FCC._('Restart'), 'apply', function () {
 					createSession(opts.agent);
 				})
 			];
+			if (opts.agent === 'agy') {
+				var agyLink = integrationsLink();
+				if (agyLink) { buttons.push(agyLink); }
+			}
 		}
 
 		box.innerHTML = '';
@@ -614,11 +655,23 @@
 			  host: location.hostname || '' },
 			{ method: 'POST' })
 			.then(function (r) {
-				/* A LAN refusal arrives as a body with ok:false, not as an HTTP
+				/* A refusal arrives as a body with ok:false, not as an HTTP
 				 * error: the reason codes are the only part worth translating,
-				 * and the shell's own sentence for them is English. */
+				 * and the shell's own sentence for them is English. The LAN
+				 * ones come from remote.sh; agy-not-connected comes from
+				 * session.sh itself. */
 				if (r && r.ok === false) {
 					FCC.notice(FCC.$('#fcc-term-status'), 'fail', consoleReason(r));
+					/* The one refusal with a page to go to: a link beside the
+					 * sentence, so fixing it is one click rather than a hunt
+					 * for a page LuCI's menu does not list. */
+					if (r.reason === 'agy-not-connected') {
+						var status = FCC.$('#fcc-term-status');
+						var link = integrationsLink();
+						if (status && link && status.firstChild) {
+							status.firstChild.appendChild(link);
+						}
+					}
 					return;
 				}
 				clearBanner();

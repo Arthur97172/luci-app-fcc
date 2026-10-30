@@ -99,6 +99,14 @@ never into this package.
   according to the agent selected on the *Configuration* page, and writes the
   whole terminal to `<install_path>/logs/installer.out` — the first place to
   look when an install fails.
+* **An agent that is already installed is never asked about.** The installer
+  prints `Install Antigravity CLI for fcc-agy? [Y/n]` only for an agent it
+  cannot find; one it can find is verified instead, so the log carries no `y`
+  for it — and selecting only such an agent showed a row of `-> n` answers and
+  never the agent that was asked for. The job log now names the requested
+  agents first (`installer: requested agents: …`), and after a run quotes what
+  the installer concluded about each of them (`installer: Antigravity CLI
+  1.4.10 already satisfies >=1.4.7; leaving it unchanged.`).
 * **The progress bar is not an estimate — it means "still running".** It eases
   toward 95% and stops there, reaching 100% only when the job ends and its lock
   is released.
@@ -463,6 +471,19 @@ on the session's tab or with End all sessions. If the browser still refuses the
 navigation, the address is on the pane itself: copy it from there and paste it
 into the address bar, since a typed navigation has no originating site and the
 cookie is not withheld.
+
+**Antigravity CLI has to be connected once.** It is the one agent that will not
+start on its own: upstream's launcher first asks whether FCC has connected it,
+and exits 1 when the answer is no, printing `Connect it on the Integrations
+page first:` followed by the server's loopback address — nothing a browser on
+another machine can open. What it needs is the Integrations page of FCC's own
+admin UI (*Configuration* → **Open FCC Admin**), connected once. The console
+therefore refuses to create the session: pick Antigravity CLI, press **New
+session**, and the panel says why and offers a link to the Integrations page
+through this package's LuCI reverse proxy (§13). A connected machine is never
+refused. In LAN mode this router cannot see the other machine's connection
+state, so the session is created as usual and the banner names the page when it
+exits.
 
 ---
 

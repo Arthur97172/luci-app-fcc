@@ -1643,6 +1643,59 @@ test_a_session_asks_whether_the_agent_is_installed_not_whether_the_launcher_is_o
 	kill "$_tr_srv" 2>/dev/null
 }
 
+test_a_new_session_refuses_antigravity_until_it_is_connected() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — session creation needs a real pane"
+		return 0
+	fi
+
+	# The report: choosing Antigravity CLI in the Web Console and pressing New
+	# session produced a session that was dead within the second, reading
+	# "Agent exited unexpectedly" and nothing else. Upstream's launcher exits 1
+	# until FCC has connected the agent on its Integrations page, and the
+	# address it prints for that page is the server's own loopback — nothing a
+	# browser driving this panel can open. cmd_create refuses first, with a
+	# reason the console translates and a link to the page, once the connection
+	# record the launcher itself reads is missing.
+	_ag_base="$(setup_installed_root)"
+	_ag_root="$_ag_base/fcc"
+	_ag_path="$(make_agentless_path)"
+
+	# The agent's own CLI, which is what "is this agent installed?" asks about.
+	printf '#!/bin/sh\necho 1.4.10\n' > "$_ag_root/data/.local/bin/agy"
+	chmod +x "$_ag_root/data/.local/bin/agy"
+
+	printf '#!/bin/sh\ntrap "exit 0" TERM INT\nwhile :; do sleep 1; done\n' \
+		> "$_ag_root/bin/fcc-server"
+	chmod +x "$_ag_root/bin/fcc-server"
+	"$_ag_root/bin/fcc-server" &
+	_ag_srv=$!
+
+	_ag_refused="$(sh_blind "$_ag_path" "$_ag_base" session.sh create agy 80 24)"
+	assert_contains "$_ag_refused" '"reason":"agy-not-connected"' \
+		"a session for Antigravity CLI is refused with a reason while it is not connected"
+
+	# Refused before tmux is asked for anything, so nothing is left running
+	# under the console's nose.
+	assert_no "and no session was created for it" tmux has-session -t fcc-agy-001
+
+	# With the record upstream reads in place — under the HOME the panes run
+	# with, <root>/data — the same request goes through. The check is the
+	# connection, not the agent, and a connected box is never refused.
+	mkdir -p "$_ag_root/data/.fcc"
+	printf '{"settings_path":"%s","model_keys":["gemini-api://models/x"],"previous_provider":{}}\n' \
+		"$_ag_root/data/.gemini/antigravity-cli/settings.json" \
+		> "$_ag_root/data/.fcc/antigravity-integration.json"
+	_ag_created="$(sh_blind "$_ag_path" "$_ag_base" session.sh create agy 80 24)"
+	_ag_name="$(printf '%s' "$_ag_created" | sed -n 's/.*"name": "\([^"]*\)".*/\1/p')"
+	assert_ne "" "$_ag_name" \
+		"and it is created once the connection record is there: [$_ag_created]"
+
+	tmux kill-session -t "$_ag_name" 2>/dev/null
+	kill "$_ag_srv" 2>/dev/null
+}
+
 # session.sh's functions, reached the way install_lib() reaches install.sh's:
 # from a copy with the dispatch stripped. Sourcing it whole would run the case
 # statement and exit.
@@ -2847,6 +2900,71 @@ test_installer_failure_reason_reads_the_installers_own_error() {
 		sh_install "installer_failure_reason '$_ir_dir/installer.out' >/dev/null"
 	assert_no "a missing transcript yields no reason" \
 		sh_install "installer_failure_reason '$_ir_dir/nosuch.out' >/dev/null"
+}
+
+test_installer_agent_verdict_reads_what_upstream_did_about_an_installed_agent() {
+	setup_sandbox
+	# The report: an install of Antigravity CLI alone logged nine "-> n" prompt
+	# answers and never once named the agent that was asked for. Upstream asks
+	# "Install <name> for fcc-<launcher>? [Y/n]" only about an agent it could
+	# not find; one already present is planned and verified instead, and its
+	# step banner plus the line after it are the only trace of that in the
+	# transcript. The job log quotes that line, so a run that only re-verified
+	# an agent says so.
+	_agv_dir="$SANDBOX/opt/fcc/logs"
+	mkdir -p "$_agv_dir"
+	_agv_esc="$(printf '\033')"
+	{
+		printf '%s[1m==> Choosing coding agents%s\r\n' "$_agv_esc" "$_agv_esc[0m"
+		printf 'Install Claude Code for fcc-claude? [y/N] n\r\n'
+		printf 'Antigravity CLI already installed; will verify.\r\n'
+		printf 'Antigravity CLI 1.4.10 already satisfies >=1.4.7; leaving it unchanged.\r\n'
+		printf '%s[1m[3/6] Ensuring Antigravity CLI is installed%s\r\n' \
+			"$_agv_esc" "$_agv_esc[0m"
+		printf 'Antigravity CLI 1.4.10 already satisfies >=1.4.7; leaving it unchanged.\r\n'
+		printf '[4/6] Installing or updating Free Claude Code\r\n'
+	} > "$_agv_dir/installer.out"
+
+	# The step's own answer, not the earlier line that also names the agent:
+	# only the banner pairs a name with the step that acted on it.
+	assert_eq 'Antigravity CLI 1.4.10 already satisfies >=1.4.7; leaving it unchanged.' \
+		"$(sh_install "installer_agent_verdict '$_agv_dir/installer.out' 'Antigravity CLI'")" \
+		"the verdict for an agent upstream did not ask about is read from its step"
+
+	# An agent this run never reached has no verdict, and an empty one is the
+	# answer: a line invented here would claim something happened to it.
+	assert_eq "" \
+		"$(sh_install "installer_agent_verdict '$_agv_dir/installer.out' 'Muse Code'")" \
+		"an agent with no step in the transcript has no verdict"
+	assert_eq "" \
+		"$(sh_install "installer_agent_verdict '$_agv_dir/installer.out' ''")" \
+		"an empty name matches nothing rather than everything"
+
+	# A step that ran twice — a resumed run, or one upstream decided to repeat —
+	# ends with the second answer, which is the run's final word about the agent.
+	{
+		printf '[3/6] Ensuring Antigravity CLI is installed\r\n'
+		printf 'Antigravity CLI 1.4.10 already satisfies >=1.4.7; leaving it unchanged.\r\n'
+		printf '[9/9] Ensuring Antigravity CLI is installed\r\n'
+		printf 'Antigravity CLI 1.4.11 installed.\r\n'
+	} > "$_agv_dir/installer.out"
+	assert_eq 'Antigravity CLI 1.4.11 installed.' \
+		"$(sh_install "installer_agent_verdict '$_agv_dir/installer.out' 'Antigravity CLI'")" \
+		"the last step of the run is the agent's final word"
+
+	# Only the npm-installed agents get a step of their own. For the others the
+	# chooser's sentence is the answer, and it is still the truth about them:
+	# upstream found the agent and will verify it rather than install it.
+	{
+		printf 'Muse Code already installed; will verify.\r\n'
+		printf '[4/6] Installing or updating Free Claude Code\r\n'
+	} > "$_agv_dir/installer.out"
+	assert_eq 'Muse Code already installed; will verify.' \
+		"$(sh_install "installer_agent_verdict '$_agv_dir/installer.out' 'Muse Code'")" \
+		"without a step, the chooser's own sentence is the verdict"
+
+	assert_no "a missing transcript yields no verdict" \
+		sh_install "installer_agent_verdict '$_agv_dir/nosuch.out' 'Antigravity CLI' >/dev/null"
 }
 
 # ---------------------------------------------------------------------------

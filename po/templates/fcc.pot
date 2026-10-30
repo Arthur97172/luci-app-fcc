@@ -78,6 +78,12 @@ msgstr ""
 msgid "An interactive terminal running a coding agent. Sessions keep running after you close this page, and reattaching to one restores its screen."
 msgstr ""
 
+msgid "Antigravity CLI has not been connected to FCC yet. Connect it on the Integrations page, then start the session again."
+msgstr ""
+
+msgid "Antigravity CLI starts only after it has been connected on the Integrations page of the machine it runs on."
+msgstr ""
+
 msgid "Architecture"
 msgstr ""
 
@@ -331,6 +337,9 @@ msgid "Open FCC Admin"
 msgstr ""
 
 msgid "Open in browser"
+msgstr ""
+
+msgid "Open the Integrations page"
 msgstr ""
 
 msgid "PID"

@@ -79,6 +79,12 @@ make package/luci-app-fcc/compile V=s
   结束即删除。
 * 安装器只在 `/dev/tty` 上提问，没有任何开关可以绕过。本包把它放进 `tmux` 会话，按所选的
   Agent 逐条作答，并把整个画面写进 `<安装路径>/logs/installer.out`——安装失败时先看这里。
+* **已经装好的 Agent 不会被再问一遍。** 安装器只对找不到的 Agent 打印
+  `Install Antigravity CLI for fcc-agy? [Y/n]`；能找得到的只会被"验证"，因此日志里不会出现
+  它的 `y`，只勾选这样一个 Agent 时会看到一串 `-> n` 而看不到自己选的那个。任务日志因此
+  先按显示名写出本次请求的 Agent（`installer: requested agents: …`），运行成功后再把安装器
+  对它每一个的结论原文抄进来（`installer: Antigravity CLI 1.4.10 already satisfies
+  >=1.4.7; leaving it unchanged.`）。
 * **进度条不是估计值**：运行期间逐渐趋近 95% 后停住，锁被释放（任务真正结束）才到 100%。
 * **日志是追加写入的**，页面只显示最后一个 `===== fcc job start … =====` 之后的内容。
   更早的记录直接读 `<安装路径>/logs/fcc-runtime.log`（安装）或 `fcc-update.log`（更新）；
@@ -325,6 +331,14 @@ URL 就是访问凭据，不要外传。
 **不拥有会话**——关掉它不会结束会话，dsh 界面背后的服务仍在运行；要结束它，用会话标签上的
 × 或结束全部会话。万一浏览器仍拒绝这次跳转，地址就在会话窗格里，复制出来粘进地址栏回车即
 可：手动输入没有来源站点，cookie 不会丢。
+
+**Antigravity CLI 需要先连接一次。** 它是唯一一个不会自己启动的 Agent：上游的启动器先问
+FCC 是否已经把它接上，没有就以退出码 1 结束，并打印 `Connect it on the Integrations page
+first:`——后面跟的是服务器的回环地址，别的机器上的浏览器打不开。它要的是 FCC 自己的管理
+界面（*配置* → **Open FCC Admin**）里的 Integrations 页面，在那里连接一次即可。本包让控制台
+在创建会话时就拒绝：选中 Antigravity CLI 按 **新建会话**，面板直接说明原因，并附带
+**打开 Integrations 页面** 的链接（走本包的 LuCI 反向代理，见 §13）；已经连接的机器不会被拦。
+局域网模式下这台路由器看不到那台机器的连接状态，所以会话照常创建，退出时横幅指明该去哪一页。
 
 ---
 

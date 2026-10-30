@@ -429,6 +429,11 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 .fcc-note.warn { border-left-color: var(--fcc-warn); }
 .fcc-note.fail { border-left-color: var(--fcc-fail); }
 
+/* A note that carries an action, such as the refusal that links to FCC's
+ * Integrations page: the button sits after the sentence rather than on top of
+ * it. */
+.fcc-note .cbi-button { margin-left: .6em; }
+
 /* The rule that dimmed a dead Admin link, and the rule that un-hid the note
  * explaining it, are both gone with the note. The link was the only control
  * ever dimmed and the note the only one ever un-hidden; the link now points at

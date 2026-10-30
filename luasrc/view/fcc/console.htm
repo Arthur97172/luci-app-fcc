@@ -15,6 +15,10 @@
 <script>
 	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
 	var FCC_POPOUT = '<%=url("admin/services/fcc/popout")%>';
+	<%# FCC's own admin UI, through this package's reverse proxy. The console
+	    links to its Integrations page from the Antigravity CLI refusal, and
+	    builds the link here so LuCI's mount point is the one the page is on. %>
+	var FCC_ADMIN = '<%=url("admin/services/fcc/adminproxy")%>';
 </script>
 
 <div class="cbi-map fcc-page">

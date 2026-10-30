@@ -317,6 +317,45 @@ installer_failure_reason() {
 	printf '%s' "$_ifr_line"
 }
 
+installer_agent_verdict() {
+	# installer_agent_verdict <transcript> <display name> -> what upstream did
+	# about that agent, in its own words, or nothing.
+	#
+	# Upstream asks "Install <name> for fcc-<launcher>? [Y/n]" only about an
+	# agent it could not find. One that is already there is never asked about:
+	# it is listed in the plan, then verified, and the only trace either step
+	# leaves is upstream's own sentence —
+	#
+	#   Antigravity CLI already installed; will verify.
+	#   [3/6] Ensuring Antigravity CLI is installed
+	#   Antigravity CLI 1.4.10 already satisfies >=1.4.7; leaving it unchanged.
+	#
+	# The step banner is the anchor and the line after it is the answer: it is
+	# the one place in the transcript that pairs a name with what was done to
+	# it. The last such pair wins, because it is the run's final word on the
+	# agent. Not every agent gets a step of its own — only the ones upstream
+	# verifies by version, which today is the npm-installed pair — so failing
+	# that, upstream's own sentence from the chooser is the answer, and it is
+	# still the truth: the agent was found and will be verified. index() rather
+	# than a regex because the name is display text.
+	_iav_file="$1"
+	_iav_name="$2"
+	[ -n "$_iav_name" ] || return 1
+	_iav_txt="$(installer_transcript "$_iav_file")" || return 1
+	printf '%s\n' "$_iav_txt" | LC_ALL=C awk -v name="$_iav_name" '
+		index($0, "Ensuring " name " is installed") { want = 1; next }
+		want && NF { step = $0; want = 0; next }
+		substr($0, 1, length(name) + 1) == name " " \
+			&& (index($0, "already satisfies") || index($0, "already installed")) {
+			chooser = $0
+		}
+		END {
+			verdict = (step != "") ? step : chooser
+			if (verdict != "") print verdict
+		}
+	'
+}
+
 installer_missing_tool() {
 	# installer_missing_tool <transcript> -> the command name, or nothing
 	#
@@ -2492,6 +2531,22 @@ cmd_runtime() {
 		return 1
 	fi
 
+	# The set this run was asked for, by display name. The prompt lines below
+	# name only the agents upstream chooses to ask about, and upstream asks
+	# about none of the agents it can already find — so a run that re-verified
+	# an installed agent logged nine "-> n" answers and never once named the
+	# agent that had been requested. This line is the reader's answer to "did I
+	# ask for that?", and the verdict lines after the run say what came of it.
+	if [ -n "$_cr_requested" ]; then
+		_cr_req_names=""
+		for _cr_id in $_cr_requested; do
+			_cr_name="$(fcc_agent_name "$_cr_id")"
+			[ -n "$_cr_name" ] || _cr_name="$_cr_id"
+			_cr_req_names="$_cr_req_names${_cr_req_names:+, }$_cr_name"
+		done
+		fcc_log "$LOG" "installer: requested agents: $_cr_req_names"
+	fi
+
 	# --- section 23 step 9: update ----------------------------------------
 	run_installer "$_cr_script" "$_cr_agents" "$_cr_mode_none"
 	_cr_rc=$?
@@ -2517,6 +2572,20 @@ cmd_runtime() {
 		return "$_cr_rc"
 	fi
 	rm -f "$_cr_script"
+
+	# What each requested agent came to, in upstream's own words. An installed
+	# agent is never asked about, so without this the job log held the prompts
+	# it declined and nothing at all about the agent the run was for — the
+	# report that produced this line read the best part of an install as nine
+	# "-> n"s and no "y". The sentence is quoted verbatim because it names the
+	# version the installer saw, which is the fact a later "is it installed?"
+	# question is really about.
+	for _cr_id in $_cr_requested; do
+		_cr_name="$(fcc_agent_name "$_cr_id")"
+		[ -n "$_cr_name" ] || continue
+		_cr_verdict="$(installer_agent_verdict "$ROOT/logs/installer.out" "$_cr_name" 2>/dev/null || true)"
+		[ -n "$_cr_verdict" ] && fcc_log "$LOG" "installer: $_cr_verdict"
+	done
 
 	# --- section 23 step 10: verify ---------------------------------------
 	if ! "$ROOT/bin/fcc-server" --version >/dev/null 2>&1; then

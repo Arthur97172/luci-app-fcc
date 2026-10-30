@@ -640,6 +640,61 @@ test_the_console_follows_the_configured_side() {
 		"the session records where it runs"
 }
 
+test_the_console_offers_the_integrations_page_when_antigravity_cannot_start() {
+	# Antigravity CLI is the one agent that will not run until FCC has connected
+	# it on its Integrations page, and that page is FCC's own admin UI behind
+	# this package's reverse proxy. The console used to show only
+	# "Agent exited unexpectedly" — and upstream's own sentence points at
+	# 127.0.0.1:8082, which no other machine can open. The refusal now carries a
+	# reason code, and the page offers the link beside it.
+	_view="$ROOT/luasrc/view/fcc/console.htm"
+	_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-terminal.js"
+	_sess="$ROOT/root/usr/libexec/fcc/session.sh"
+	_common="$ROOT/root/usr/libexec/fcc/common.sh"
+	_po="$ROOT/po/zh_Hans/fcc.po"
+
+	assert_contains "$(cat "$_view")" 'var FCC_ADMIN' \
+		"the console page publishes the admin proxy's base"
+	assert_contains "$(cat "$_view")" 'admin/services/fcc/adminproxy' \
+		"which is this package's proxy rather than the FCC port"
+
+	assert_contains "$(cat "$_common")" 'fcc_agy_connected()' \
+		"common.sh owns the connection question"
+	assert_contains "$(sed -n '/^cmd_create()/,/^}/p' "$_sess")" 'fcc_agy_connected' \
+		"the create refuses on it before a pane is made"
+	assert_contains "$(cat "$_sess")" 'agy-not-connected' \
+		"with a reason code rather than a sentence"
+
+	assert_contains "$(cat "$_js")" "case 'agy-not-connected':" \
+		"the console translates that reason"
+	assert_contains "$(cat "$_js")" "base + '/admin/integrations'" \
+		"and links to the Integrations page through the proxy"
+	assert_contains "$(cat "$_js")" 'Antigravity CLI starts only after it has been connected' \
+		"a crashed Antigravity session says what it needs"
+
+	assert_contains "$(cat "$_po")" 'Antigravity CLI has not been connected to FCC yet.' \
+		"and the sentence has a translation"
+}
+
+test_the_install_log_names_what_upstream_did_about_each_agent() {
+	# The report: an install of Antigravity CLI alone logged nine "-> n" prompt
+	# answers and never named the agent that was asked for. Upstream asks only
+	# about agents it cannot find, so the requested set is logged by display
+	# name and the installer's own verdict is quoted for each of them.
+	_install="$ROOT/root/usr/libexec/fcc/install.sh"
+	_rt="$ROOT/tests/test_runtime.sh"
+
+	assert_contains "$(cat "$_install")" 'installer: requested agents:' \
+		"the log names the agents the run was asked for"
+	assert_contains "$(sed -n '/^cmd_runtime()/,/^}/p' "$_install")" 'installer_agent_verdict' \
+		"and quotes what upstream did about each of them"
+	assert_contains "$(sed -n '/^installer_agent_verdict()/,/^}/p' "$_install")" \
+		'Ensuring " name " is installed' \
+		"the verdict is anchored to the agent's own step"
+	assert_contains "$(cat "$_rt")" 'test_installer_agent_verdict_reads_what_upstream_did_about_an_installed_agent' \
+		"and it is covered by a behaviour test"
+}
+
 test_console_output_wait_ticks_faster_than_a_second() {
 	# The browser repaints what the pane wrote only when the long-poll
 	# returns, so the wait's tick is the console's echo latency. It used to be

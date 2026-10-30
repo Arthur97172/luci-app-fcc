@@ -236,6 +236,19 @@ cmd_create() {
 			fcc_die "the FCC server is not running — start it first"; return 1
 		fi
 
+		# Antigravity CLI will not start unattended: upstream's launcher exits 1
+		# until the Integrations page has connected it, and the address it
+		# prints there is the server's own loopback — nothing a browser driving
+		# this panel can open. Starting the pane anyway is the session that dies
+		# in a second and reads as "Agent exited unexpectedly" with no reason.
+		# Refused here instead, with a reason the console translates and a page
+		# it can link to; the record is the same one the launcher reads, so a
+		# connected box is never refused.
+		if [ "$_cr_agent" = agy ] && ! fcc_agy_connected "$ROOT"; then
+			printf '{"ok":false,"reason":"agy-not-connected"}\n'
+			return 1
+		fi
+
 		# The launcher itself connects to the FCC server. $_cr_launcher_exe and
 		# $ROOT are both validated values, never user input, so the command string
 		# cannot be injected into.
