@@ -289,6 +289,16 @@ sent = serve_ok({ REQUEST_URI = "/cgi-bin/luci/admin/services/fcc/adminproxy/" }
 	{ headers = { ["Content-Type"] = "text/html" }, chunks = { "x" } })
 eq("serve/trailing_slash_dropped", sent.uri, "http://127.0.0.1:8082/admin")
 
+-- The proxy owns the /admin prefix: the browser spells everything below its
+-- base, and serve() puts /admin back before forwarding. The console's link to
+-- the Integrations page is the case that got this wrong — it wrote the server's
+-- own /admin into the href as well, and the page answered
+-- {"detail":"Not Found"} because what reached the FCC server was
+-- /admin/admin/integrations. This pins the spelling the link has to use.
+sent = serve_ok({ REQUEST_URI = "/cgi-bin/luci/admin/services/fcc/adminproxy/integrations" },
+	{ headers = { ["Content-Type"] = "text/html" }, chunks = { "x" } })
+eq("serve/page_below_the_base", sent.uri, "http://127.0.0.1:8082/admin/integrations")
+
 -- The base is found in the request path rather than assumed, so the proxy works
 -- wherever LuCI is mounted. A root-mounted LuCI is the case that would break a
 -- hardcoded /cgi-bin/luci prefix.

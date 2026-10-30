@@ -667,8 +667,14 @@ test_the_console_offers_the_integrations_page_when_antigravity_cannot_start() {
 
 	assert_contains "$(cat "$_js")" "case 'agy-not-connected':" \
 		"the console translates that reason"
-	assert_contains "$(cat "$_js")" "base + '/admin/integrations'" \
+	assert_contains "$(cat "$_js")" "base + '/integrations'" \
 		"and links to the Integrations page through the proxy"
+	# The proxy owns the server's /admin prefix — the shim maps the SPA's
+	# "/admin/x" to base + "/x" and serve() puts /admin back before forwarding.
+	# Spelling it in the href too sent /admin/admin/integrations upstream, and
+	# the new tab answered {"detail":"Not Found"}.
+	assert_not_contains "$(cat "$_js")" "base + '/admin/integrations'" \
+		"without repeating the prefix the proxy puts back itself"
 	assert_contains "$(cat "$_js")" 'Antigravity CLI starts only after it has been connected' \
 		"a crashed Antigravity session says what it needs"
 
@@ -1544,6 +1550,27 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"and the key row comes after it"
 	assert_eq 1 "$((_ts_key_line < _ts_helper_line))" \
 		"with the panels it opens underneath that row"
+
+	# One row of air where two rows answer different questions. The spacer is
+	# its own element: the margins between .cbi-value rows belong to the theme,
+	# so growing them here would move every form on every page. It sits between
+	# the platform and the address, and between each pair of advanced fields;
+	# exactly those four, so a stray copy cannot drift into a panel where the
+	# two rows above it do belong together.
+	_ts_gap='<div class="fcc-row-gap" role="presentation"></div>'
+	assert_contains "$(sed -n '/id="fcc-remote-platform"/,/id="fcc-remote-host"/p' "$_ts_view")" \
+		"$_ts_gap" "a row of air separates the platform from the address"
+	for _ts_pair in "fcc-remote-ssh-port:fcc-remote-admin-port" \
+		"fcc-remote-admin-port:fcc-remote-service" \
+		"fcc-remote-service:fcc-remote-fingerprint"; do
+		assert_contains \
+			"$(sed -n "/id=\"${_ts_pair%%:*}\"/,/id=\"${_ts_pair#*:}\"/p" "$_ts_view")" \
+			"$_ts_gap" "a row of air between the ${_ts_pair#*:} row and the one above it"
+	done
+	assert_eq 4 "$(grep -cF "$_ts_gap" "$_ts_view")" \
+		"and nowhere else in the page"
+	assert_contains "$(cat "$_ts_css")" '.fcc-row-gap { height: .3em; }' \
+		"which is a beat between rows, not a section break"
 
 	# The preview is the same three presets remote.sh runs, so a reader can see
 	# what a click sends without opening the script.

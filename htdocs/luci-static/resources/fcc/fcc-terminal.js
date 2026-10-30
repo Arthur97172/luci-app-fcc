@@ -513,13 +513,20 @@
 	 * itself, so the proxy is the only way a browser elsewhere can reach it.
 	 * console.htm hands the proxy's base over as FCC_ADMIN; a page opened
 	 * without it still gets the sentence, just not the button.
+	 *
+	 * The path is written without the server's own /admin prefix. That prefix
+	 * belongs to the proxy, not to the browser: adminproxy.lua's shim maps the
+	 * SPA's "/admin/x" to base + "/x" at the browser boundary and serve() puts
+	 * the /admin back before forwarding. A URL that spelled it here too would
+	 * be forwarded as /admin/admin/integrations — which is exactly the
+	 * {"detail":"Not Found"} this link first answered with.
 	 */
 	function integrationsLink() {
 		var base = (typeof FCC_ADMIN === 'string') ? FCC_ADMIN : '';
 		if (!base) { return null; }
 		return FCC.el('a', {
 			class: 'cbi-button cbi-button-action',
-			href: base + '/admin/integrations',
+			href: base + '/integrations',
 			target: '_blank',
 			rel: 'noopener',
 			text: FCC._('Open the Integrations page')

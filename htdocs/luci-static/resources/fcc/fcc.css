@@ -488,6 +488,14 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 	padding-right: var(--section-inset, 1.25rem);
 }
 
+/* One row of air between two rows of the LAN panel. The theme lays .cbi-value
+ * rows out edge to edge, which reads as one block where the fields answer two
+ * different questions — which machine the far side is, and where it is; and,
+ * under Advanced settings, port / port / name / key. Deliberately small: it is
+ * a beat between rows, not a section break, and .3em is the smallest step that
+ * survives every theme's line-height. */
+.fcc-row-gap { height: .3em; }
+
 /* A field and the button that acts on it, on the same line. The Username row
  * is the one place in the panel where a button belongs beside an input rather
  * than under it.
