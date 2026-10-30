@@ -321,7 +321,9 @@ apk add openssh-client-utils          # 25.12 and later
 
 *Advanced settings* holds the SSH port, the Admin port and the service name,
 shows the exact command each button sends, and shows the pinned fingerprint
-with a **Forget** button; the SSH key row and the panels it opens follow it.
+with a **Forget** button. The status line follows it directly — a failed
+connection, a refused key, a changed fingerprint are all written there — and
+the SSH key row, with the panels it opens underneath, closes the section.
 Changing the address or the SSH port forgets the fingerprint on its own.
 
 ---
@@ -455,12 +457,12 @@ same-site. The URL is the credential — keep it to yourself.
 For a dsh session, **Open in browser** navigates its window straight to that
 address instead of opening another terminal pane: the panel reads the address
 from the session's own output, because the token differs on every launch and
-only the pane knows it. The session panel also keeps that address with a
-**copy DeepSeek Harness address** button, so if the browser still refuses the
-navigation, pasting the address into the address bar works — typed navigation
-has no originating site, so the cookie is not withheld. That window **does not
-own the session** — closing it leaves the session running, since it is what
-serves the UI; end it with the × on the session's tab or with End all sessions.
+only the pane knows it. That window **does not own the session** — closing it
+leaves the session running, since it is what serves the UI; end it with the ×
+on the session's tab or with End all sessions. If the browser still refuses the
+navigation, the address is on the pane itself: copy it from there and paste it
+into the address bar, since a typed navigation has no originating site and the
+cookie is not withheld.
 
 ---
 

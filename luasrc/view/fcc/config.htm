@@ -279,6 +279,14 @@
 					</div>
 				</details>
 
+				<!-- Where every action's answer lands: a refused key, a machine
+				     that cannot be reached, a host whose fingerprint changed.
+				     It sits directly under the settings that produce those
+				     answers and above the key row, whose own panels open
+				     underneath it, so a message is never separated from the
+				     field it is about. -->
+				<div id="fcc-remote-status"></div>
+
 				<!-- Opening the Admin page is an SSH tunnel, so that machine's
 				     sshd has to allow local forwarding. The buttons arrange the
 				     setting by themselves everywhere else; a machine whose SSH
@@ -325,8 +333,6 @@
 					<pre id="fcc-remote-helper-text" class="fcc-key-text"></pre>
 					<p class="fcc-muted" id="fcc-remote-helper-state"></p>
 				</div>
-
-				<div id="fcc-remote-status"></div>
 			</div>
 		</div>
 	</div>

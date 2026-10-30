@@ -575,6 +575,22 @@ test_the_console_toolbar_is_ordered_and_has_no_cleanup_button() {
 	fi
 }
 
+test_the_console_keeps_no_harness_address_row() {
+	# DeepSeek Harness is the one agent whose interface is a browser, and its
+	# pane prints the address (with the launch token) itself. The page used to
+	# repeat that address in a row with a copy button; the pane is the only
+	# place it belongs, so nothing of that row may come back.
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-terminal.js"
+	assert_not_contains "$(cat "$_ts_js")" 'showDshUrl' \
+		"the console paints no harness address row"
+	assert_not_contains "$(cat "$_ts_js")" 'Copy the harness address' \
+		"and offers no button to copy it"
+	assert_not_contains "$(cat "$_ts_js")" 'DeepSeek Harness address:' \
+		"and no label that introduced it"
+	assert_contains "$(cat "$_ts_js")" 'waitForDshUrl(' \
+		"while the window still finds the address the pane printed"
+}
+
 test_the_console_follows_the_configured_side() {
 	# The Web Console has no switch of its own. It follows the Configuration
 	# tab's [This router] [LAN] setting, and this check pins the three pieces
@@ -1442,8 +1458,11 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	# Advanced settings are collapsed: the section is meant to stay small, and
 	# everything that is only touched once belongs behind the summary. The
 	# platform is not one of those things — it decides what each button sends,
-	# so it is read before the address — and the key row is the one step of a
-	# first setup, so it follows the summary rather than preceding it.
+	# so it is read before the address. Directly under the summary comes the
+	# status line, where every action's answer is written: a refused key, a
+	# machine that cannot be reached, a fingerprint that changed. The key row
+	# closes the section, and the panels its buttons open sit underneath it,
+	# so a message never ends up separated from its field by that row.
 	_ts_adv="$(sed -n '/<details class="fcc-advanced" id="fcc-remote-advanced">/,/<\/details>/p' "$_ts_view")"
 	assert_contains "$_ts_adv" '<details class="fcc-advanced" id="fcc-remote-advanced">' \
 		"the advanced settings are a collapsed details block"
@@ -1459,10 +1478,17 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	_ts_adv_line="$(grep -n '<details class="fcc-advanced" id="fcc-remote-advanced">' "$_ts_view" \
 		| head -1 | cut -d: -f1)"
 	_ts_key_line="$(grep -n 'id="fcc-remote-key-state"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_status_line="$(grep -n 'id="fcc-remote-status"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_helper_line="$(grep -n 'id="fcc-remote-helper-panel"' "$_ts_view" \
+		| head -1 | cut -d: -f1)"
 	assert_eq 1 "$((_ts_platform_line < _ts_host_line))" \
 		"the platform comes before the address it belongs to"
-	assert_eq 1 "$((_ts_adv_line < _ts_key_line))" \
-		"and the advanced settings come before the key row"
+	assert_eq 1 "$((_ts_adv_line < _ts_status_line))" \
+		"the status line follows the advanced settings"
+	assert_eq 1 "$((_ts_status_line < _ts_key_line))" \
+		"and the key row comes after it"
+	assert_eq 1 "$((_ts_key_line < _ts_helper_line))" \
+		"with the panels it opens underneath that row"
 
 	# The preview is the same three presets remote.sh runs, so a reader can see
 	# what a click sends without opening the script.

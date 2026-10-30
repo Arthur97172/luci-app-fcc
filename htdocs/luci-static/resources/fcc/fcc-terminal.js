@@ -729,7 +729,6 @@
 			} catch (e) { /* the window may already be closed */ }
 			waitForDshUrl(name, Date.now() + 30000, function (url) {
 				if (url) {
-					showDshUrl(url);
 					try { win.location.href = url; } catch (e) { /* closed */ }
 					return;
 				}
@@ -739,65 +738,6 @@
 					FCC._('DeepSeek Harness did not print its address; showing its pane instead.'));
 				goTerminal(name);
 			});
-		}
-
-		/**
-		 * Keep the harness's address on the page, with a way to copy it.
-		 *
-		 * The URL carries the launch token, which differs on every launch and
-		 * is the only credential dsh accepts; dsh turns it into a cookie that
-		 * is SameSite=Strict, so a navigation this page starts is refused
-		 * whenever the harness ends up on a different site and the window shows
-		 * dsh's own "authentication required" page. Pasting the same URL into
-		 * the address bar always works, because a typed navigation carries no
-		 * initiator site. The address is therefore kept where it can be copied
-		 * rather than only in a pane that later repaints over it.
-		 *
-		 * navigator.clipboard needs a secure context and this page is plain HTTP
-		 * on a LAN address, so the copy falls back to selecting the field and
-		 * execCommand; focus selects everything, so Ctrl+C alone also works.
-		 */
-		function showDshUrl(url) {
-			var status = FCC.$('#fcc-term-status');
-			if (!status) { return; }
-			status.innerHTML = '';
-			var hint = FCC.el('span', { class: 'fcc-note' });
-			var input = FCC.el('input', {
-				type: 'text',
-				readonly: 'readonly',
-				value: url,
-				class: 'cbi-input-text',
-				onfocus: function () { input.select(); }
-			});
-			input.style.width = '32em';
-			input.style.fontFamily = 'monospace';
-			var copy = FCC.el('button', {
-				class: 'cbi-button cbi-button-action',
-				text: FCC._('Copy the harness address'),
-				onclick: function () {
-					var done = false;
-					input.focus();
-					input.select();
-					try { done = document.execCommand('copy'); } catch (e) { done = false; }
-					if (done) {
-						hint.textContent = FCC._('Address copied.');
-						return;
-					}
-					if (navigator.clipboard && navigator.clipboard.writeText) {
-						navigator.clipboard.writeText(url).then(function () {
-							hint.textContent = FCC._('Address copied.');
-						}, function () {
-							hint.textContent =
-								FCC._('Press Ctrl+C to copy the selected address.');
-						});
-						return;
-					}
-					hint.textContent = FCC._('Press Ctrl+C to copy the selected address.');
-				}
-			});
-			status.appendChild(FCC.el('div', { class: 'fcc-note' }, [
-				FCC._('DeepSeek Harness address:'), ' ', input, ' ', copy, ' ', hint
-			]));
 		}
 
 		function go(name, agent) {

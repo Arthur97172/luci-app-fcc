@@ -42,9 +42,6 @@ msgstr ""
 msgid "Add this key to the account's authorized_keys file, then test the connection again."
 msgstr ""
 
-msgid "Address copied."
-msgstr ""
-
 msgid "Address the FCC server listens on. The FCC Admin page is served through LuCI, which reaches the server on 127.0.0.1, so keep that unless another device must reach the FCC API directly. Only 0.0.0.0 exposes the server to the LAN, and it adds a LAN-only firewall rule; the port is never opened to the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page cannot be reached through one."
 msgstr ""
 
@@ -153,16 +150,10 @@ msgstr ""
 msgid "Control target"
 msgstr ""
 
-msgid "Copy the harness address"
-msgstr ""
-
 msgid "Could not attach to the session:"
 msgstr ""
 
 msgid "Could not read the one-time setup."
-msgstr ""
-
-msgid "DeepSeek Harness address:"
 msgstr ""
 
 msgid "DeepSeek Harness did not print its address; showing its pane instead."
@@ -349,9 +340,6 @@ msgid "Platform"
 msgstr ""
 
 msgid "Port"
-msgstr ""
-
-msgid "Press Ctrl+C to copy the selected address."
 msgstr ""
 
 msgid "Reading the block from the router…"
