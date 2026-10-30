@@ -5772,12 +5772,14 @@ test_install_runtime_takes_the_whole_registry() {
 		| LC_ALL=C sort | tr '\n' ' ')"
 	assert_eq "claude " "$_tr_set" "an explicit list is still exactly that list"
 
-	# And the set the checks are shown is the set the installer is given: one
-	# variable, read in both places. A change that widened one and not the other
-	# would be a page that checks for one thing and installs another, which is
-	# the shape of bug that leaves a device short of space halfway through.
+	# And the set the checks are shown is the one that was asked for — not the
+	# one upstream is handed, which differs by exactly the agents this package
+	# installs itself — while what reaches upstream is the stripped set. Both
+	# sides are what the run installs, each asked in the terms it understands;
+	# a change that stopped handing the doctor the request would precheck a
+	# Cline-only install against upstream's defaults instead.
 	assert_contains "$(cat "$LIBEXEC/install.sh")" \
-		'FCC_AGENT_SELECTION="$_cr_agents"' \
+		'FCC_AGENT_SELECTION="$_cr_requested"' \
 		"the checks read the requested set"
 	# The third argument is $_cr_mode_none, not the raw --no-agents flag: an
 	# explicit request that reduced to no upstream agents is driven as "none"
@@ -5957,22 +5959,58 @@ test_cline_on_musl_comes_from_the_build_release() {
 		installer_answer_for "Install Cline for fcc-cline? [Y/n]" "cline pi" set')" \
 		"a glibc box still answers yes when Cline was selected"
 
-	# --all-agents is the page's Install button. Cline leaves the set upstream is
-	# driven with — precheck_ok prints the set and stops the run before the
-	# backup and the download, the same seam the test above uses — and the job
-	# says where it is going rather than dropping it silently.
+	# --all-agents is the page's Install button. The checks are asked about
+	# everything it selected, Cline included — the report is about the run, and
+	# this run does install Cline — while the set upstream is driven with has
+	# Cline taken out. precheck_ok prints the set and stops the run before the
+	# backup and the download, the same seam the test above uses; run_installer
+	# prints the other half.
 	_all="$(sh_install '
 		fcc_libc() { printf musl; }
 		uname() { printf "x86_64\n"; }
 		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
 		precheck_packages() { :; }
 		cmd_runtime runtime --all-agents' 2>&1)"
-	assert_not_contains "$_all" 'SET=[claude codex pi opencode hermes dsh grok muse aider agy cline]' \
-		"--all-agents no longer hands Cline to the installer on musl"
-	assert_contains "$_all" 'SET=[claude codex pi opencode hermes dsh grok muse aider agy]' \
-		"the other ten are still there, in registry order"
+	assert_contains "$_all" 'SET=[claude codex pi opencode cline hermes dsh grok muse aider agy]' \
+		"the checks reason about every agent the page selected, Cline included"
 	assert_contains "$_all" 'Cline will be installed from the unofficial musl build' \
 		"and the job says where it comes from rather than leaving it out silently"
+
+	_allrun="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		precheck_ok() { return 0; }
+		download_installer() { printf "#!/bin/sh\n" > "$1"; return 0; }
+		backup_runtime() { return 1; }
+		rollback_runtime() { return 0; }
+		stop_fcc_processes() { return 0; }
+		install_cline_from_build() { return 0; }
+		run_installer() { printf "RUN agents=[%s] none=%s\n" "$2" "$3"; return 1; }
+		cmd_runtime runtime --all-agents' 2>&1)"
+	assert_contains "$_allrun" 'RUN agents=[claude codex pi opencode hermes dsh grok muse aider agy] none=0' \
+		"--all-agents never hands Cline to the upstream installer on musl"
+
+	# A Cline-only request has to reach the checks as that request. Handing
+	# them the stripped set made it look like "no opinion", and the report then
+	# asked for upstream's defaults — Codex's fold, Pi's fractional sleep,
+	# Hermes's git — and stopped a router that had asked for Cline alone
+	# (measured on 192.168.10.157: PRECHECK_FAILED with 1523 MB free).
+	_sets="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		precheck_ok() { printf "SEL=[%s] NONE=[%s]\n" "$FCC_AGENT_SELECTION" "$FCC_AGENT_NONE"; return 1; }
+		precheck_packages() { :; }
+		cmd_runtime runtime --agents cline' 2>&1)"
+	assert_contains "$_sets" 'SEL=[cline] NONE=[0]' \
+		"a Cline-only request is checked as Cline, not as upstream's defaults"
+	_sets="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		precheck_ok() { printf "SEL=[%s] NONE=[%s]\n" "$FCC_AGENT_SELECTION" "$FCC_AGENT_NONE"; return 1; }
+		precheck_packages() { :; }
+		cmd_runtime runtime --agents cline,codex' 2>&1)"
+	assert_contains "$_sets" 'SEL=[cline codex] NONE=[0]' \
+		"and beside another agent, both are in the report — Cline included"
 
 	# A Cline-only request on musl is the case the release exists for: this
 	# package installs Cline, and upstream is driven with *no* agents. An empty

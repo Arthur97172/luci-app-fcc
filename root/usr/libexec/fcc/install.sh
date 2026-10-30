@@ -2302,7 +2302,23 @@ cmd_runtime() {
 	# opinion. Handing the doctor the same three-way answer it would get from
 	# the UI is what keeps the report and the install from disagreeing — the
 	# bash requirement in particular, which applies to six of the eleven agents.
-	FCC_AGENT_SELECTION="$_cr_agents"
+	#
+	# It is the *requested* set, not the one upstream is handed. An agent this
+	# package installs itself (Cline on musl) leaves $_cr_agents for upstream
+	# but is still something this run installs, and the report is about the
+	# run: its own requirements are checked, and the libstdc++ row exists
+	# because of it. The dead ends stay in the string too — the doctor drops
+	# them from the requirements itself and reports them as unavailable.
+	#
+	# Passing the stripped set instead made a Cline-only request look like "no
+	# opinion", and the checks then held the box to upstream's defaults:
+	# Codex's fold, Pi's fractional sleep and Hermes's git failed a router that
+	# had asked for Cline alone.
+	if [ -n "$_cr_requested" ]; then
+		FCC_AGENT_SELECTION="$_cr_requested"
+	else
+		FCC_AGENT_SELECTION="$_cr_agents"
+	fi
 	FCC_AGENT_NONE="$_cr_none"
 	export FCC_AGENT_SELECTION FCC_AGENT_NONE
 
@@ -2461,6 +2477,8 @@ cmd_runtime() {
 	# "upstream's defaults"; an explicit request that reduced to nothing
 	# upstream may install means "none", which is a different thing and was
 	# how a Cline-only install would have quietly installed ten other agents.
+	# This is not the same question the checks were asked above: there the
+	# requested set is what counts, here only what upstream is handed.
 	_cr_mode_none="$_cr_none"
 	if [ -n "$_cr_requested" ] && [ -z "$_cr_agents" ] && [ -n "$_cr_self_ok" ]; then
 		_cr_mode_none=1

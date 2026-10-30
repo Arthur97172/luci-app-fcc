@@ -800,7 +800,10 @@ fcc_all_agents() {
 	done <<-EOF
 	$(fcc_agents_each)
 	EOF
-	printf '%s' "$_faa_out"
+	# No leading space: the set is compared and printed as a string in places
+	# that do not normalise IFS (the job's log line, the doctor's selection),
+	# and one space at the front of "the whole registry" is not part of it.
+	printf '%s' "${_faa_out# }"
 }
 
 # ---------------------------------------------------------------------------
