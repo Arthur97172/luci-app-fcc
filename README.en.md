@@ -347,11 +347,16 @@ luci-base  luci-compat  curl  ca-bundle  tmux
   Build, Muse Code and Antigravity CLI. When the selected set needs it the
   diagnostics report a FAIL with the install command, otherwise a WARN; the
   preflight installs it.
-* **`cline`** cannot be fixed by any package: Cline publishes glibc Linux builds
-  only and OpenWrt is musl. It is dropped from the selected set with a line
-  saying why, and when it was the only agent asked for the install is refused
-  with `AGENT_UNSUPPORTED`. Upstream request:
-  [cline/cline#15271](https://github.com/cline/cline/issues/15271).
+* **`cline`** is installed by this package on musl: Cline publishes glibc Linux
+  builds only and OpenWrt is musl, so the install downloads
+  `cli-linux-<arch>-musl` from the
+  [cline-build](https://github.com/Arthur97172/cline-build) releases, checks its
+  sha256 against the release manifest and only then puts it in `bin/`; a missing
+  `libstdcpp6` is added first. When the installed version already matches, an
+  update reads the manifest once instead of fetching 142 MB again. Builds exist
+  for x86_64 and aarch64 only. Once upstream ships an official musl package
+  ([cline/cline#15271](https://github.com/cline/cline/issues/15271)) this package
+  will switch back to it.
 * **`git`** is needed for one agent only: the Hermes installer clones its
   sources over HTTPS, which OpenWrt ships in `git-http` (which pulls `git` in).
 * **`luci-compat`** brings `luci-lua-runtime`, the Lua dispatcher and template
@@ -542,8 +547,10 @@ demand over the network, so there is no prebuilt runtime tarball in the release.
   console reports the missing dependency and an install is refused before it
   starts.
 * **Six agents need `bash`.** See *Requirements*; the preflight installs it.
-* **Cline cannot be installed on OpenWrt.** It ships glibc builds only, so the
-  diagnostics report it as a WARN and an install drops it with a line saying why.
+* **Cline on OpenWrt comes from an unofficial musl build.** This package
+  downloads it from the cline-build releases and verifies its sha256; a CPU other
+  than x86_64 or aarch64 still has none, so the diagnostics report a WARN and an
+  install skips it.
 * **A whole-registry install is all-or-nothing.** Upstream stops at the first
   agent it cannot install and rolls the entire run back; pick that agent on its
   own from the dropdown to get the rest.

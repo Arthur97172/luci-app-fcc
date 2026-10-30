@@ -804,10 +804,10 @@ fcc_all_agents() {
 }
 
 # ---------------------------------------------------------------------------
-# libc, and the agents that cannot run on this one
+# libc, and the agents the upstream installer cannot provide on this one
 # ---------------------------------------------------------------------------
-# OpenWrt is musl. Cline is the one agent in the registry that has no musl
-# build: `npm install -g cline` fetches a launcher plus a platform package,
+# OpenWrt is musl. Cline's upstream distribution has no musl build:
+# `npm install -g cline` fetches a launcher plus a platform package,
 # @cline/cli-linux-x64, and that package holds a single binary linked against
 # glibc — its ELF interpreter is /lib64/ld-linux-x86-64.so.2. The npm metadata
 # publishes six platform packages (linux/darwin/windows x x64/arm64) and no
@@ -827,10 +827,25 @@ fcc_all_agents() {
 # a single glibc-only agent is the difference between "install every agent" and
 # "install none of the later ones", FCC package and PATH setup included.
 #
-# The answer is not a check that blocks the install: Cline is not something the
-# user can fix with a package. The install leaves it out of the set it drives
-# (install.sh) and the report says why (doctor.sh), so the other nine still
-# install and Cline is reported as unavailable rather than silently missing.
+# So the upstream installer must never be handed Cline on musl — but that is a
+# question about *upstream*, not about this system. Since 2026-10-29 there is a
+# second source: https://github.com/Arthur97172/cline-build compiles
+# cli-linux-x64-musl and cli-linux-arm64-musl from upstream's own release tags
+# and publishes them as one GitHub release per version, with a manifest and a
+# checksum. install.sh installs Cline from there on musl/x86_64 and musl/arm64,
+# verifying the checksum before the binary goes anywhere near PATH.
+#
+# Two different verdicts therefore exist, and conflating them was how an
+# installable agent came to look impossible:
+#
+#   fcc_agent_unsupported_reason   nothing can install it here. Only the CPUs
+#                                  the unofficial builds do not cover.
+#   fcc_agent_upstream_skip_reason the upstream installer must not be asked;
+#                                  this package installs it itself.
+#
+# When upstream ships official musl packages, the second verdict goes away for
+# Cline — delete the fetch in install.sh and its entry here, and upstream
+# installs it like any other agent.
 fcc_libc() {
 	# fcc_libc -> "musl", "glibc" or "unknown"
 	#
@@ -847,21 +862,131 @@ fcc_libc() {
 	printf 'unknown'
 }
 
+# ---------------------------------------------------------------------------
+# Cline on musl: the cline-build releases
+# ---------------------------------------------------------------------------
+# The base URL is the release's `latest/download` directory, which redirects to
+# the newest release without an API call: GitHub's API allows 60 requests an
+# hour per IP, and a whole LAN of routers behind one NAT would spend that on
+# update checks alone.
+#
+# Asset names are Bun's cross-compile targets, and they are also the CPU names:
+# x64 and arm64 are the two musl builds cline-build makes. A CPU outside those
+# two has no build at all, which is the one remaining "cannot install here".
+FCC_CLINE_BUILD_BASE="${FCC_CLINE_BUILD_BASE:-https://github.com/Arthur97172/cline-build/releases/latest/download}"
+
+fcc_cline_build_arch() {
+	# fcc_cline_build_arch -> x64, arm64, or nothing when there is no build
+	case "$(uname -m 2>/dev/null)" in
+		x86_64|amd64)  printf 'x64' ;;
+		aarch64|arm64) printf 'arm64' ;;
+	esac
+}
+
+fcc_cline_build_asset() {
+	# fcc_cline_build_asset -> cli-linux-<arch>-musl
+	_fcba_arch="$(fcc_cline_build_arch)"
+	[ -n "$_fcba_arch" ] || return 1
+	printf 'cli-linux-%s-musl' "$_fcba_arch"
+}
+
+fcc_cline_self_installable() {
+	# 0 when this package installs Cline itself here.
+	#
+	# musl only: on glibc the upstream npm package is both official and the
+	# newer of the two, so there is no reason to route around it.
+	[ "$(fcc_libc)" = musl ] || return 1
+	[ -n "$(fcc_cline_build_arch)" ]
+}
+
+fcc_agent_self_installable() {
+	# fcc_agent_self_installable <id> -> 0 when install.sh installs it itself
+	case "$1" in
+		cline) fcc_cline_self_installable ;;
+		*) return 1 ;;
+	esac
+}
+
+fcc_self_installable_agents_in() {
+	# fcc_self_installable_agents_in "<id[,id...]|id id...>" -> which of that
+	# set this package installs itself, space separated, in registry order
+	_fsia_set="$(printf '%s' "$1" | tr ',' ' ')"
+	_fsia_out=""
+	while IFS='|' read -r _fsia_id _fsia_rest; do
+		case "$_fsia_id" in ''|\#*) continue ;; esac
+		case " $_fsia_set " in
+			*" $_fsia_id "*) ;;
+			*) continue ;;
+		esac
+		fcc_agent_self_installable "$_fsia_id" && _fsia_out="$_fsia_out $_fsia_id"
+	done <<-EOF
+	$(fcc_agents_each)
+	EOF
+	printf '%s' "${_fsia_out# }"
+}
+
 fcc_agent_unsupported_reason() {
 	# fcc_agent_unsupported_reason <id> -> why that agent cannot be installed
-	# here, or nothing when it can.
+	# here by anything, or nothing when it can.
 	#
 	# A sentence, not a flag: it is what the install log and the doctor's agent
 	# row print, so the person reading either learns what is wrong with Cline
 	# rather than only that it is missing. See the comment above for the
-	# measurement behind it.
+	# measurement behind it, and note what is *not* in here: on x86_64 and
+	# arm64 musl Cline is installable (from the cline-build release), so this
+	# answers nothing and the row reads like any other agent's.
 	case "$1" in
 		cline)
 			case "$(fcc_libc)" in
-				musl) printf 'Cline publishes only glibc Linux builds; there is no musl build, so it cannot run on this system.' ;;
+				musl)
+					fcc_cline_self_installable && return 0
+					printf 'Cline has no musl build for this CPU (%s); the unofficial musl builds exist for x86_64 and aarch64 only.' \
+						"$(uname -m 2>/dev/null)"
+					;;
 			esac
 			;;
 	esac
+}
+
+fcc_agent_upstream_skip_reason() {
+	# fcc_agent_upstream_skip_reason <id> -> why the upstream installer must not
+	# be given this agent here, or nothing when it may.
+	#
+	# Distinct from fcc_agent_unsupported_reason: an agent can be installable
+	# by this package and still be wrong for upstream, which is exactly Cline
+	# on musl — upstream would fetch the glibc npm package and fail.
+	case "$1" in
+		cline)
+			case "$(fcc_libc)" in
+				musl)
+					if fcc_cline_self_installable; then
+						printf 'Cline is installed from the unofficial musl builds at github.com/Arthur97172/cline-build, not by the upstream installer.'
+					else
+						printf 'Cline has no musl build for this CPU and no unofficial one exists for it.'
+					fi
+					;;
+			esac
+			;;
+	esac
+}
+
+fcc_agents_upstream_skip_in() {
+	# fcc_agents_upstream_skip_in "<id[,id...]|id id...>" -> which of that set
+	# the upstream installer must not be offered, space separated, in the
+	# table's order, and empty when all of them may be handed over
+	_fus_set="$(printf '%s' "$1" | tr ',' ' ')"
+	_fus_out=""
+	while IFS='|' read -r _fus_id _fus_rest; do
+		case "$_fus_id" in ''|\#*) continue ;; esac
+		case " $_fus_set " in
+			*" $_fus_id "*) ;;
+			*) continue ;;
+		esac
+		[ -n "$(fcc_agent_upstream_skip_reason "$_fus_id")" ] && _fus_out="$_fus_out $_fus_id"
+	done <<-EOF
+	$(fcc_agents_each)
+	EOF
+	printf '%s' "${_fus_out# }"
 }
 
 fcc_unsupported_agents_in() {
@@ -881,6 +1006,25 @@ fcc_unsupported_agents_in() {
 	$(fcc_agents_each)
 	EOF
 	printf '%s' "${_fua_out# }"
+}
+
+fcc_agents_minus() {
+	# fcc_agents_minus "<set>" "<set>" -> the first set's ids, in the order
+	# given, with the second set's removed
+	#
+	# Both are the loose "<id[,id...]|id id...>" form every other set helper
+	# takes. Used where a set has to be narrowed by an answer rather than by
+	# the registry's order — the doctor's Node question, where an agent this
+	# package installs itself needs no Node at all.
+	_fam_drop=" $(printf '%s' "$2" | tr ',' ' ') "
+	_fam_keep=""
+	for _fam_id in $(printf '%s' "$1" | tr ',' ' '); do
+		case "$_fam_drop" in
+			*" $_fam_id "*) ;;
+			*) _fam_keep="$_fam_keep $_fam_id" ;;
+		esac
+	done
+	printf '%s' "${_fam_keep# }"
 }
 
 # ---------------------------------------------------------------------------

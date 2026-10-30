@@ -5779,8 +5779,11 @@ test_install_runtime_takes_the_whole_registry() {
 	assert_contains "$(cat "$LIBEXEC/install.sh")" \
 		'FCC_AGENT_SELECTION="$_cr_agents"' \
 		"the checks read the requested set"
+	# The third argument is $_cr_mode_none, not the raw --no-agents flag: an
+	# explicit request that reduced to no upstream agents is driven as "none"
+	# too, and an empty set without it means upstream's defaults.
 	assert_contains "$(cat "$LIBEXEC/install.sh")" \
-		'run_installer "$_cr_script" "$_cr_agents" "$_cr_none"' \
+		'run_installer "$_cr_script" "$_cr_agents" "$_cr_mode_none"' \
 		"and the installer is handed that same set"
 
 	# And the checks accept what they are handed. This is the seam that broke:
@@ -5865,84 +5868,331 @@ test_an_update_is_not_refused_by_its_own_lock() {
 		"and in the path with no agent set"
 }
 
-# Cline has no musl build, and an install that includes it would fail there and
-# stop upstream at that step — taking the FCC package and the PATH setup with
-# it (§79). Measured on the 24.10.8 test router, 2026-10-21: npm installs the
-# package, the postinstall writes the hard link, and `cline --version` dies with
+# Cline on musl: upstream's package is glibc-only, and this package installs the
+# musl build instead.
+#
+# Measured on the 24.10.8 test router, 2026-10-21: npm installs the package, the
+# postinstall writes the hard link, and `cline --version` dies with
 # "spawnSync .../bin/.cline ENOENT" because the binary wants
 # /lib64/ld-linux-x86-64.so.2 and the image has only /lib/ld-musl-*.so.1.
 #
-# The build host is glibc, so the probe is answered for a musl router in the
-# snippets. That is not the seam problem the install_lib comment warns about:
-# fcc_libc() is overwritten after the real common.sh has been sourced, so every
-# line that decides what happens is the line under test.
-test_cline_is_left_out_on_musl() {
+# Two questions, asked separately because they have different answers. What
+# nothing can install here is a refusal (fcc_agent_unsupported_reason); what
+# upstream must not be handed is a handover (fcc_agent_upstream_skip_reason).
+# Cline on a musl CPU that has a cline-build release is the second and not the
+# first, and the two were one question until this pair of tests came apart.
+#
+# The build host is glibc, so the libc and the CPU are answered for a musl
+# router in the snippets. That is not the seam problem the install_lib comment
+# warns about: fcc_libc() and uname() are overwritten after the real common.sh
+# has been sourced, so every line that decides what happens is the line under
+# test.
+test_cline_on_musl_comes_from_the_build_release() {
 	setup_sandbox
 	make_uci_shim
 
-	# The reason itself: a sentence naming the missing build, and nothing at all
-	# for a glibc box or for an agent that has one.
+	# The asset this CPU gets, and nothing where the build has no target.
+	assert_eq "cli-linux-x64-musl" "$(sh_common 'uname() { printf "x86_64\n"; }
+		fcc_cline_build_asset')" "x86_64 asks for the x64 musl asset"
+	assert_eq "cli-linux-arm64-musl" "$(sh_common 'uname() { printf "aarch64\n"; }
+		fcc_cline_build_asset')" "aarch64 asks for the arm64 one"
+	assert_eq "" "$(sh_common 'uname() { printf "armv7l\n"; }
+		fcc_cline_build_asset')" "a CPU with no build asks for nothing"
+
+	# The two verdicts on a musl router that has a build: installable, and not
+	# upstream's to install.
+	assert_eq "" "$(sh_common 'fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		fcc_agent_unsupported_reason cline')" \
+		"on musl with a build Cline is not a dead end"
 	assert_contains "$(sh_common 'fcc_libc() { printf musl; }
-		fcc_agent_unsupported_reason cline')" 'glibc Linux builds' \
-		"on musl the report says what Cline lacks"
+		uname() { printf "x86_64\n"; }
+		fcc_agent_upstream_skip_reason cline')" 'cline-build' \
+		"upstream is told not to install it, and where it comes from instead"
+	assert_eq "cline" "$(sh_common 'fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		fcc_self_installable_agents_in "pi cline dsh"')" \
+		"and of that set only Cline is this package's to install"
+
+	# ... and on a musl CPU the build has no target for: a dead end, and
+	# upstream refused it too, because its glibc package cannot run there either.
+	assert_contains "$(sh_common 'fcc_libc() { printf musl; }
+		uname() { printf "armv7l\n"; }
+		fcc_agent_unsupported_reason cline')" 'no musl build' \
+		"a musl CPU without a build is a dead end, with the reason"
+	assert_contains "$(sh_common 'fcc_libc() { printf musl; }
+		uname() { printf "armv7l\n"; }
+		fcc_agent_upstream_skip_reason cline')" 'no musl build' \
+		"and upstream is still refused it there"
+
+	# ... and on glibc, where the npm package is official and current, neither
+	# applies: upstream installs Cline the way it always has.
 	assert_eq "" "$(sh_common 'fcc_libc() { printf glibc; }
 		fcc_agent_unsupported_reason cline')" \
-		"and says nothing about Cline on a glibc box"
-	assert_eq "" "$(sh_common 'fcc_libc() { printf musl; }
-		fcc_agent_unsupported_reason aider')" \
-		"and nothing about an agent that has a musl build"
+		"a glibc box can install Cline"
+	assert_eq "" "$(sh_common 'fcc_libc() { printf glibc; }
+		fcc_agent_upstream_skip_reason cline')" \
+		"and upstream keeps the agent"
+	assert_eq "" "$(sh_common 'fcc_libc() { printf glibc; }
+		fcc_self_installable_agents_in "cline pi"')" \
+		"with nothing installed from the musl release"
 
-	# The answerer declines the question, whichever mode asked it. In "set" mode
-	# Cline would otherwise be a yes because it was selected; in "default" mode
-	# every other agent gets upstream's own answer, which is yes when the agent
-	# is absent, so silence here would install it anyway.
+	# The answerer declines the question on musl, whichever mode asked it. In
+	# "set" mode Cline would otherwise be a yes because it was selected; in
+	# "default" mode every other agent gets upstream's own answer, which is yes
+	# when the agent is absent, so silence here would install the glibc package
+	# by not talking about it.
 	assert_eq "n" "$(sh_install 'fcc_libc() { printf musl; }
-		FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "cline pi")"
+		uname() { printf "x86_64\n"; }
+		FCC_AGENT_SKIP="$(fcc_agents_upstream_skip_in "cline pi")"
 		installer_answer_for "Install Cline for fcc-cline? [Y/n]" "cline pi" set')" \
-		"a selected Cline is declined on musl"
+		"a selected Cline is declined upstream on musl"
 	assert_eq "n" "$(sh_install 'fcc_libc() { printf musl; }
-		FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "cline pi")"
+		uname() { printf "x86_64\n"; }
+		FCC_AGENT_SKIP="$(fcc_agents_upstream_skip_in "cline pi")"
 		installer_answer_for "Install Cline for fcc-cline? [Y/n]" "" default')" \
 		"and so is the one nobody selected"
 	assert_eq "y" "$(sh_install 'fcc_libc() { printf glibc; }
-		FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "cline pi")"
+		FCC_AGENT_SKIP="$(fcc_agents_upstream_skip_in "cline pi")"
 		installer_answer_for "Install Cline for fcc-cline? [Y/n]" "cline pi" set')" \
 		"a glibc box still answers yes when Cline was selected"
 
-	# --all-agents is the page's Install button, and the set it drives no longer
-	# contains Cline. precheck_ok reports the set and stops the run before the
-	# backup and the download, the same seam the test above uses.
+	# --all-agents is the page's Install button. Cline leaves the set upstream is
+	# driven with — precheck_ok prints the set and stops the run before the
+	# backup and the download, the same seam the test above uses — and the job
+	# says where it is going rather than dropping it silently.
 	_all="$(sh_install '
 		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
 		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
 		precheck_packages() { :; }
 		cmd_runtime runtime --all-agents' 2>&1)"
-	assert_not_contains "$_all" 'cline' \
+	assert_not_contains "$_all" 'SET=[claude codex pi opencode hermes dsh grok muse aider agy cline]' \
 		"--all-agents no longer hands Cline to the installer on musl"
-	assert_contains "$_all" 'Cline is not installed' \
-		"and the job says it was left out rather than dropping it silently"
 	assert_contains "$_all" 'SET=[claude codex pi opencode hermes dsh grok muse aider agy]' \
 		"the other ten are still there, in registry order"
+	assert_contains "$_all" 'Cline will be installed from the unofficial musl build' \
+		"and the job says where it comes from rather than leaving it out silently"
 
-	# Asking for Cline alone is refused before anything is downloaded: upstream
-	# would otherwise re-ask until the deadline, because a chooser with every
-	# answer no has no set to accept.
+	# A Cline-only request on musl is the case the release exists for: this
+	# package installs Cline, and upstream is driven with *no* agents. An empty
+	# set is not the same thing — upstream reads it as "the defaults" and would
+	# install the other ten, which is what a Cline-only install must not do.
 	_only="$(sh_install '
 		fcc_libc() { printf musl; }
-		precheck_ok() { printf "SET=[%s]\n" "$FCC_AGENT_SELECTION"; return 1; }
-		precheck_packages() { :; }
+		uname() { printf "x86_64\n"; }
+		precheck_ok() { return 0; }
+		download_installer() { printf "#!/bin/sh\n" > "$1"; return 0; }
+		backup_runtime() { return 1; }
+		rollback_runtime() { return 0; }
+		stop_fcc_processes() { return 0; }
+		install_cline_from_build() { printf "SELF_INSTALL\n"; return 0; }
+		run_installer() { printf "RUN agents=[%s] none=%s\n" "$2" "$3"; return 1; }
 		cmd_runtime runtime --agents cline' 2>&1)"
-	assert_contains "$_only" 'AGENT_UNSUPPORTED' \
-		"a Cline-only install stops with a verdict"
-	assert_not_contains "$_only" 'SET=[' \
+	assert_contains "$_only" 'SELF_INSTALL' \
+		"a Cline-only install fetches it itself"
+	assert_contains "$_only" 'RUN agents=[] none=1' \
+		"and drives upstream with no agents rather than with the defaults"
+
+	# Beside another agent its failure is one agent's failure: the run goes on
+	# and the other agent is still installed by upstream.
+	_partial="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		precheck_ok() { return 0; }
+		download_installer() { printf "#!/bin/sh\n" > "$1"; return 0; }
+		backup_runtime() { return 1; }
+		rollback_runtime() { return 0; }
+		stop_fcc_processes() { return 0; }
+		install_cline_from_build() { return 1; }
+		run_installer() { printf "RUN agents=[%s] none=%s\n" "$2" "$3"; return 1; }
+		cmd_runtime runtime --agents cline,codex' 2>&1)"
+	assert_contains "$_partial" 'RUN agents=[codex] none=0' \
+		"the other agent still goes to upstream when Cline fails"
+	assert_not_contains "$_partial" 'AGENT_UNSUPPORTED' \
+		"and the run is not abandoned for it"
+
+	# Alone, its failure is the run's: there is nothing left for upstream to
+	# install, and a chooser with every answer no is re-asked until the
+	# deadline. The verdict is the same one a dead end produces, because from
+	# the caller's side they are the same outcome.
+	_alone="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		precheck_ok() { return 0; }
+		download_installer() { printf "#!/bin/sh\n" > "$1"; return 0; }
+		backup_runtime() { return 1; }
+		rollback_runtime() { return 0; }
+		stop_fcc_processes() { return 0; }
+		install_cline_from_build() { return 1; }
+		run_installer() { printf "RUN\n"; return 0; }
+		cmd_runtime runtime --agents cline' 2>&1)"
+	assert_contains "$_alone" 'AGENT_UNSUPPORTED' \
+		"a Cline-only install whose download failed stops with a verdict"
+	assert_not_contains "$_alone" 'RUN' \
 		"and never reaches the installer"
 }
 
-# The doctor's side of the same fact: the agent row says "not available", with
-# the reason, and the requirements the report checks no longer include an agent
-# that will not be installed. The second half matters — a FAIL for a Node only
-# Cline needed would block an install that was never going to run it.
-test_doctor_reports_agents_this_system_cannot_install() {
+# install_cline_from_build: the fetch, the checksum, and the three answers that
+# matter — already current, wrong bytes, and a binary that does not start.
+#
+# curl is a stand-in, because what is under test is what the function does with
+# an answer, not GitHub's. It serves whatever is in the fixture directory under
+# the last path segment of the URL it was given, and it records every URL it was
+# asked for, which is how "the 142 MB was not fetched" becomes an assertion.
+test_install_cline_from_build_fetches_the_release() {
+	setup_sandbox
+	make_uci_shim
+
+	_cl_dir="$SANDBOX/cline-release"
+	_cl_log="$SANDBOX/curl.log"
+	mkdir -p "$_cl_dir" "$SANDBOX/standin"
+	printf '#!/bin/sh\nprintf "3.0.74\\n"\n' > "$_cl_dir/cli-linux-x64-musl"
+	_cl_sha="$(sha256sum "$_cl_dir/cli-linux-x64-musl" | awk '{print $1}')"
+	# The manifest's shape is the parser's subject, so the fixture is the real
+	# one: two-space JSON.stringify output, one field per line, two files.
+	printf '{\n  "version": "3.0.74",\n  "files": [\n    {\n      "name": "cli-linux-x64-musl",\n      "sha256": "%s",\n      "size": 31\n    },\n    {\n      "name": "cli-linux-arm64-musl",\n      "sha256": "deadbeef",\n      "size": 1\n    }\n  ]\n}\n' \
+		"$_cl_sha" > "$_cl_dir/manifest.json"
+	cat > "$SANDBOX/standin/curl" <<EOF
+#!/bin/sh
+_out=""
+_prev=""
+_url=""
+for _a in "\$@"; do
+	[ "\$_prev" = "--output" ] && _out="\$_a"
+	_prev="\$_a"
+	_url="\$_a"
+done
+printf '%s\n' "\$_url" >> "$_cl_log"
+[ -n "\$_out" ] || exit 22
+cp "$_cl_dir/\${_url##*/}" "\$_out" 2>/dev/null || exit 22
+EOF
+	chmod +x "$SANDBOX/standin/curl"
+
+	# The C++ runtime is a presence check against FCC_NODE_LIB_DIRS, and the
+	# host this runs on need not have one. A fixture directory says the loader
+	# has them, so the branch under test is the download and not the package.
+	mkdir -p "$SANDBOX/clinelibs"
+	for _cl_l in libstdc++.so.6 libgcc_s.so.1; do
+		: > "$SANDBOX/clinelibs/$_cl_l"
+	done
+
+	# 1. A first install: the manifest is read, the asset is verified and moved
+	#    into bin/, which is the first directory every launcher list searches.
+	_out="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		FCC_NODE_LIB_DIRS="'"$SANDBOX"'/clinelibs"; export FCC_NODE_LIB_DIRS
+		PATH="'"$SANDBOX"'/standin:$PATH"; export PATH
+		if install_cline_from_build; then printf "OK\n"; else printf "FAILED\n"; fi' 2>&1)"
+	assert_contains "$_out" "OK" \
+		"the asset is downloaded, verified and installed"
+	assert_eq "3.0.74" "$("$SANDBOX/opt/fcc/bin/cline" --version 2>/dev/null)" \
+		"and the binary that is there is the one the release published"
+	assert_eq "1" "$(grep -c 'cli-linux-x64-musl$' "$_cl_log")" \
+		"the x64 asset was fetched once"
+	assert_eq "0" "$(grep -c 'cli-linux-arm64-musl$' "$_cl_log")" \
+		"and the one for the other CPU was not fetched at all"
+
+	# 2. Already current: the installed binary answers, so the manifest is the
+	#    whole cost. Every update re-runs this with the agent set preserved, so
+	#    a run with nothing to do has to cost nothing worth measuring.
+	: > "$_cl_log"
+	_out="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		FCC_NODE_LIB_DIRS="'"$SANDBOX"'/clinelibs"; export FCC_NODE_LIB_DIRS
+		PATH="'"$SANDBOX"'/standin:$PATH"; export PATH
+		if install_cline_from_build; then printf "OK\n"; else printf "FAILED\n"; fi' 2>&1)"
+	assert_contains "$_out" "OK" \
+		"a run with the same version installed succeeds"
+	assert_eq "0" "$(grep -c 'cli-linux-x64-musl$' "$_cl_log")" \
+		"without downloading the 142 MB asset again"
+
+	# 3. Wrong bytes: the checksum is what says the download is the release's,
+	#    and the installed binary is left exactly as it was. The manifest has to
+	#    name a *different* version, or the run stops at "already current" and
+	#    the download — the thing under test here — never happens.
+	printf '#!/bin/sh\nprintf "3.9.9\\n"\n' > "$_cl_dir/cli-linux-x64-musl"
+	printf '{\n  "version": "3.9.9",\n  "files": [\n    {\n      "name": "cli-linux-x64-musl",\n      "sha256": "%s",\n      "size": 31\n    }\n  ]\n}\n' \
+		"$_cl_sha" > "$_cl_dir/manifest.json"
+	_out="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		FCC_NODE_LIB_DIRS="'"$SANDBOX"'/clinelibs"; export FCC_NODE_LIB_DIRS
+		PATH="'"$SANDBOX"'/standin:$PATH"; export PATH
+		if install_cline_from_build; then printf "OK\n"; else printf "FAILED\n"; fi' 2>&1)"
+	assert_contains "$_out" "FAILED" \
+		"a download whose bytes do not match the manifest is refused"
+	# The reason goes to the runtime log, which is the file the job panel shows;
+	# the function's stdout is the installer's page, not its log.
+	assert_contains "$(cat "$SANDBOX/opt/fcc/logs/fcc-runtime.log")" \
+		"cli-linux-x64-musl failed its checksum" \
+		"and the log says which check failed"
+	assert_eq "3.0.74" "$("$SANDBOX/opt/fcc/bin/cline" --version 2>/dev/null)" \
+		"the working binary is still there, unchanged"
+
+	# 4. The right bytes, and a binary that does not start. That is the question
+	#    the glibc package failed on this image, and asking it before the move is
+	#    what keeps a refusal from replacing something that works.
+	printf '#!/bin/sh\nexit 1\n' > "$_cl_dir/cli-linux-x64-musl"
+	_cl_sha="$(sha256sum "$_cl_dir/cli-linux-x64-musl" | awk '{print $1}')"
+	printf '{\n  "version": "3.1.0",\n  "files": [\n    {\n      "name": "cli-linux-x64-musl",\n      "sha256": "%s",\n      "size": 18\n    }\n  ]\n}\n' \
+		"$_cl_sha" > "$_cl_dir/manifest.json"
+	_out="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		FCC_NODE_LIB_DIRS="'"$SANDBOX"'/clinelibs"; export FCC_NODE_LIB_DIRS
+		PATH="'"$SANDBOX"'/standin:$PATH"; export PATH
+		if install_cline_from_build; then printf "OK\n"; else printf "FAILED\n"; fi' 2>&1)"
+	assert_contains "$_out" "FAILED" \
+		"a binary that does not answer --version is not installed"
+	assert_eq "3.0.74" "$("$SANDBOX/opt/fcc/bin/cline" --version 2>/dev/null)" \
+		"and the previous one is untouched"
+
+	# 5. An update. backup_runtime() has renamed bin/ aside, so the installed
+	#    binary is in the backup and bin/ is empty; when the release is the
+	#    version that is already there, it is copied back rather than downloaded
+	#    again — and the backup keeps its copy, because it is the rollback source
+	#    until the install succeeds.
+	printf '#!/bin/sh\nprintf "3.0.74\\n"\n' > "$_cl_dir/cli-linux-x64-musl"
+	_cl_sha="$(sha256sum "$_cl_dir/cli-linux-x64-musl" | awk '{print $1}')"
+	printf '{\n  "version": "3.0.74",\n  "files": [\n    {\n      "name": "cli-linux-x64-musl",\n      "sha256": "%s",\n      "size": 31\n    }\n  ]\n}\n' \
+		"$_cl_sha" > "$_cl_dir/manifest.json"
+	rm -rf "$SANDBOX/opt/fcc/bin"
+	mkdir -p "$SANDBOX/opt/fcc/backup/x/bin"
+	printf '#!/bin/sh\nprintf "3.0.74\\n"\n' > "$SANDBOX/opt/fcc/backup/x/bin/cline"
+	chmod 755 "$SANDBOX/opt/fcc/backup/x/bin/cline"
+	: > "$_cl_log"
+	_out="$(sh_install '
+		fcc_libc() { printf musl; }
+		uname() { printf "x86_64\n"; }
+		FCC_NODE_LIB_DIRS="'"$SANDBOX"'/clinelibs"; export FCC_NODE_LIB_DIRS
+		PATH="'"$SANDBOX"'/standin:$PATH"; export PATH
+		if install_cline_from_build "'"$SANDBOX"'/opt/fcc/backup/x/bin/cline"; then
+			printf "OK\n"; else printf "FAILED\n"; fi' 2>&1)"
+	assert_contains "$_out" "OK" \
+		"an update with the release's version already installed succeeds"
+	assert_eq "0" "$(grep -c 'cli-linux-x64-musl$' "$_cl_log")" \
+		"without downloading the asset again"
+	assert_eq "3.0.74" "$("$SANDBOX/opt/fcc/bin/cline" --version 2>/dev/null)" \
+		"and bin/ has the binary back, so upstream's chooser finds the agent"
+	assert_eq "3.0.74" "$("$SANDBOX/opt/fcc/backup/x/bin/cline" --version 2>/dev/null)" \
+		"while the backup keeps its copy for a rollback"
+}
+
+# The doctor's side of the same facts.
+#
+# On a musl router with a build, Cline is an ordinary agent: the row says
+# "not installed" like every other one, and — the part that matters — it adds no
+# Node requirement, because the install fetches a finished binary rather than
+# running anything that wants npm. A FAIL for a Node only Cline needed would
+# block an install that was never going to fetch one.
+#
+# On a musl CPU the build has no target for, the row is "not available" with the
+# reason instead: that one is a real dead end, and reading it as "install it
+# from the page" would be an instruction that cannot be followed.
+test_doctor_reports_cline_as_available_on_musl() {
 	setup_sandbox
 
 	# A libexec whose libc is musl. fcc_libc() reads the loader that is really
@@ -5953,21 +6203,45 @@ test_doctor_reports_agents_this_system_cannot_install() {
 	cp "$LIBEXEC"/*.sh "$_md_lib/"
 	printf '\nfcc_libc() { printf musl; }\n' >> "$_md_lib/common.sh"
 
-	_md_report="$(sh_doctor_tools "$DOCTOR_TOOLS" "FCC_LIBDIR=$_md_lib" --json 2>&1)"
-	_md_row="$(printf '%s\n' "$_md_report" | grep '"name": "Cline"')"
+	_md_row="$(sh_doctor_tools "$DOCTOR_TOOLS" "FCC_LIBDIR=$_md_lib" --json 2>&1 \
+		| grep '"name": "Cline"')"
 	assert_contains "$_md_row" '"status": "WARN"' \
-		"Cline is a warning, not a failure — the other agents still install"
-	assert_contains "$_md_row" 'not available' \
-		"and the row says the agent cannot be had here"
-	assert_contains "$_md_row" 'no musl build' \
-		"with the reason, not just the verdict"
+		"Cline is a missing agent, not a failure"
+	assert_contains "$_md_row" 'not installed' \
+		"and the row reads like every other agent's"
+	assert_not_contains "$_md_row" 'not available' \
+		"rather than as an agent that cannot be had here"
 
-	# No Node row when Cline is the only agent asked for: it is the npm agent
-	# whose requirement would otherwise appear, and the install leaves it out.
+	# No Node row when Cline is the only agent asked for: the requirement is
+	# upstream's, and upstream is never given this agent.
 	_md_node="$(sh_doctor_tools "$DOCTOR_TOOLS" "FCC_LIBDIR=$_md_lib FCC_AGENT_SELECTION=cline" \
 		--json 2>&1 | grep '"name": "node"')"
 	assert_eq "" "$_md_node" \
-		"an agent that is not installed adds no Node requirement to the report"
+		"the agent this package installs itself adds no Node requirement"
+
+	# The C++ runtime it does need, and the package is named: a WARN, because
+	# the installer adds it, and not the FAIL the Hermes row is.
+	_md_lib_row="$(sh_doctor_tools "$DOCTOR_TOOLS" \
+		"FCC_LIBDIR=$_md_lib FCC_AGENT_SELECTION=cline FCC_NODE_LIB_DIRS=$SANDBOX/nolibs" \
+		--json 2>&1 | grep '"name": "libstdc++"')"
+	assert_contains "$_md_lib_row" '"status": "WARN"' \
+		"a missing C++ runtime warns for Cline rather than blocking the install"
+	assert_contains "$_md_lib_row" 'libstdcpp6' \
+		"and names the package the installer will add"
+
+	# The dead end: a musl CPU with no cline-build target, and no official musl
+	# package either, so nothing can install it.
+	_md_arm_lib="$SANDBOX/libexec-musl-armv7l"
+	mkdir -p "$_md_arm_lib"
+	cp "$LIBEXEC"/*.sh "$_md_arm_lib/"
+	printf '\nfcc_libc() { printf musl; }\nuname() { printf "%%s\\n" armv7l; }\n' \
+		>> "$_md_arm_lib/common.sh"
+	_md_arm_row="$(sh_doctor_tools "$DOCTOR_TOOLS" "FCC_LIBDIR=$_md_arm_lib" --json 2>&1 \
+		| grep '"name": "Cline"')"
+	assert_contains "$_md_arm_row" 'not available' \
+		"an agent with no build for this CPU says so"
+	assert_contains "$_md_arm_row" 'no musl build' \
+		"with the reason, not just the verdict"
 }
 
 # The gate's remedy, run for the user.

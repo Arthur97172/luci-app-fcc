@@ -426,7 +426,13 @@ done
 # The FAIL is kept for the case it cannot fix — a CPU with no musl build — since
 # that is a real dead end, and without it the install would run for minutes and
 # then stop at the first npm-based agent.
+# An agent this package installs itself needs no Node: the Cline that arrives on
+# musl is a finished binary from the cline-build releases, and the npm
+# requirement in FCC_NODE_AGENTS belongs to upstream's installer, which is never
+# given that agent (install.sh). Left in, the row would demand 30 MB of Node for
+# an install that fetches none.
 _node_ids="$(fcc_node_agents_in "$_effective_set")"
+_node_ids="$(fcc_agents_minus "$_node_ids" "$(fcc_self_installable_agents_in "$_node_ids")")"
 if [ -n "$_node_ids" ]; then
 	_node_names=""
 	_node_unsatisfied=""
@@ -500,6 +506,31 @@ if [ -z "$_node_ids" ]; then
 				"$_hm_pkgs"
 		fi
 		;;
+	esac
+
+	# And the same library again for Cline on musl, which is not a Node agent
+	# here: install.sh downloads a finished binary rather than running an
+	# installer that wants npm. That binary is linked against the same
+	# libstdc++.so.6 — measured on 25.12.6, where it died in the loader with
+	# "Error loading shared library libstdc++.so.6" plus a screen of unresolved
+	# symbols until the package was added.
+	#
+	# A WARN and not a FAIL, unlike the Hermes row: install.sh adds the package
+	# itself before it downloads, so there is nothing for the user to do and
+	# nothing here that should close install_allowed. The row exists so the
+	# report names the dependency rather than leaving a reader to find it in a
+	# 142 MB download's failure.
+	case " $(fcc_self_installable_agents_in "$_effective_set") " in
+		*" cline "*)
+			_cl_libs="$(fcc_node_missing_libs)"
+			if [ -z "$_cl_libs" ]; then
+				add_result OK "libstdc++" "present" "needed by Cline" ""
+			else
+				_cl_pkgs="$(fcc_node_lib_packages $_cl_libs)"
+				add_result WARN "libstdc++" "$_cl_libs missing" "needed by Cline" \
+					"The musl Cline binary needs $_cl_libs, which this image has nowhere the loader looks; the installer adds it with $(fcc_pkg_install_hint $_cl_pkgs) before downloading."
+			fi
+			;;
 	esac
 fi
 

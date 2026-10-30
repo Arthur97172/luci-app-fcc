@@ -1980,6 +1980,194 @@ rollback_runtime() {
 }
 
 # ---------------------------------------------------------------------------
+# Cline on musl, from the cline-build releases
+# ---------------------------------------------------------------------------
+# common.sh explains why the upstream installer is not used for Cline on musl
+# and where the binary comes from instead. This is the fetch, the check and the
+# install.
+#
+# Three things here are deliberate:
+#
+#   * the version is read from the release manifest and compared with what the
+#     installed binary reports, so a run that has nothing to do costs a small
+#     JSON download instead of 142 MB. Every runtime update re-runs the install
+#     with the agent set preserved (update.sh), so this is the normal path. The
+#     first argument is where that binary is when it is not in bin/ yet: an
+#     update renames bin/ aside before this runs (backup_runtime), so the
+#     installed Cline is in the backup at that moment.
+#   * the checksum is not optional. The manifest names the sha256 of the asset,
+#     and a truncated download or a release republished mid-flight is caught
+#     before the binary replaces anything.
+#   * the new binary is run once *before* it is moved into place. It is the
+#     same question the glibc npm package failed — "does this thing start under
+#     this loader?" — and asking it here leaves a working previous binary alone
+#     when the answer is no.
+#
+# The C++ runtime is checked first, and added with the image's package manager
+# when it is missing: the binary is linked against libstdc++.so.6 exactly like
+# the musl Node this package fetches, and a stock image has no libstdcpp6. That
+# is one package, and the reason is the same one install_prerequisite_packages
+# exists for.
+install_cline_from_build() {
+	_icb_prev="${1:-}"
+	_icb_asset="$(fcc_cline_build_asset)" || {
+		fcc_log "$LOG" "cline: no cline-build asset exists for $(uname -m 2>/dev/null)"
+		return 1
+	}
+	_icb_bin="$ROOT/bin/cline"
+	_icb_tmp="$ROOT/cache/cline.$$"
+	rm -rf "$_icb_tmp" 2>/dev/null
+	if ! mkdir -p "$_icb_tmp" "$ROOT/bin" 2>/dev/null; then
+		fcc_log "$LOG" "cline: cannot write under $ROOT"
+		return 1
+	fi
+
+	if ! command -v curl >/dev/null 2>&1; then
+		fcc_log "$LOG" "cline: curl is required to download $_icb_asset"
+		rm -rf "$_icb_tmp"
+		return 1
+	fi
+
+	# The C++ runtime, before the download rather than after it.
+	_icb_libs="$(fcc_node_missing_libs)"
+	if [ -n "$_icb_libs" ]; then
+		_icb_pkgs="$(fcc_node_lib_packages $_icb_libs)"
+		fcc_log "$LOG" "cline: this image has no $_icb_libs; installing $_icb_pkgs"
+		fcc_pkg_install $_icb_pkgs >/dev/null 2>&1 || true
+		_icb_libs="$(fcc_node_missing_libs)"
+		if [ -n "$_icb_libs" ]; then
+			fcc_log "$LOG" "cline: still missing $_icb_libs after installing $_icb_pkgs"
+			rm -rf "$_icb_tmp"
+			return 1
+		fi
+	fi
+
+	_icb_manifest="$_icb_tmp/manifest.json"
+	if ! curl --fail --silent --show-error --location \
+			--proto '=https' --tlsv1.2 --max-time 60 --retry 2 --retry-delay 2 \
+			--output "$_icb_manifest" "$FCC_CLINE_BUILD_BASE/manifest.json"; then
+		fcc_log "$LOG" "cline: could not read $FCC_CLINE_BUILD_BASE/manifest.json"
+		rm -rf "$_icb_tmp"
+		return 1
+	fi
+	# The manifest is pretty-printed by the build, one field per line, so a line
+	# matcher reads it without a JSON parser. Each value is stripped on its own
+	# copy of the field: rewriting $0 would re-split the line and change what
+	# $2 means halfway through the rule.
+	_icb_ver="$(awk '
+		/"version":/ { v = $2; gsub(/[",]/, "", v); print v; exit }
+	' "$_icb_manifest" 2>/dev/null)"
+	# The entry whose name is this asset, not whichever entry comes first. The
+	# name rule does not skip the rest of its line, so a manifest that ever puts
+	# two fields on one line is still read correctly.
+	_icb_sha="$(awk -v a="$_icb_asset" '
+		/"name":/   { n = $2; gsub(/[",]/, "", n); name = n }
+		name == a && /"sha256":/ { v = $2; gsub(/[",]/, "", v); print v; exit }
+	' "$_icb_manifest" 2>/dev/null)"
+	_icb_size="$(awk -v a="$_icb_asset" '
+		/"name":/   { n = $2; gsub(/[",]/, "", n); name = n }
+		name == a && /"size":/ { v = $2; gsub(/[,":]/, "", v); print v; exit }
+	' "$_icb_manifest" 2>/dev/null)"
+	case "$_icb_ver" in
+		''|*[!0-9A-Za-z.-]*)
+			fcc_log "$LOG" "cline: the release manifest has no usable version (got '${_icb_ver:-nothing}')"
+			rm -rf "$_icb_tmp"
+			return 1
+			;;
+	esac
+	if [ -z "$_icb_sha" ]; then
+		fcc_log "$LOG" "cline: the release manifest has no $_icb_asset"
+		rm -rf "$_icb_tmp"
+		return 1
+	fi
+
+	# Already current? The installed binary's own answer, not a marker file:
+	# someone who replaced the file by hand gets the truth either way. An update
+	# moved the file aside, so the question is asked of the copy in the backup —
+	# and answered by copying it back, because the run has to leave bin/ in the
+	# state it claims: upstream's chooser decides whether to ask about an agent
+	# by finding its CLI, and an install that skipped the download without
+	# putting the binary back would have that agent asked about and declined.
+	if [ -x "$_icb_bin" ]; then
+		_icb_probe="$_icb_bin"
+	elif [ -n "$_icb_prev" ] && [ -x "$_icb_prev" ]; then
+		_icb_probe="$_icb_prev"
+	else
+		_icb_probe=""
+	fi
+	if [ -n "$_icb_probe" ]; then
+		_icb_have="$(timeout 30 "$_icb_probe" --version 2>/dev/null \
+			| head -n 1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
+		if [ -n "$_icb_have" ] && [ "$_icb_have" = "$_icb_ver" ]; then
+			if [ "$_icb_probe" = "$_icb_bin" ]; then
+				fcc_log "$LOG" "cline: $_icb_ver is already installed"
+				rm -rf "$_icb_tmp"
+				return 0
+			fi
+			# Copied rather than moved: the backup is this run's rollback
+			# source until the install succeeds, and taking the binary out of it
+			# would leave a rollback with an agent missing.
+			if cp "$_icb_probe" "$_icb_bin" 2>/dev/null; then
+				chmod 755 "$_icb_bin" 2>/dev/null
+				fcc_cache_set "agent_cline" "$_icb_ver"
+				fcc_log "$LOG" "cline: $_icb_ver is the release's version; kept the installed copy"
+				rm -rf "$_icb_tmp"
+				return 0
+			fi
+			fcc_log "$LOG" "cline: could not restore $_icb_bin from the backup; fetching $_icb_ver"
+		fi
+	fi
+
+	# Room for the download beside the binary it may replace: both exist until
+	# the new one has answered and is moved into place.
+	_icb_free="$(fcc_disk_free_kb "$ROOT" 2>/dev/null || true)"
+	case "$_icb_free" in ''|*[!0-9]*) _icb_free=0 ;; esac
+	case "$_icb_size" in ''|*[!0-9]*) _icb_size=0 ;; esac
+	if [ "$_icb_size" -gt 0 ] && [ "$_icb_free" -gt 0 ]; then
+		_icb_need=$(( _icb_size / 1024 * 2 + 16384 ))
+		if [ "$_icb_free" -lt "$_icb_need" ]; then
+			fcc_log "$LOG" "cline: needs $(( _icb_need / 1024 ))MB free under $ROOT, has $(( _icb_free / 1024 ))MB"
+			rm -rf "$_icb_tmp"
+			return 1
+		fi
+	fi
+
+	_icb_file="$_icb_tmp/$_icb_asset"
+	if ! curl --fail --silent --show-error --location \
+			--proto '=https' --tlsv1.2 --max-time 900 --retry 2 --retry-delay 2 \
+			--output "$_icb_file" "$FCC_CLINE_BUILD_BASE/$_icb_asset"; then
+		fcc_log "$LOG" "cline: could not download $_icb_asset from $FCC_CLINE_BUILD_BASE"
+		rm -rf "$_icb_tmp"
+		return 1
+	fi
+	_icb_got="$(sha256_of "$_icb_file")"
+	if [ "$_icb_got" != "$_icb_sha" ]; then
+		fcc_log "$LOG" "cline: $_icb_asset failed its checksum (expected $_icb_sha, got ${_icb_got:-nothing})"
+		rm -rf "$_icb_tmp"
+		return 1
+	fi
+	chmod 755 "$_icb_file" 2>/dev/null
+
+	_icb_newver="$(timeout 60 "$_icb_file" --version 2>/dev/null \
+		| head -n 1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
+	if [ "$_icb_newver" != "$_icb_ver" ]; then
+		fcc_log "$LOG" "cline: the downloaded $_icb_asset did not answer $_icb_ver (got ${_icb_newver:-nothing}); it was not installed"
+		rm -rf "$_icb_tmp"
+		return 1
+	fi
+
+	if ! mv -f "$_icb_file" "$_icb_bin" 2>/dev/null; then
+		fcc_log "$LOG" "cline: could not write $_icb_bin"
+		rm -rf "$_icb_tmp"
+		return 1
+	fi
+	fcc_cache_set "agent_cline" "$_icb_ver"
+	rm -rf "$_icb_tmp"
+	fcc_log "$LOG" "cline: installed $_icb_ver from cline-build ($_icb_asset)"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 cmd_runtime() {
@@ -2028,20 +2216,18 @@ cmd_runtime() {
 	_cr_before="$(fcc_detect_version "$ROOT/bin/fcc-server" --version 2>/dev/null || true)"
 	_cr_installed="$(fcc_installed_agents "$ROOT")"
 
-	# --- agents this system cannot install --------------------------------
-	# Cline is one: its npm package carries a glibc-only binary and there is no
-	# musl build, so `cline --version` dies in the loader on every OpenWrt image
-	# (common.sh has the measurement). Upstream stops at the first agent that
-	# fails, which would take the FCC package and the PATH setup with it. The
-	# agent therefore leaves the set before the installer is driven — in "no
-	# opinion" mode too, where the set is upstream's defaults rather than a list
-	# the caller gave — and the answerer declines its question as well, because
-	# in that mode every other agent is answered yes.
+	# --- agents the upstream installer must not be given here --------------
+	# Two cases, and they used to be one. An agent this package installs itself
+	# (Cline on musl, from the cline-build releases — common.sh has the why)
+	# must not reach upstream either, because upstream would fetch the glibc
+	# npm package that cannot run on this image and stop the whole run at that
+	# step (§79). But it is installable, so it is not a refusal; the second set
+	# is the one that still is.
 	#
-	# The whole run is refused when every agent that was asked for is
-	# unavailable: upstream would re-ask "Select at least one coding agent."
-	# until the deadline, and an install that installs nothing is not a better
-	# answer than the reason.
+	# Both leave the set before the installer is driven — in "no opinion" mode
+	# too, where the set is upstream's defaults rather than a list the caller
+	# gave — and the answerer declines their questions as well (FCC_AGENT_SKIP),
+	# because in that mode every other agent is answered yes.
 	_cr_requested="$_cr_agents"
 	if [ "$_cr_none" = 1 ]; then
 		_cr_considered=""
@@ -2050,7 +2236,10 @@ cmd_runtime() {
 	else
 		_cr_considered="$(fcc_default_agents) $_cr_installed"
 	fi
-	FCC_AGENT_SKIP="$(fcc_unsupported_agents_in "$_cr_considered")"
+	# What this package installs itself, and what nobody can install here. Both
+	# are refused by upstream; only the second is a dead end.
+	_cr_self="$(fcc_self_installable_agents_in "$_cr_considered")"
+	FCC_AGENT_SKIP="$(fcc_agents_upstream_skip_in "$_cr_considered")"
 	if [ -n "$FCC_AGENT_SKIP" ]; then
 		_cr_kept=""
 		for _cr_id in $_cr_agents; do
@@ -2061,14 +2250,27 @@ cmd_runtime() {
 		done
 		_cr_agents="${_cr_kept# }"
 		for _cr_id in $FCC_AGENT_SKIP; do
-			_cr_why="$(fcc_agent_unsupported_reason "$_cr_id")"
 			_cr_name="$(fcc_agent_name "$_cr_id")"
 			[ -n "$_cr_name" ] || _cr_name="$_cr_id"
-			fcc_log "$LOG" "installer: not installing $_cr_name: $_cr_why"
-			printf '%s is not installed: %s\n' "$_cr_name" "$_cr_why"
+			case " $_cr_self " in
+				*" $_cr_id "*)
+					# Not a failure and not a silence: the agent is installed by
+					# this script in a moment, and the log says by whom.
+					fcc_log "$LOG" "installer: $_cr_name is installed by this package, not upstream: $(fcc_agent_upstream_skip_reason "$_cr_id")"
+					printf '%s will be installed from the unofficial musl build.\n' "$_cr_name"
+					;;
+				*)
+					_cr_why="$(fcc_agent_unsupported_reason "$_cr_id")"
+					fcc_log "$LOG" "installer: not installing $_cr_name: $_cr_why"
+					printf '%s is not installed: %s\n' "$_cr_name" "$_cr_why"
+					;;
+			esac
 		done
 	fi
-	if [ -n "$_cr_requested" ] && [ -z "$_cr_agents" ]; then
+	# The whole run is refused when every agent that was asked for is a dead
+	# end — not when they are all being installed by this package, which is the
+	# Cline-only request the cline-build release exists to serve.
+	if [ -n "$_cr_requested" ] && [ -z "$_cr_agents" ] && [ -z "$_cr_self" ]; then
 		fcc_lock_release "$_cr_lock"
 		fcc_log "$LOG" "aborted: none of the requested agents can be installed on this system"
 		printf 'None of the agents you selected can be installed on this system.\n'
@@ -2220,8 +2422,60 @@ cmd_runtime() {
 		provision_node "${_cr_node_missing# }"
 	fi
 
+	# --- agents this package installs itself ------------------------------
+	# Cline on musl comes from the cline-build releases rather than from
+	# upstream's npm package; common.sh carries the why. It is installed *before*
+	# the upstream installer runs, not after it, because upstream's chooser
+	# treats an agent it can find on PATH as already present and never asks
+	# about it — and a Cline-only install on musl depends on exactly that. The
+	# request reduces to "the runtime, and no upstream agent", and upstream
+	# accepts an empty selection only when it can find an agent already there.
+	#
+	# A failure here does not roll the run back. Cline is one agent; the runtime
+	# and the other agents are what the run is for, and the log carries the
+	# reason. The one case where it stops the run is a request that has nothing
+	# else in it — with no agent at all, upstream would re-ask the empty
+	# selection until the deadline.
+	_cr_self_ok=""
+	if [ -n "$_cr_self" ]; then
+		for _cr_id in $_cr_self; do
+			case "$_cr_id" in
+				cline)
+					# The previous binary, when there is one: backup_runtime has
+					# already renamed bin/ aside, so an update's installed Cline
+					# is in the backup and not in bin/.
+					if install_cline_from_build "${_cr_backup:+$_cr_backup/bin/cline}"; then
+						_cr_self_ok="$_cr_self_ok $_cr_id"
+					else
+						_cr_name="$(fcc_agent_name "$_cr_id")"
+						[ -n "$_cr_name" ] || _cr_name="$_cr_id"
+						fcc_log "$LOG" "installer: $_cr_name is not installed; the download, its checksum or its first run failed (see the cline lines above)"
+						printf '%s is not installed: the download or its checksum failed.\n' "$_cr_name"
+					fi
+					;;
+			esac
+		done
+	fi
+
+	# Whether upstream is driven with no agents. An empty set normally means
+	# "upstream's defaults"; an explicit request that reduced to nothing
+	# upstream may install means "none", which is a different thing and was
+	# how a Cline-only install would have quietly installed ten other agents.
+	_cr_mode_none="$_cr_none"
+	if [ -n "$_cr_requested" ] && [ -z "$_cr_agents" ] && [ -n "$_cr_self_ok" ]; then
+		_cr_mode_none=1
+	fi
+	if [ -n "$_cr_requested" ] && [ -z "$_cr_agents" ] && [ -z "$_cr_self_ok" ]; then
+		rollback_runtime "$_cr_backup" "$_cr_was_running"
+		fcc_lock_release "$_cr_lock"
+		fcc_log "$LOG" "aborted: the only requested agent could not be installed by this package"
+		printf 'The agent you selected could not be installed. See the log for the reason.\n'
+		printf 'AGENT_UNSUPPORTED\n'
+		return 1
+	fi
+
 	# --- section 23 step 9: update ----------------------------------------
-	run_installer "$_cr_script" "$_cr_agents" "$_cr_none"
+	run_installer "$_cr_script" "$_cr_agents" "$_cr_mode_none"
 	_cr_rc=$?
 
 	if [ "$_cr_rc" -ne 0 ]; then

@@ -242,9 +242,12 @@ luci-base  luci-compat  curl  ca-bundle  tmux
   `xz-utils` 关）会让本包无法被选中——改为在安装前自动补齐。
 * **`bash`**：Claude Code、OpenCode、Hermes、Grok Build、Muse Code、Antigravity CLI 的
   安装脚本需要它。未被选中时诊断只给 WARN，选中时给 FAIL 并附安装命令；安装前预检会自动装上。
-* **`cline`** 装不了：Cline 只发布 glibc 构建，没有 musl 版本，而 OpenWrt 是 musl。它会被
-  从选中的集合里去掉并说明原因；若它是唯一要装的 Agent，安装以 `AGENT_UNSUPPORTED` 拒绝。
-  上游的 musl 构建请求见 [cline/cline#15271](https://github.com/cline/cline/issues/15271)。
+* **`cline`** 在 musl 上由本包自己装：Cline 只发布 glibc 构建，而 OpenWrt 是 musl，所以安装时
+  改为从 [cline-build](https://github.com/Arthur97172/cline-build) 的 release 下载
+  `cli-linux-<arch>-musl`，核对 manifest 里的 sha256 后才放进 `bin/`；缺 `libstdcpp6` 时先补上。
+  更新时版本一致就只读一次 manifest，不重复下载 142 MB。仅 x86_64 / aarch64 有构建。
+  上游发布官方 musl 包后（[cline/cline#15271](https://github.com/cline/cline/issues/15271)）
+  本包会改回官方包。
 * **`git`** 只有 Hermes 需要，而且必须是 `git-http`（HTTPS 传输在它里面，`git` 随它一起装）。
 * **`luci-compat`** 提供 Lua 调度器与模板引擎（`luci-lua-runtime`）；没有它包照样装得干净，
   页面却永远打不开。
@@ -398,7 +401,8 @@ JavaScript 和 shell），x86_64 SDK 产出的文件在 ARM、MIPS 和 x86 上�
   Agent 会显示一个陌生的字符串。
 * **终端和安装器都需要 `tmux`**：缺少时终端报告依赖缺失、安装在开始前就被拒绝。
 * **六个 Agent 需要 `bash`**：安装前会自动补齐，只有补不上时安装才在下载前被拒绝。
-* **Cline 在 OpenWrt 上装不了**：只有 glibc 构建，诊断标为 WARN，安装时自动跳过。
+* **Cline 在 OpenWrt 上来自非官方 musl 构建**：本包从 cline-build 的 release 下载并核对
+  sha256；CPU 不是 x86_64 / aarch64 时仍然装不了，诊断标为 WARN，安装时跳过。
 * **安装整个注册表是全有或全无**：一个 Agent 装不上就全部回滚；此时用下拉框逐个安装。
 * **更新必须先写完新运行时才能丢弃旧的**：剩余空间预检按一份运行时计算，而不是零。
 
