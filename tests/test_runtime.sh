@@ -1485,6 +1485,71 @@ test_create_keeps_the_exit_code_of_a_launcher_that_leaves_at_once() {
 	rm -rf "$SANDBOX/opt"
 }
 
+test_a_local_harness_session_starts_on_the_browser_address() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — session creation needs a real pane"
+		return 0
+	fi
+
+	# The local-mode half of the reported bug: the pane ran the bare launcher,
+	# dsh bound 127.0.0.1, and the console's window opened an address only a
+	# browser running on this router could reach. What cmd_create has to pass is
+	# the address the browser used, which the controller hands it as the fourth
+	# argument; fcc_pane_bind_host() has already decided the router owns it.
+	_lh_bin="$SANDBOX/opt/fcc/bin"
+	mkdir -p "$_lh_bin" "$SANDBOX/opt/fcc/sessions" \
+	         "$SANDBOX/opt/fcc/data/.local/bin"
+
+	# A runtime that looks installed and a server that looks alive, so the two
+	# guards in front of the tmux calls are satisfied.
+	printf '#!/bin/sh\ntrap "exit 0" TERM INT\nwhile :; do sleep 1; done\n' > "$_lh_bin/fcc-server"
+	chmod +x "$_lh_bin/fcc-server"
+	"$_lh_bin/fcc-server" &
+	_lh_srv=$!
+
+	# The agent's own CLI: "is this agent installed?" is asked of it.
+	printf '#!/bin/sh\necho 1.0.0\n' > "$SANDBOX/opt/fcc/data/.local/bin/dsh"
+	chmod +x "$SANDBOX/opt/fcc/data/.local/bin/dsh"
+
+	# The launcher records the words it was given and leaves them for the test.
+	_lh_rec="$SANDBOX/dsh-args"
+	rm -f "$_lh_rec"
+	printf '#!/bin/sh\nprintf "%%s\\n" "$@" > %s\nexec sleep 30\n' "$_lh_rec" \
+		> "$_lh_bin/fcc-dsh"
+	chmod +x "$_lh_bin/fcc-dsh"
+
+	# A router stand-in whose address is the one the request arrived on.
+	make_bind_shims >/dev/null
+	printf '%s\n' '127.0.0.1 192.168.10.157 192.168.12.1' > "$SANDBOX/bind/ips"
+
+	_lh_created="$(PATH="$SANDBOX/standin:$PATH" \
+		FCC_LIBDIR="$LIBEXEC" \
+		FCC_AGENTS_CONF="$AGENTS_CONF" \
+		FCC_VERSION_FILE="$ROOT/VERSION" \
+		FCC_DEFAULT_BASE="$SANDBOX/opt" \
+		sh "$LIBEXEC/session.sh" create dsh 100 30 192.168.10.157 2>&1)"
+	_lh_name="$(printf '%s' "$_lh_created" | sed -n 's/.*"name": "\([^"]*\)".*/\1/p')"
+	assert_ne "" "$_lh_name" "create reports the session it made: [$_lh_created]"
+
+	# The pane is respawned into the launcher a moment later, so the record is
+	# written just after creation.
+	_lh_i=0
+	while [ "$_lh_i" -lt 20 ] && [ ! -s "$_lh_rec" ]; do
+		sleep 0.25
+		_lh_i=$((_lh_i + 1))
+	done
+	assert_eq "web
+--host
+192.168.10.157
+--no-open" "$(cat "$_lh_rec" 2>/dev/null)" \
+		"the harness is started on the address the browser used, and opens no browser"
+
+	tmux kill-session -t "$_lh_name" 2>/dev/null
+	kill "$_lh_srv" 2>/dev/null
+	rm -rf "$SANDBOX/opt" "$SANDBOX/standin"
+}
+
 test_a_session_asks_whether_the_agent_is_installed_not_whether_the_launcher_is_on_path() {
 	setup_sandbox
 	if ! command -v tmux >/dev/null 2>&1; then
@@ -5713,6 +5778,107 @@ test_effective_bind_narrows_to_loopback() {
 	# back on the last line of the function turns the four cases above red.
 	assert_eq "127.0.0.1" "$(sh_common 'fcc_effective_bind not-an-address')" \
 		"a value the case statement has never seen falls back to loopback"
+}
+
+# ---------------------------------------------------------------------------
+# The address DeepSeek Harness is started on
+#
+# dsh is the one agent whose interface a browser opens, and `dsh web --host`
+# takes one concrete address — a wildcard is refused, and the default is the
+# loopback of the machine it runs on, which the browser driving this panel
+# cannot reach (the reported local-mode bug: "无法访问此地址" for
+# http://127.0.0.1:3080/?token=…). The address it gets is the one the browser
+# used, and fcc_pane_bind_host() is the only place that decides whether a
+# candidate may be used at all.
+# ---------------------------------------------------------------------------
+
+# A router stand-in: the addresses `ip -4 addr show` prints, the lan bridge's
+# own address, and what UCI would answer if the bridge carried none. Each is a
+# file in $SANDBOX/bind, written by the test that needs it.
+make_bind_shims() {
+	_bp_dir="$SANDBOX/bind"
+	mkdir -p "$_bp_dir"
+	_bp_ip="$(make_standin_tool ip '
+case "$*" in
+	*br-lan*)
+		[ -r "DIR/lan" ] || exit 1
+		printf "    inet %s/24 brd 255.255.255.0 scope global br-lan\n" "$(cat "DIR/lan")" ;;
+	*)
+		[ -r "DIR/ips" ] || exit 0
+		for _a in $(cat "DIR/ips"); do
+			printf "    inet %s/24 brd 255.255.255.0 scope global eth0\n" "$_a"
+		done ;;
+esac
+')"
+	_bp_uci="$(make_standin_tool uci '
+[ "${1:-}" = "-q" ] && shift
+[ "${1:-}" = "get" ] || exit 1
+[ -r "DIR/lan_uci" ] || exit 1
+cat "DIR/lan_uci"
+')"
+	for _bp_f in "$_bp_ip" "$_bp_uci"; do
+		sed "s#DIR#$_bp_dir#g" "$_bp_f" > "$_bp_f.new"
+		mv "$_bp_f.new" "$_bp_f"
+		chmod +x "$_bp_f"
+	done
+	printf '%s' "$_bp_ip $_bp_uci $(command -v sed) $(command -v head) $(command -v cat)"
+}
+
+test_the_bind_address_is_used_only_when_this_router_owns_it() {
+	setup_sandbox
+	_bd_dir="$SANDBOX/bind"
+	_bd_tools="$(make_bind_shims)"
+
+	# The reported case, first half: the browser reached LuCI at the router's
+	# own address, so that is the address dsh is given.
+	printf '%s\n' '127.0.0.1 192.168.10.157 192.168.12.1' > "$_bd_dir/ips"
+	assert_eq "192.168.10.157" \
+		"$(sh_common_tools "$_bd_tools" 'fcc_pane_bind_host 192.168.10.157')" \
+		"an address this router owns is the one dsh is given"
+
+	# A value that is not one of ours — a page left open across a renumbering,
+	# a hand-made request — must never reach the launcher: dsh would die on a
+	# bind error and the pane would show that instead of the harness.
+	printf '%s' '192.168.12.1' > "$_bd_dir/lan"
+	assert_eq "192.168.12.1" \
+		"$(sh_common_tools "$_bd_tools" 'fcc_pane_bind_host 10.9.9.9')" \
+		"an address this router does not own falls back to the lan address"
+	assert_eq "192.168.12.1" \
+		"$(sh_common_tools "$_bd_tools" 'fcc_pane_bind_host 127.0.0.1')" \
+		"and so does loopback, which names this router to itself"
+	assert_eq "192.168.12.1" \
+		"$(sh_common_tools "$_bd_tools" 'fcc_pane_bind_host openwrt.lan')" \
+		"a hostname cannot be turned into an address here"
+	assert_eq "192.168.12.1" \
+		"$(sh_common_tools "$_bd_tools" 'fcc_pane_bind_host')" \
+		"without a hint at all the lan address is used"
+
+	# The lan address is read from the bridge, and from UCI when the bridge
+	# carries nothing — a router whose lan is another device, read before its
+	# interface has come up.
+	rm -f "$_bd_dir/lan"
+	printf '%s' '192.168.77.1' > "$_bd_dir/lan_uci"
+	assert_eq "192.168.77.1" \
+		"$(sh_common_tools "$_bd_tools" 'fcc_pane_bind_host')" \
+		"UCI answers when the bridge has no address"
+
+	# Nothing usable anywhere. The caller is told rather than handed something
+	# that cannot be bound, and dsh keeps the bare launcher.
+	rm -f "$_bd_dir/ips" "$_bd_dir/lan_uci"
+	assert_no "no address at all is a failure" \
+		sh_common_tools "$_bd_tools" 'fcc_pane_bind_host 10.9.9.9'
+}
+
+test_the_bind_literal_grammar_rejects_what_a_parser_would_misread() {
+	setup_sandbox
+	assert_ok "a dotted quad is a literal" sh_common 'fcc_ipv4_literal 192.168.10.157'
+	assert_no "three octets are not" sh_common 'fcc_ipv4_literal 192.168.10'
+	assert_no "an octet over 255 is not" sh_common 'fcc_ipv4_literal 192.168.10.256'
+	assert_no "a leading zero is not, being octal to some parsers" \
+		sh_common 'fcc_ipv4_literal 192.168.010.157'
+	assert_no "a trailing character is not" sh_common 'fcc_ipv4_literal 192.168.10.157x'
+	assert_no "a hostname is not" sh_common 'fcc_ipv4_literal openwrt.lan'
+	assert_no "nor is an empty word" sh_common 'fcc_ipv4_literal ""'
 }
 
 # ---------------------------------------------------------------------------

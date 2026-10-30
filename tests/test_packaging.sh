@@ -1440,13 +1440,29 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the fingerprint to confirm has its own element"
 
 	# Advanced settings are collapsed: the section is meant to stay small, and
-	# everything that is only touched once belongs behind the summary.
-	assert_contains "$(cat "$_ts_view")" '<details class="fcc-advanced" id="fcc-remote-advanced">' \
+	# everything that is only touched once belongs behind the summary. The
+	# platform is not one of those things — it decides what each button sends,
+	# so it is read before the address — and the key row is the one step of a
+	# first setup, so it follows the summary rather than preceding it.
+	_ts_adv="$(sed -n '/<details class="fcc-advanced" id="fcc-remote-advanced">/,/<\/details>/p' "$_ts_view")"
+	assert_contains "$_ts_adv" '<details class="fcc-advanced" id="fcc-remote-advanced">' \
 		"the advanced settings are a collapsed details block"
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-ssh-port"' "SSH port is in it"
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-platform"' "so is the remote platform"
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-admin-port"' "and the Admin port"
-	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-preview"' "and the command preview"
+	assert_contains "$_ts_adv" 'id="fcc-remote-ssh-port"' "SSH port is in it"
+	assert_contains "$_ts_adv" 'id="fcc-remote-admin-port"' "so is the Admin port"
+	assert_contains "$_ts_adv" 'id="fcc-remote-service"' "and the service name"
+	assert_contains "$_ts_adv" 'id="fcc-remote-preview"' "and the command preview"
+	assert_not_contains "$_ts_adv" 'id="fcc-remote-platform"' \
+		"the platform is not"
+
+	_ts_platform_line="$(grep -n 'id="fcc-remote-platform"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_host_line="$(grep -n 'id="fcc-remote-host"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_adv_line="$(grep -n '<details class="fcc-advanced" id="fcc-remote-advanced">' "$_ts_view" \
+		| head -1 | cut -d: -f1)"
+	_ts_key_line="$(grep -n 'id="fcc-remote-key-state"' "$_ts_view" | head -1 | cut -d: -f1)"
+	assert_eq 1 "$((_ts_platform_line < _ts_host_line))" \
+		"the platform comes before the address it belongs to"
+	assert_eq 1 "$((_ts_adv_line < _ts_key_line))" \
+		"and the advanced settings come before the key row"
 
 	# The preview is the same three presets remote.sh runs, so a reader can see
 	# what a click sends without opening the script.

@@ -151,6 +151,24 @@ check("valid_session/rejects_dash_agent", util.valid_session("fcc-a-b-001") == n
 check("valid_session/rejects_nil",     util.valid_session(nil) == nil)
 
 -- ---------------------------------------------------------------------------
+-- valid_host  (the address a browser says it reached the page on)
+--
+-- The grammar is all this checks: whether the address may be used is the
+-- shell's decision (fcc_pane_bind_host in common.sh). What the function must
+-- guarantee is that the value is one safe argv word, so anything that could be
+-- read as more than a word is refused here.
+-- ---------------------------------------------------------------------------
+check("valid_host/accepts_ipv4",    util.valid_host("192.168.10.157") == "192.168.10.157")
+check("valid_host/accepts_name",    util.valid_host("openwrt.lan") == "openwrt.lan")
+check("valid_host/rejects_empty",   util.valid_host("") == nil)
+check("valid_host/rejects_nil",     util.valid_host(nil) == nil)
+check("valid_host/rejects_space",   util.valid_host("192.168.10.157 --host") == nil)
+check("valid_host/rejects_semicolon", util.valid_host("192.168.10.157; id") == nil)
+check("valid_host/rejects_leading_dash", util.valid_host("-oProxyCommand=x") == nil)
+check("valid_host/rejects_slash",   util.valid_host("192.168.10.157/24") == nil)
+check("valid_host/rejects_long",    util.valid_host(string.rep("a", 254)) == nil)
+
+-- ---------------------------------------------------------------------------
 -- valid_int
 -- ---------------------------------------------------------------------------
 check("valid_int/in_range",   util.valid_int("80", 20, 500) == 80)

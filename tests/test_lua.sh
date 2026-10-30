@@ -1111,10 +1111,12 @@ cat "$CONSOLE_DIR/answer"
 SH
 	printf '%s\n' '{"ok":true,"host":"192.168.5.3","status":{"server":{"running":true},"agents":{"claude":{"name":"Claude Code","installed":true}}}}' \
 		> "$_cc_dir/answer"
-	# session.sh create — a LAN refusal, as session.sh relays it.
+	# session.sh create — a LAN refusal, as session.sh relays it — and the argv
+	# it was handed, which is what the address hints are checked through.
 	cat > "$_cc_dir/libexec/session.sh" <<'SH'
 #!/bin/sh
 [ "${1:-}" = "create" ] || exit 2
+printf '%s\n' "$*" > "$CONSOLE_DIR/create_args"
 printf '%s\n' '{"ok":false,"reason":"unreachable","error":"ssh: connect to host 192.168.5.3 port 22: No route to host"}'
 exit 1
 SH
@@ -1159,12 +1161,19 @@ package.preload["luci.model.uci"] = function()
 end
 
 local form, written = {}, {}
+-- The local end of the request connection, as uhttpd passes it in the CGI
+-- environment. nil is what a request that arrived without it looks like, and
+-- that is the state every case before the address checks runs in.
+local server_addr = nil
 package.preload["luci.http"] = function()
 	return {
 		prepare_content = function() end,
 		write     = function(t) written[#written + 1] = t end,
 		status    = function() end,
-		getenv    = function(k) if k == "REQUEST_METHOD" then return "POST" end end,
+		getenv    = function(k)
+			if k == "REQUEST_METHOD" then return "POST" end
+			if k == "SERVER_ADDR" then return server_addr end
+		end,
 		formvalue = function(k) return form[k] end,
 	}
 end
@@ -1234,6 +1243,61 @@ form = { agent = "claude", cols = "80", rows = "24" }
 written = {}
 ctrl.act_session_create()
 print("create=" .. body())
+
+-- ---------------------------------------------------------------------------
+-- The address hints a DeepSeek Harness session is created with
+--
+-- dsh is the only agent whose interface a browser opens, and it has to listen
+-- on an address that browser can reach. The controller passes one candidate as
+-- a fourth argv word; session.sh is what checks that this router owns it, so
+-- what is pinned here is which candidate is chosen and that no other agent
+-- receives one.
+-- ---------------------------------------------------------------------------
+local function create_args()
+	local fh = io.open(os.getenv("CONSOLE_DIR") .. "/create_args")
+	if not fh then return "" end
+	local s = fh:read("*a")
+	fh:close()
+	return (s:gsub("%s+$", ""))
+end
+
+-- The address the request arrived on wins: it is the kernel's answer, and it
+-- is right even when the browser reached the page by hostname.
+server_addr = "192.168.10.157"
+form = { agent = "dsh", cols = "80", rows = "24", host = "192.168.12.1" }
+written = {}
+ctrl.act_session_create()
+print("create_host=" .. create_args())
+
+-- The page's own hint is used when SERVER_ADDR is loopback, which is what a
+-- reverse proxy in front of this page produces.
+server_addr = "127.0.0.1"
+form = { agent = "dsh", cols = "80", rows = "24", host = "192.168.12.1" }
+written = {}
+ctrl.act_session_create()
+print("create_proxy=" .. create_args())
+
+-- A hint that is not an IPv4 literal is not passed on: a hostname cannot be
+-- turned into an address here, and session.sh would only have to discard it.
+server_addr = "127.0.0.1"
+form = { agent = "dsh", cols = "80", rows = "24", host = "openwrt.lan" }
+written = {}
+ctrl.act_session_create()
+print("create_name=" .. create_args())
+
+-- Nothing to offer: neither source names an address.
+server_addr = nil
+form = { agent = "dsh", cols = "80", rows = "24" }
+written = {}
+ctrl.act_session_create()
+print("create_none=" .. create_args())
+
+-- A terminal agent gets no fourth word, even with an address available.
+server_addr = "192.168.10.157"
+form = { agent = "claude", cols = "80", rows = "24" }
+written = {}
+ctrl.act_session_create()
+print("create_plain=" .. create_args())
 LUA
 
 	_cc_out="$(CONSOLE_DIR="$_cc_dir" \
@@ -1285,6 +1349,25 @@ LUA
 	assert_contains "$_cc_create" '"reason":"unreachable"' \
 		"a failed LAN create relays the reason code: [$_cc_create]"
 	assert_contains "$_cc_create" '"ok":false' "in a document, not as an error string"
+
+	# Where the browser reached the page from. The candidate is the fourth word
+	# of the session command; session.sh checks it against the router's own
+	# addresses, so the controller's job is only to pass the right one.
+	_cc_host="$(printf '%s\n' "$_cc_out" | sed -n 's/^create_host=//p')"
+	assert_eq "create dsh 80 24 192.168.10.157" "$_cc_host" \
+		"the request's own address is passed, ahead of the page's hint"
+	_cc_proxy="$(printf '%s\n' "$_cc_out" | sed -n 's/^create_proxy=//p')"
+	assert_eq "create dsh 80 24 192.168.12.1" "$_cc_proxy" \
+		"the page's hint is used when the request arrived on loopback"
+	_cc_name="$(printf '%s\n' "$_cc_out" | sed -n 's/^create_name=//p')"
+	assert_eq "create dsh 80 24" "$_cc_name" \
+		"a hostname is not passed on as an address"
+	_cc_none="$(printf '%s\n' "$_cc_out" | sed -n 's/^create_none=//p')"
+	assert_eq "create dsh 80 24" "$_cc_none" \
+		"and neither is anything when no address is offered"
+	_cc_plain="$(printf '%s\n' "$_cc_out" | sed -n 's/^create_plain=//p')"
+	assert_eq "create claude 80 24" "$_cc_plain" \
+		"a terminal agent is created with no address at all"
 
 	rm -rf "$_cc_dir"
 }

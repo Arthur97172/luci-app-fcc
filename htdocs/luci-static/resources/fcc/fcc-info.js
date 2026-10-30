@@ -187,7 +187,11 @@
 	 * request is in flight so a double click cannot start two. */
 	function retryAgent(id, btn) {
 		btn.disabled = true;
-		FCC.api('session_create', { agent: id }, { method: 'POST' }).then(function () {
+		/* Same hint the console sends: where this page was reached, so a
+		 * session that serves a web page (DeepSeek Harness) can listen on an
+		 * address this browser can open. The backend validates it. */
+		FCC.api('session_create', { agent: id, host: location.hostname || '' },
+			{ method: 'POST' }).then(function () {
 			return loadStatus(false);
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-info-fcc'), 'fail', err.message);

@@ -171,7 +171,7 @@ machine: Windows, Linux, macOS or OpenWrt, one at a time.
    every later connection must match it exactly. A changed fingerprint refuses
    the connection and reports the value it actually found.
 3. Only then do the four buttons become usable. The command a click sends is
-   chosen by **Remote platform** in *Advanced settings*; on Linux and OpenWrt it
+   chosen by **Remote platform** (above the address); on Linux and OpenWrt it
    first asks whether that machine has a service, and uses its own launcher when
    it does not:
 
@@ -319,10 +319,10 @@ opkg install openssh-client-utils     # 24.10 and earlier
 apk add openssh-client-utils          # 25.12 and later
 ```
 
-*Advanced settings* holds the SSH port, the remote platform, the Admin port and
-the service name, shows the exact command each button sends, and shows the
-pinned fingerprint with a **Forget** button. Changing the address or the SSH
-port forgets the fingerprint on its own.
+*Advanced settings* holds the SSH port, the Admin port and the service name,
+shows the exact command each button sends, and shows the pinned fingerprint
+with a **Forget** button; the SSH key row and the panels it opens follow it.
+Changing the address or the SSH port forgets the fingerprint on its own.
 
 ---
 
@@ -428,19 +428,39 @@ their leftover files.
 
 **DeepSeek Harness is the one exception**: it has no character interface.
 `fcc-dsh` boots `dsh web`, a browser UI that by default listens only on that
-machine's loopback, so the pane can print nothing more useful than
-`dsh web: http://127.0.0.1:3080/?token=…`. In LAN mode the panel adds
-`--host <that machine's LAN address> --no-open` for it, so the pane prints
-`http://192.168.x.x:3080/?token=…` and that URL opens directly in the browser
-driving this panel — the token in it is the credential, so keep it to yourself.
-Windows targets keep the bare launcher and upstream's default.
+machine's loopback. dsh refuses a wildcard and binds one concrete address, so
+the panel hands it **the address the browser is already using**: the controller
+takes its candidate from uhttpd's `SERVER_ADDR` (where this request landed on
+this machine) or from the `location.hostname` the page submits, and
+`fcc_pane_bind_host()` accepts it only if it really is one of this machine's
+addresses and is not loopback; otherwise the br-lan address is used. So opening
+LuCI at `http://192.168.10.157` binds 192.168.10.157, opening it at
+`http://192.168.12.1` binds 192.168.12.1, and when neither is available the
+upstream default stands.
+
+Local mode then prints `http://<that address>:3080/?token=…`. LAN mode prints a
+forwarded port on this machine instead (the first free one in 13080–13099):
+ssh `-L <address>:<port>:<that machine>:3080` brings the browser to that
+machine's 3080 — the harness still binds only that machine's LAN address — and
+dsh is told `--public-url http://<address>:<port>/ --trusted-host
+<address>:<port>`. Windows targets keep the bare launcher and upstream's
+default.
+
+The reason for the detour: the token in the URL is exchanged for a
+`SameSite=Strict` cookie, and a navigation started from the panel to a different
+site does not carry it, so the window stops at dsh's "dsh web authentication
+required". Moving the UI onto the browser's own address makes the two
+same-site. The URL is the credential — keep it to yourself.
 
 For a dsh session, **Open in browser** navigates its window straight to that
 address instead of opening another terminal pane: the panel reads the address
 from the session's own output, because the token differs on every launch and
-only the pane knows it. That window **does not own the session** — closing it
-leaves the session running, since it is what serves the UI; end it with the × on
-the session's tab or with End all sessions.
+only the pane knows it. The session panel also keeps that address with a
+**copy DeepSeek Harness address** button, so if the browser still refuses the
+navigation, pasting the address into the address bar works — typed navigation
+has no originating site, so the cookie is not withheld. That window **does not
+own the session** — closing it leaves the session running, since it is what
+serves the UI; end it with the × on the session's tab or with End all sessions.
 
 ---
 

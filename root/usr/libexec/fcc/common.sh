@@ -156,6 +156,125 @@ fcc_effective_bind() {
 }
 
 # ---------------------------------------------------------------------------
+# The address a browser reached this router on
+#
+# DeepSeek Harness is the one agent whose interface is a web page, and it serves
+# it on a single concrete address: `dsh web --host <literal>` refuses a
+# wildcard, and its own default is the loopback of whichever machine it runs on
+# — a URL no other machine's browser can open, which is what the console
+# reported (this router, local mode: the window said "无法访问此地址" for
+# http://127.0.0.1:3080/?token=…). The address it has to be given is therefore
+# the one the browser is already using to drive this panel.
+#
+# Two sources name it and they answer different questions. SERVER_ADDR, which
+# the controller reads from uhttpd, is the local end of the connection the
+# request arrived on: it is right even when the browser typed a hostname, and it
+# needs no lookup. The console also posts location.hostname, which is the
+# literal itself when the user typed an address. Either way a value is only a
+# *candidate* — fcc_pane_bind_host() checks it against this router's own
+# addresses before it can reach a launcher, so no request can make dsh try to
+# bind an address this machine does not own.
+# ---------------------------------------------------------------------------
+
+fcc_ipv4_literal() {
+	# fcc_ipv4_literal <word> -> 0 when it is a dotted-quad IPv4 literal.
+	#
+	# The same grammar fcc_remote_valid_host() uses in remote.sh, without the
+	# private-range requirement: loopback is a literal too, and whether it may be
+	# used is the caller's decision rather than the parser's.
+	_il_ip="${1:-}"
+	case "$_il_ip" in
+		''|*[!0-9.]*) return 1 ;;
+	esac
+	_il_ifs="$IFS"
+	IFS=.
+	set -- $_il_ip
+	IFS="$_il_ifs"
+	[ "$#" -eq 4 ] || return 1
+	for _il_o in "$@"; do
+		case "$_il_o" in
+			''|*[!0-9]*) return 1 ;;
+		esac
+		[ "${#_il_o}" -le 3 ] || return 1
+		[ "$_il_o" -le 255 ] || return 1
+		# Leading zeroes are octal to some parsers and decimal to others.
+		case "$_il_o" in
+			0?*) return 1 ;;
+		esac
+	done
+	return 0
+}
+
+fcc_own_ipv4s() {
+	# One address per line: every IPv4 address configured on this router.
+	ip -4 addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p'
+}
+
+fcc_lan_ipv4() {
+	# The lan interface's address, or nothing when it has none.
+	#
+	# The runtime answer is asked for first: a bridge's configured address and
+	# the address it actually carries differ the moment DHCP is involved, and
+	# network.sh asks ubus for the live one. The device and UCI fallbacks cover a
+	# router whose /lib/functions is a different vintage — the test router at
+	# 192.168.10.157 has network.sh and answers 192.168.12.1 there.
+	_lan_ip=""
+	if [ -r /lib/functions/network.sh ]; then
+		_lan_ip="$(
+			. /lib/functions/network.sh 2>/dev/null || exit 1
+			network_get_ipaddr _lan_ip_v lan >/dev/null 2>&1 || exit 2
+			printf '%s' "$_lan_ip_v"
+		)"
+	fi
+	if [ -z "$_lan_ip" ]; then
+		_lan_ip="$(ip -4 addr show dev br-lan 2>/dev/null \
+			| sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | head -n 1)"
+	fi
+	if [ -z "$_lan_ip" ]; then
+		_lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null)"
+	fi
+	printf '%s' "$_lan_ip"
+}
+
+fcc_pane_bind_host() {
+	# fcc_pane_bind_host [candidate] -> the address a browser-facing launcher
+	# should listen on, or failure when this router has no usable address.
+	#
+	# The candidate wins only when it is an address of this router. The request
+	# that carried it was answered here, so the browser that made it can reach
+	# it; a literal from anywhere else — a page left open across a renumbering, a
+	# hand-made request — would only make the launcher die on a bind error.
+	# Loopback is refused even though this router owns it: 127.0.0.1 names the
+	# router to itself, and the browser asking is never on it.
+	#
+	# The fallback is the lan interface's address, which is what a router reached
+	# by a hostname settles for: the name the browser typed cannot be turned into
+	# a literal here, but the LAN address is reachable from the LAN segment. A
+	# value from UCI is taken on trust only because nothing better exists — a
+	# stale one makes dsh fail to bind and say so in the pane, which is a visible
+	# failure rather than a silent one.
+	_pb_c="${1:-}"
+	if fcc_ipv4_literal "$_pb_c"; then
+		case "$_pb_c" in
+		127.*) : ;;
+		*)
+			for _pb_a in $(fcc_own_ipv4s); do
+				if [ "$_pb_a" = "$_pb_c" ]; then
+					printf '%s' "$_pb_c"
+					return 0
+				fi
+			done ;;
+		esac
+	fi
+	_pb_l="$(fcc_lan_ipv4)"
+	fcc_ipv4_literal "$_pb_l" || return 1
+	case "$_pb_l" in
+		127.*) return 1 ;;
+	esac
+	printf '%s' "$_pb_l"
+}
+
+# ---------------------------------------------------------------------------
 # Install-path canonicalisation
 #
 # UCI `install_path` is treated as a *base* directory. The FCC root is

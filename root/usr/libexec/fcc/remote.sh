@@ -1655,8 +1655,36 @@ fcc_remote_console() {
 	return 1
 }
 
+fcc_remote_dsh_port() {
+	# A free port on this router for the harness tunnel, or failure.
+	#
+	# The panel's own listening ports are not in question: this is the local end
+	# of an ssh -L, bound by this router and reachable only from it. The range is
+	# above the ephemeral floor most Linux kernels start at (32768) only in
+	# spirit — 13080-13099 is where nothing else on this router listens, and a
+	# small fixed range makes "is it free" cheap to answer with netstat. The
+	# first free one wins, so a second harness session gets its own.
+	#
+	# The listing is read once and in full. A netstat that is missing, or that
+	# answers nothing, must not read as "every port is free" — that is what a
+	# missing tool looks like to a loop over a pipe, and it would open a forward
+	# on a port nobody checked. No listing means no tunnel.
+	_dp_listing="$(netstat -ltn 2>/dev/null)" || return 1
+	[ -n "$_dp_listing" ] || return 1
+	_dp_i=13080
+	while [ "$_dp_i" -le 13099 ]; do
+		if ! printf '%s\n' "$_dp_listing" | grep -q ":$_dp_i[[:space:]]"; then
+			printf '%s' "$_dp_i"
+			return 0
+		fi
+		_dp_i=$((_dp_i + 1))
+	done
+	return 1
+}
+
 fcc_remote_pane_args() {
-	# fcc_remote_pane_args <agent> -> extra words for the launcher, or nothing.
+	# fcc_remote_pane_args <agent> [bind] [port] -> extra words for the
+	# launcher, or nothing.
 	#
 	# DeepSeek Harness is the one agent without a terminal interface: `fcc-dsh`
 	# boots `dsh web`, which serves a browser UI on the loopback of whatever
@@ -1667,12 +1695,27 @@ fcc_remote_pane_args() {
 	# desktop browser as well. The address is a validated private IPv4 literal
 	# (fcc_remote_valid_host), so it is one safe word.
 	#
+	# The bind/port pair is different and belongs to this router: it is the local
+	# end of the ssh -L that carries this browser's traffic to the harness (see
+	# fcc_remote_session_command). With a tunnel in place, the URL the browser
+	# opens is that local address, so dsh has to be told to advertise it
+	# (--public-url) and to accept its Host header (--trusted-host) — dsh trusts
+	# loopback, its own bind literal and nothing else, and the tunnel's address
+	# is neither. Without one — a router with no usable address — the plain
+	# LAN-address form is kept, which is what a user on the far side's own
+	# network would need.
+	#
 	# Windows keeps the bare launcher: dsh's Windows story is unproven here, and
 	# the PowerShell script takes no arguments.
 	case "${1:-}" in
 	dsh)
 		[ "$(fcc_remote_platform)" = windows ] && return 0
-		printf ' web --host %s --no-open' "$(fcc_remote_host)"
+		if [ -n "${2:-}" ] && [ -n "${3:-}" ]; then
+			printf ' web --host %s --no-open --public-url http://%s:%s/ --trusted-host %s:%s' \
+				"$(fcc_remote_host)" "$2" "$3" "$2" "$3"
+		else
+			printf ' web --host %s --no-open' "$(fcc_remote_host)"
+		fi
 		;;
 	esac
 }
@@ -1695,9 +1738,24 @@ fcc_remote_session_command() {
 		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
 
 	_sc_launcher="$(fcc_agent_command "$_sc_agent")"
+	# The local end of the harness tunnel, when there is one to open. The address
+	# is the one this browser reached the router on — session.sh resolved it with
+	# fcc_pane_bind_host() from FCC_PANE_HOST, which the controller filled from
+	# SERVER_ADDR or from location.hostname — and the port is chosen here, where
+	# netstat can be asked. Empty for every other agent: they are terminals, and
+	# a terminal needs no listening socket on this side.
+	#
+	# Windows is skipped for the same reason fcc_remote_pane_args skips it.
+	_sc_bind=""
+	_sc_port=""
+	if [ "$_sc_agent" = dsh ] && [ "$(fcc_remote_platform)" != windows ]; then
+		_sc_bind="$(fcc_pane_bind_host "${FCC_PANE_HOST:-}" 2>/dev/null || true)"
+		[ -n "$_sc_bind" ] && _sc_port="$(fcc_remote_dsh_port 2>/dev/null || true)"
+		[ -n "$_sc_port" ] || _sc_bind=""
+	fi
 	# The few words only a pane needs; see fcc_remote_pane_args. Empty for every
 	# agent but DeepSeek Harness.
-	_sc_args="$(fcc_remote_pane_args "$_sc_agent")"
+	_sc_args="$(fcc_remote_pane_args "$_sc_agent" "$_sc_bind" "$_sc_port")"
 	# What the far side runs. OpenWrt carries this package, so its runtime
 	# environment is applied there by fcc-env. A Linux, macOS or Windows machine
 	# carries only the upstream install: the launcher is resolved from the same
@@ -1750,8 +1808,23 @@ fcc_remote_session_command() {
 	#     connection would otherwise be painted into the scrollback above the
 	#     agent's opening screen. remote.sh's own verbs filter that line; a
 	#     terminal cannot.
-	printf '%s %s -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -tt -i %s -p %s -l %s %s %s\n' \
-		"$(fcc_shquote "$_sc_ssh")" "$FCC_REMOTE_SSH_OPTS" \
+	#
+	# -L: DeepSeek Harness only. The token in the URL dsh prints becomes a
+	#     SameSite=Strict cookie, and a browser navigating there from this panel
+	#     withholds that cookie whenever the two are different sites — the panel
+	#     on 192.168.10.157 and the harness on 192.168.10.188 are, which is the
+	#     reported "dsh web authentication required" while the same URL pasted
+	#     into the address bar worked (a typed navigation carries no initiator).
+	#     Forwarding a port on the browser's own address makes the two one site,
+	#     so the 303 that follows the token URL keeps its cookie. The harness
+	#     itself stays where it was — bound to the far machine's LAN address —
+	#     and no firewall or sshd on that machine is touched.
+	_sc_opts="$FCC_REMOTE_SSH_OPTS -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR"
+	if [ -n "$_sc_bind" ]; then
+		_sc_opts="$_sc_opts -L $_sc_bind:$_sc_port:$(fcc_remote_host):3080"
+	fi
+	printf '%s %s -tt -i %s -p %s -l %s %s %s\n' \
+		"$(fcc_shquote "$_sc_ssh")" "$_sc_opts" \
 		"$(fcc_shquote "$FCC_REMOTE_KEY")" "$(fcc_remote_sport)" \
 		"$(fcc_remote_user)" "$(fcc_remote_host)" \
 		"$_sc_remote"

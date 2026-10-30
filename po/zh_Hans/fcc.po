@@ -54,6 +54,9 @@ msgid ""
 "again."
 msgstr "将此密钥加入该账号的 authorized_keys 文件，然后重新测试连接。"
 
+msgid "Address copied."
+msgstr "地址已复制。"
+
 msgid ""
 "Address the FCC server listens on. The FCC Admin page is served through "
 "LuCI, which reaches the server on 127.0.0.1, so keep that unless another "
@@ -191,11 +194,17 @@ msgstr "连接正常。"
 msgid "Control target"
 msgstr "控制目标"
 
+msgid "Copy the harness address"
+msgstr "复制 DeepSeek Harness 地址"
+
 msgid "Could not attach to the session:"
 msgstr "无法连接到会话："
 
 msgid "Could not read the one-time setup."
 msgstr "无法读取一次性准备命令。"
+
+msgid "DeepSeek Harness address:"
+msgstr "DeepSeek Harness 地址："
 
 msgid "DeepSeek Harness did not print its address; showing its pane instead."
 msgstr "DeepSeek Harness 没有打印出地址，改为显示它的窗格。"
@@ -419,6 +428,9 @@ msgstr "平台"
 
 msgid "Port"
 msgstr "端口"
+
+msgid "Press Ctrl+C to copy the selected address."
+msgstr "按 Ctrl+C 复制选中的地址。"
 
 msgid "Reading the block from the router…"
 msgstr "正在从路由器读取这段内容…"

@@ -462,6 +462,22 @@ function valid_session(name)
 	return name
 end
 
+--- A host the browser says it reached this page on: a hostname, or an IPv4
+--  literal.
+--
+--  The shell is what decides whether the value may be used — fcc_pane_bind_host
+--  in common.sh accepts it only when it is an address of this router, and falls
+--  back to the lan address otherwise. This check is the other half of the
+--  contract: the value is handed to a script as one argv word, so it must be a
+--  word and nothing more. An empty string is not accepted; callers treat the
+--  absence of a host as "no hint".
+function valid_host(h)
+	if type(h) ~= "string" then return nil end
+	if #h < 1 or #h > 253 then return nil end
+	if not h:match("^[A-Za-z0-9][A-Za-z0-9%.%-]*$") then return nil end
+	return h
+end
+
 --- Integer within an inclusive range.
 function valid_int(v, min, max)
 	local n = tonumber(v)

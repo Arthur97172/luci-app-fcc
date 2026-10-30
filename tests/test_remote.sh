@@ -181,6 +181,35 @@ val="$(printf '%s' "$obj" | sed -n "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"\{0
 printf '%s\n' "$val"
 EOF
 
+	# ip: this router's own addresses, which fcc_pane_bind_host() checks a
+	# candidate against and fcc_lan_ipv4() falls back to. FCC_TEST_IPV4S is what
+	# `ip -4 addr show` prints, one inet line per address; FCC_TEST_LAN_IPV4 is
+	# what the `dev br-lan` form answers, and an unset one is a bridge with no
+	# address — the state that leaves dsh on the bare launcher.
+	cat > "$BIN/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+	*br-lan*)
+		[ -n "${FCC_TEST_LAN_IPV4:-}" ] || exit 1
+		printf '    inet %s/24 brd 255.255.255.0 scope global br-lan\n' "$FCC_TEST_LAN_IPV4" ;;
+	*)
+		for _a in ${FCC_TEST_IPV4S:-}; do
+			printf '    inet %s/24 brd 255.255.255.0 scope global eth0\n' "$_a"
+		done ;;
+esac
+EOF
+
+	# netstat: the listening sockets. FCC_TEST_BUSY_PORTS names the ports already
+	# taken, so the tunnel's port choice can be pinned to a known answer.
+	cat > "$BIN/netstat" <<'EOF'
+#!/bin/sh
+printf 'Proto Recv-Q Send-Q Local Address           Foreign Address         State\n'
+printf 'tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN\n'
+for _p in ${FCC_TEST_BUSY_PORTS:-}; do
+	printf 'tcp        0      0 0.0.0.0:%s            0.0.0.0:*               LISTEN\n' "$_p"
+done
+EOF
+
 	# ssh-keyscan: one ed25519 host key line, which is all scan_to keeps.
 	cat > "$BIN/ssh-keyscan" <<'EOF'
 #!/bin/sh
@@ -237,7 +266,8 @@ printf 'PRIVATE KEY\n' > "$file"
 printf '%s\n' "${KEYGEN_PUB:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY luci-app-fcc}" > "$file.pub"
 EOF
 
-	chmod +x "$BIN/uci" "$BIN/ssh" "$BIN/ssh-keyscan" "$BIN/ssh-keygen" "$BIN/jsonfilter"
+	chmod +x "$BIN/uci" "$BIN/ssh" "$BIN/ssh-keyscan" "$BIN/ssh-keygen" \
+		"$BIN/jsonfilter" "$BIN/ip" "$BIN/netstat"
 }
 
 drop_sandbox() {
@@ -1955,6 +1985,137 @@ agent claude installed' run_remote session-command claude)" || true
 	out="$(SSH_PROBE_OUT='server running
 agent dsh installed' run_remote session-command dsh)" || true
 	assert_not_contains "$out" '--host' "Windows keeps the bare launcher"
+	drop_sandbox
+}
+
+test_a_harness_session_is_tunnelled_to_the_browser_address() {
+	# The reported bug, in LAN mode: the console's window opened
+	# http://192.168.10.188:3080/ and the harness answered "dsh web
+	# authentication required; reopen the URL printed by dsh web." Pasting the
+	# pane's token URL into the address bar worked, which is the fingerprint of
+	# dsh's cookie: it is SameSite=Strict, so the 303 to "/" that follows the
+	# token URL is answered by a browser that withheld the cookie whenever the
+	# two hosts are different sites — and this panel's host and the far machine
+	# always are. A forward on the address the browser reached *this* router on
+	# makes the two one site, so the redirect keeps its cookie.
+	#
+	# What the harness is told is unchanged where it matters: it still listens
+	# on the far machine's LAN address. Only what it advertises, and which
+	# authority it accepts, follow the tunnel.
+	fresh
+	ready_lan
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='127.0.0.1 192.168.10.157 192.168.12.1' \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" '-L 192.168.10.157:13080:192.168.5.20:3080' \
+		"the pane forwards a port on the browser's address to the harness"
+	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20' \
+		"the harness still listens on the far machine's own address"
+	assert_contains "$out" '--public-url http://192.168.10.157:13080/' \
+		"and advertises the address the browser can open"
+	assert_contains "$out" '--trusted-host 192.168.10.157:13080' \
+		"which is neither loopback nor its bind address, so it must be trusted"
+	assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" \
+		"the whole command is still one line"
+
+	# A second session takes the next free port rather than failing to bind.
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		FCC_TEST_BUSY_PORTS='13080 13081' \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" '-L 192.168.10.157:13082:192.168.5.20:3080' \
+		"a taken port is skipped"
+
+	# A candidate this router does not own never reaches the launcher: it would
+	# make dsh die on a bind error. The lan address is used instead.
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		FCC_PANE_HOST=10.9.9.9 \
+		FCC_TEST_IPV4S='127.0.0.1 192.168.5.10' \
+		FCC_TEST_LAN_IPV4=192.168.12.1 \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" '-L 192.168.12.1:13080:192.168.5.20:3080' \
+		"an address this router does not own falls back to the lan address"
+	assert_not_contains "$out" '10.9.9.9' \
+		"and is not passed on anywhere"
+
+	# Loopback is refused for the same reason: it names this router to itself,
+	# and the browser asking is on another machine.
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		FCC_PANE_HOST=127.0.0.1 \
+		FCC_TEST_IPV4S='127.0.0.1 192.168.5.10' \
+		FCC_TEST_LAN_IPV4=192.168.12.1 \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" '-L 192.168.12.1:13080:192.168.5.20:3080' \
+		"a loopback hint falls back to the lan address"
+
+	# No address at all — a router whose lan interface is down. The pane is
+	# still created, on the plain form the panel used before the tunnel.
+	fresh
+	ready_lan
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' FCC_PANE_HOST=192.168.10.157 \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20 --no-open' \
+		"with no usable address the plain form is kept"
+	assert_not_contains "$out" ' -L ' "and no forward is opened"
+
+	# A client without netstat cannot choose a port, so it keeps the plain form
+	# rather than opening a forward on a port it never checked.
+	fresh
+	ready_lan
+	hide_tool netstat
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20 --no-open' \
+		"a router that cannot check a port opens no forward"
+	assert_not_contains "$out" '--public-url' "and advertises nothing it cannot serve"
+
+	# A terminal agent is never tunnelled, even with an address in hand.
+	fresh
+	ready_lan
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		run_remote session-command claude)" || true
+	assert_not_contains "$out" ' -L ' "a terminal agent opens no forward"
+	assert_not_contains "$out" '--host' "and takes no arguments"
+
+	# An OpenWrt machine behind this panel runs the harness through fcc-env,
+	# and its words are the same.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" \
+		'/usr/bin/fcc-env fcc-dsh web --host 192.168.5.20 --no-open --public-url http://192.168.10.157:13080/ --trusted-host 192.168.10.157:13080' \
+		"fcc-env runs the harness with the same words"
+	assert_contains "$out" '-L 192.168.10.157:13080:192.168.5.20:3080' \
+		"and the same forward"
+
+	# Windows keeps the bare launcher and no forward: dsh's Windows story is
+	# unproven and the PowerShell script takes no arguments.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		run_remote session-command dsh)" || true
+	assert_not_contains "$out" '--host' "Windows keeps the bare launcher"
+	assert_not_contains "$out" ' -L ' "and opens no forward"
 	drop_sandbox
 }
 

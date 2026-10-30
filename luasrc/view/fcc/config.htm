@@ -193,6 +193,22 @@
 					   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
 				</div>
 
+				<!-- What the far machine is, first: it decides which of the
+				     commands below a click sends — systemctl, the init script,
+				     launchctl or PowerShell — so it is read before the address
+				     rather than found later behind the advanced summary. -->
+				<div class="cbi-value">
+					<label class="cbi-value-title" for="fcc-remote-platform"><%:Remote platform%></label>
+					<div class="cbi-value-field">
+						<select id="fcc-remote-platform" class="cbi-input-select">
+							<option value="linux">Linux</option>
+							<option value="macos">macOS</option>
+							<option value="openwrt">OpenWrt</option>
+							<option value="windows">Windows</option>
+						</select>
+					</div>
+				</div>
+
 				<div class="cbi-value">
 					<label class="cbi-value-title" for="fcc-remote-host"><%:IP address%></label>
 					<div class="cbi-value-field">
@@ -214,6 +230,54 @@
 						</div>
 					</div>
 				</div>
+
+				<details class="fcc-advanced" id="fcc-remote-advanced">
+					<summary><%:Advanced settings%></summary>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-ssh-port"><%:SSH port%></label>
+						<div class="cbi-value-field">
+							<input type="text" id="fcc-remote-ssh-port" class="cbi-input-text"
+								size="6" inputmode="numeric" spellcheck="false">
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-admin-port"><%:Admin port%></label>
+						<div class="cbi-value-field">
+							<input type="text" id="fcc-remote-admin-port" class="cbi-input-text"
+								size="6" inputmode="numeric" spellcheck="false">
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-service"><%:Service name%></label>
+						<div class="cbi-value-field">
+							<input type="text" id="fcc-remote-service" class="cbi-input-text"
+								spellcheck="false" autocomplete="off">
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-fingerprint"><%:Host fingerprint%></label>
+						<div class="cbi-value-field">
+							<div class="fcc-remote-row">
+								<input type="text" id="fcc-remote-fingerprint" class="cbi-input-text fcc-mono"
+									readonly>
+								<button type="button" id="fcc-remote-forget" class="cbi-button cbi-button-reset"><%:Forget%></button>
+							</div>
+						</div>
+					</div>
+
+					<div class="cbi-value">
+						<label class="cbi-value-title" for="fcc-remote-preview"><%:Command preview%></label>
+						<div class="cbi-value-field">
+							<!-- Read only, and built from the same presets remote.sh
+							     runs, so what is shown is what a click sends. -->
+							<pre id="fcc-remote-preview" class="fcc-key-text"></pre>
+						</div>
+					</div>
+				</details>
 
 				<!-- Opening the Admin page is an SSH tunnel, so that machine's
 				     sshd has to allow local forwarding. The buttons arrange the
@@ -261,66 +325,6 @@
 					<pre id="fcc-remote-helper-text" class="fcc-key-text"></pre>
 					<p class="fcc-muted" id="fcc-remote-helper-state"></p>
 				</div>
-
-				<details class="fcc-advanced" id="fcc-remote-advanced">
-					<summary><%:Advanced settings%></summary>
-
-					<div class="cbi-value">
-						<label class="cbi-value-title" for="fcc-remote-ssh-port"><%:SSH port%></label>
-						<div class="cbi-value-field">
-							<input type="text" id="fcc-remote-ssh-port" class="cbi-input-text"
-								size="6" inputmode="numeric" spellcheck="false">
-						</div>
-					</div>
-
-					<div class="cbi-value">
-						<label class="cbi-value-title" for="fcc-remote-platform"><%:Remote platform%></label>
-						<div class="cbi-value-field">
-							<select id="fcc-remote-platform" class="cbi-input-select">
-								<option value="linux">Linux</option>
-								<option value="macos">macOS</option>
-								<option value="openwrt">OpenWrt</option>
-								<option value="windows">Windows</option>
-							</select>
-						</div>
-					</div>
-
-					<div class="cbi-value">
-						<label class="cbi-value-title" for="fcc-remote-admin-port"><%:Admin port%></label>
-						<div class="cbi-value-field">
-							<input type="text" id="fcc-remote-admin-port" class="cbi-input-text"
-								size="6" inputmode="numeric" spellcheck="false">
-						</div>
-					</div>
-
-					<div class="cbi-value">
-						<label class="cbi-value-title" for="fcc-remote-service"><%:Service name%></label>
-						<div class="cbi-value-field">
-							<input type="text" id="fcc-remote-service" class="cbi-input-text"
-								spellcheck="false" autocomplete="off">
-						</div>
-					</div>
-
-					<div class="cbi-value">
-						<label class="cbi-value-title" for="fcc-remote-fingerprint"><%:Host fingerprint%></label>
-						<div class="cbi-value-field">
-							<div class="fcc-remote-row">
-								<input type="text" id="fcc-remote-fingerprint" class="cbi-input-text fcc-mono"
-									readonly>
-								<button type="button" id="fcc-remote-forget" class="cbi-button cbi-button-reset"><%:Forget%></button>
-							</div>
-						</div>
-					</div>
-
-					<div class="cbi-value">
-						<label class="cbi-value-title" for="fcc-remote-preview"><%:Command preview%></label>
-						<div class="cbi-value-field">
-							<!-- Read only, and built from the same presets remote.sh
-							     runs, so what is shown is what a click sends. -->
-							<pre id="fcc-remote-preview" class="fcc-key-text"></pre>
-						</div>
-					</div>
-				</details>
 
 				<div id="fcc-remote-status"></div>
 			</div>

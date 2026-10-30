@@ -849,13 +849,43 @@ function act_console()
 		',"agents":' .. util.json_encode(list) .. '}')
 end
 
+--- The address this request arrived on, if it is an IPv4 literal.
+--
+--  DeepSeek Harness is the only agent whose interface is a web page, and it
+--  has to be told to listen on the address the browser is using rather than on
+--  the machine's own loopback — the console's window opens what the pane
+--  prints, and 127.0.0.1 answers only a browser running on the same machine.
+--
+--  SERVER_ADDR is the local end of this connection, which uhttpd passes in the
+--  CGI environment: it is the right answer even when the browser reached the
+--  page by hostname, and it needs no lookup. The page also posts its own
+--  location.hostname, which is used when SERVER_ADDR is loopback (behind a
+--  reverse proxy it always is) and the browser typed a literal.
+--
+--  Both are candidates, not commands: session.sh checks the value against this
+--  router's own addresses with fcc_pane_bind_host() and falls back to the lan
+--  address when it is not one of them. A hostname cannot be turned into an
+--  address here, so a hostname hint simply yields nothing.
+local function pane_bind_hint()
+	for _, c in ipairs({ http.getenv("SERVER_ADDR"), http.formvalue("host") }) do
+		local h = util.valid_host(c)
+		if h and h:match("^%d+%.%d+%.%d+%.%d+$") and not h:match("^127%.") then
+			return h
+		end
+	end
+	return nil
+end
+
 function act_session_create()
 	if not require_post() then return end
 	local id = util.valid_agent(http.formvalue("agent"))
 	if not id or not agents.exists(id) then return fail("unknown agent") end
 	local cols = util.valid_int(http.formvalue("cols") or "80", 20, 500) or 80
 	local rows = util.valid_int(http.formvalue("rows") or "24", 5, 300) or 24
-	local out, code = run("session", { "create", id, tostring(cols), tostring(rows) })
+	local argv = { "create", id, tostring(cols), tostring(rows) }
+	local bind = id == "dsh" and pane_bind_hint() or nil
+	if bind then argv[#argv + 1] = bind end
+	local out, code = run("session", argv)
 	if code ~= 0 then
 		-- A LAN refusal is a reason code the page translates. Relaying it as an
 		-- error string would put the code in front of the user; relaying it as a

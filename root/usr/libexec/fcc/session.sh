@@ -149,6 +149,18 @@ cmd_create() {
 	_cr_target="$(fcc_uci_get main control_target local)"
 	[ "$_cr_target" = "lan" ] || _cr_target=local
 
+	# The address a browser reached this router on, as the controller worked it
+	# out (SERVER_ADDR, or the page's own location.hostname). Only DeepSeek
+	# Harness serves anything to a browser, so only it asks: dsh's own default is
+	# the loopback of the machine it runs on, which the browser driving this
+	# panel cannot open — see fcc_pane_bind_host() in common.sh, which checks
+	# the candidate against this router's addresses and falls back to the lan
+	# address rather than trusting it.
+	_cr_bind=""
+	if [ "$_cr_agent" = dsh ]; then
+		_cr_bind="$(fcc_pane_bind_host "${4:-}" 2>/dev/null || true)"
+	fi
+
 	if [ "$_cr_target" = "lan" ]; then
 		# The pane is an ssh client to the LAN machine, where fcc-env applies that
 		# machine's runtime environment and execs the launcher. Everything the
@@ -161,7 +173,10 @@ cmd_create() {
 		# through untouched: the controller relays it as the create's answer.
 		_cr_launcher="$(fcc_agent_command "$_cr_agent")"
 		_cr_libdir="${FCC_LIBDIR:-/usr/libexec/fcc}"
-		if _cr_launch="$("$_cr_libdir/remote.sh" session-command "$_cr_agent" 2>/dev/null)"; then
+		# FCC_PANE_HOST is how the bind address reaches remote.sh, which is what
+		# turns it into the ssh -L that carries the harness to the browser.
+		if _cr_launch="$(FCC_PANE_HOST="$_cr_bind" \
+			"$_cr_libdir/remote.sh" session-command "$_cr_agent" 2>/dev/null)"; then
 			[ -n "$_cr_launch" ] || {
 				printf '{"ok":false,"reason":"no-ssh-command"}\n'; return 1; }
 		else
@@ -232,7 +247,16 @@ cmd_create() {
 		# `... LC_ALL=C.UTF-8 exec /opt/fcc/bin/fcc-claude`, and `exec` would be
 		# one more word for `export`. That is not hypothetical: it is what the pane
 		# reported the first time the exports became multi-line.
-		_cr_cmd="$(session_env_exports); exec $_cr_launcher_exe"
+		# DeepSeek Harness is started on the address the browser reached this
+		# router on, not on the loopback it would pick for itself: the pane's
+		# address is the one the console's window then opens, and 127.0.0.1
+		# answers only a browser running on this router. --no-open keeps the
+		# router from trying to launch a desktop browser it does not have. A
+		# router with no usable address keeps the bare launcher, which is also
+		# what every other agent gets — they are terminals and take no arguments.
+		_cr_args=""
+		[ -n "$_cr_bind" ] && _cr_args=" web --host $_cr_bind --no-open"
+		_cr_cmd="$(session_env_exports); exec $_cr_launcher_exe$_cr_args"
 	fi
 
 	_cr_name="$(next_session_name "$_cr_agent")" || { fcc_die "no free session slot"; return 1; }
