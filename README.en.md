@@ -5,12 +5,13 @@
 Manage [FCC (Free Claude Code)](https://github.com/Alishahryar1/free-claude-code)
 and its coding agents from the LuCI web interface on OpenWrt / ImmortalWrt.
 
-Three pages, one package:
+Four pages, one package:
 
 | Page | What it does |
 | --- | --- |
 | **Web Console** | An interactive session for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, Aider and Antigravity CLI — one tmux session per agent, in the browser (DeepSeek Harness has a browser UI of its own; see below). |
-| **Configuration** | Server settings (address, port, log level), install and backup paths, the agent picker, install/uninstall/complete uninstall, updates, start/stop/restart, the diagnostics report, the FCC Admin link (the runtime panel refreshes every two seconds and pauses while the tab is hidden), and control of the FCC server on one other machine over SSH. |
+| **Install** | The agent picker, install/uninstall/complete uninstall, updates, and the diagnostics report (the runtime panel refreshes every two seconds and pauses while the tab is hidden). |
+| **Configuration** | Server settings (address, port, log level), install and backup paths, start/stop/restart, the FCC Admin link, and control of the FCC server on one other machine over SSH. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
@@ -41,7 +42,7 @@ The `.ipk` and the `.apk` are produced by CI from the corresponding OpenWrt SDK.
 They are genuinely different package formats — an `.ipk` renamed to `.apk` is
 not a package and will not install.
 
-Then open `LuCI → Services → FCC`. All three pages work immediately, before
+Then open `LuCI → Services → FCC`. All four pages work immediately, before
 anything else is installed.
 
 English is the source language and ships in `luci-app-fcc`; the compiled
@@ -72,7 +73,7 @@ The package lands under `bin/packages/<arch>/`. The same source produces an
 
 ## First run
 
-**1. Install the FCC runtime.** On the *Configuration* page, choose an agent and
+**1. Install the FCC runtime.** On the *Install* page, choose an agent and
 press **Install**. The page fetches the official installer over HTTPS, records
 its SHA-256, and runs it. Python, `uv` and the runtime itself go under the
 configured install path (`/opt` by default, so the runtime lands in `/opt/fcc`),
@@ -96,7 +97,7 @@ never into this package.
   is removed when the run ends.
 * The installer only reads `/dev/tty`, with no flag or environment variable that
   skips it. This package runs it inside a `tmux` session, answers its questions
-  according to the agent selected on the *Configuration* page, and writes the
+  according to the agent selected on the *Install* page, and writes the
   whole terminal to `<install_path>/logs/installer.out` — the first place to
   look when an install fails.
 * **An agent that is already installed is never asked about.** The installer
@@ -132,7 +133,7 @@ any time; changing the install path does not move an existing runtime.
 **3. Use an agent.** On the *Web Console* page, pick an agent and press
 **Start**. Each agent gets its own session, named `fcc-<agent>-NNN`.
 
-**4. Update.** *Configuration* → **FCC Runtime** → **Check for updates** →
+**4. Update.** *Install* → **FCC Runtime** → **Check for updates** →
 **Update FCC**. The check runs only when that button is pressed; opening or
 returning to the tab does not reach the network. **Clear record**, after
 **Uninstall completely**, removes both the version table and the job record —
@@ -384,7 +385,7 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 
 ### Packages the preflight installs
 
-*Configuration* → **Diagnostics** → **Run checks** lists every check with its
+*Install* → **Diagnostics** → **Run checks** lists every check with its
 value, requirement and result. When **Install** or **Update** is pressed and
 *every* failing check is one a package can clear, the installer adds those
 packages, asks the diagnostics again, and only downloads the runtime once the
@@ -505,7 +506,7 @@ Makefile                  explicit Package/ definitions (no luci.mk)
 VERSION                   the upstream version (the release number is PKG_RELEASE)
 luasrc/controller/fcc.lua the LuCI dispatcher and the JSON API
 luasrc/fcc/               util.lua, agents.lua, paths.lua, adminproxy.lua
-luasrc/view/fcc/          the three pages and the popout
+luasrc/view/fcc/          the four pages and the popout
 htdocs/luci-static/…/fcc/ browser JavaScript and xterm.js
 root/etc/init.d/fcc       procd service for the FCC server
 root/usr/libexec/fcc/     the shell backend

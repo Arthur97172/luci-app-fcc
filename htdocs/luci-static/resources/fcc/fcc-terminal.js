@@ -742,7 +742,7 @@
 		}
 		if (!agent) {
 			FCC.notice(FCC.$('#fcc-term-status'), 'warn',
-				FCC._('Install an agent first (Configuration → Agents).'));
+				FCC._('Install an agent first (Install → FCC Runtime).'));
 			return;
 		}
 		var cols = 80, rows = 24;
@@ -910,7 +910,7 @@
 			FCC.notice(status, 'fail', msg);
 		}
 		if (!agent) {
-			abort(FCC._('Install an agent first (Configuration → Agents).'));
+			abort(FCC._('Install an agent first (Install → FCC Runtime).'));
 			return;
 		}
 

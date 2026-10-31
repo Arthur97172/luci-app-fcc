@@ -222,7 +222,7 @@ cmd_create() {
 		# no session could be created at all. It was the sixth copy of a question
 		# common.sh already answers correctly (§104.17).
 		fcc_agent_installed "$_cr_agent" "$ROOT" || {
-			fcc_die "agent '$_cr_agent' is not installed — install it in Configuration → Agents"; return 1; }
+			fcc_die "agent '$_cr_agent' is not installed — add it under Install → FCC Runtime"; return 1; }
 
 		# The launcher is what the pane execs, so it is resolved to an absolute
 		# path rather than looked up in PATH. _cr_launcher keeps the bare name: it

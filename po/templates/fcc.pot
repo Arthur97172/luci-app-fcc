@@ -255,7 +255,7 @@ msgstr ""
 msgid "Install"
 msgstr ""
 
-msgid "Install an agent first (Configuration → Agents)."
+msgid "Install an agent first (Install → FCC Runtime)."
 msgstr ""
 
 msgid "Install path"

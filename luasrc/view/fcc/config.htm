@@ -1,22 +1,17 @@
 <%#
  luci-app-fcc — Configuration.
 
- Settings, the FCC runtime lifecycle (install / reinstall / update / uninstall),
- and the FCC server service controls. Long-running work is started in the
- background and polled, so nothing here blocks on a multi-minute install.
+ The settings form, the FCC Server service controls, and the SSH panel that
+ controls one other machine on the LAN. The FCC runtime lifecycle — install,
+ update, uninstall — and its diagnostics report moved to the Install tab in
+ 1.1.0; the install path and backup path the jobs read stay here, in the form
+ that owns them.
 
  There is no agent list on this page. Section 3.6.5 had one — a table of tick
  boxes, a recommended set and per-agent install buttons — and it asked the user
  to choose a subset before installing. It is gone, and an install now takes the
- whole registry (section 104.25): the choice it offered was one the FCC runtime
- does not really support, and the table was most of what this page was.
-
- What the runtime toolbar does carry is one agent dropdown, and it is not that
- table coming back. It holds a single value, it is read only when Install is
- pressed, and it exists for the one thing the whole-registry install cannot do:
- upstream stops at the first agent it cannot install and rolls the whole run
- back (section 79), so a device that cannot install one agent cannot install any
- of them without a way to ask for them one at a time.
+ whole registry (section 104.25). The single agent dropdown it left behind is
+ on the Install tab, beside the button it narrows.
 -%>
 
 <% local v = require("luci.fcc.paths").asset_version() %>
@@ -353,114 +348,8 @@
 		</div>
 	</div>
 
-	<!-- --------------------------------------------------------- runtime -->
-	<div class="cbi-section">
-		<h3><%:FCC Runtime%></h3>
-		<div class="cbi-section-node">
-			<div id="fcc-runtime-state" class="fcc-card"><%:Loading…%></div>
-
-			<div class="fcc-toolbar">
-				<!-- Section 104.25 took the agent table off this page and made an
-				     install take the whole registry. That is still what the
-				     Install button does with nothing chosen here — the backend
-				     is sent the flag, not a list, so the registry stays the only
-				     place the set is written down.
-
-				     Install and Reinstall are one button. With the dropdown on
-				     "All agents" and a runtime already installed, the click
-				     performs what the separate Reinstall button used to: remove
-				     the runtime and install everything again, after a
-				     confirmation. Upstream reconciles the agent set and never
-				     reinstalls an agent that is already present (section 79), so
-				     this is the only way to replace a damaged agent; a second
-				     button for it was one more control than the toolbar needed.
-
-				     A chosen agent is different: it is added to whatever runtime
-				     is there, without removing anything. That is what keeps the
-				     remaining agents reachable on a device where one of them
-				     cannot be installed.
-
-				     Deliberately not the table that was removed: no tick boxes,
-				     no recommended set, no per-row buttons, nothing to
-				     reconcile — a single value with a single meaning. -->
-				<label class="fcc-toolbar-label" for="fcc-runtime-agent"><%:Agent%></label>
-				<select id="fcc-runtime-agent" class="cbi-input-select">
-					<option value=""><%:All agents%></option>
-					<% for _, fcc_agent in ipairs(require("luci.fcc.agents").load()) do %>
-					<option value="<%=fcc_agent.id%>"><%=fcc_agent.name%></option>
-					<% end %>
-				</select>
-				<button id="fcc-runtime-install" class="cbi-button cbi-button-apply"><%:Install%></button>
-				<button id="fcc-runtime-update" class="cbi-button"><%:Update%></button>
-				<button id="fcc-runtime-uninstall" class="cbi-button cbi-button-remove"><%:Uninstall%></button>
-				<button id="fcc-runtime-purge" class="cbi-button cbi-button-remove"><%:Uninstall completely%></button>
-				<!-- The records are the job panel below and the version table
-				     in the Updates block — both left on the page after the
-				     run that produced them. They were two buttons; they are
-				     one, here, because both are this run's leftovers and
-				     neither reaches the network again. Like every other
-				     Clear on the page it empties what is on screen and
-				     nothing on disk: the logs under the install path are the
-				     evidence an install left behind, not clutter to be swept
-				     up. -->
-				<button id="fcc-runtime-clear" class="cbi-button"><%:Clear record%></button>
-			</div>
-
-			<div id="fcc-runtime-status"></div>
-
-			<div class="fcc-help">
-				<!-- The one thing to know before pressing Install. The five notes
-				     that used to be here — what Install, Reinstall, Uninstall,
-				     purge and the backup path each do — are gone: the toolbar
-				     names the actions and the dialogs state what each one
-				     costs. What is left is the trap the buttons do not show,
-				     because it looks like the default rather than a choice:
-				     the whole registry is several gigabytes and a slow
-				     download on a router. -->
-				<p class="fcc-warn">
-					<%:⚠️ Note: avoid choosing “All agents” when installing. It triggers a large download, makes progress slow and takes about 8 GB of storage. Choose only the items you need and install them in batches.%>
-				</p>
-			</div>
-
-			<!-- Update checking and the update itself, under the runtime they
-			     act on. Checking is manual: this block opens at "Not checked
-			     yet" and reaches the network only when the button is pressed.
-			     The job panel further down shows the update once it starts. -->
-			<div class="fcc-update-block">
-				<h4><%:Updates%></h4>
-				<div id="fcc-update-state"><%:Not checked yet.%></div>
-				<div class="fcc-toolbar">
-					<button id="fcc-update-check" class="cbi-button"><%:Check for updates%></button>
-					<button id="fcc-update-run" class="cbi-button cbi-button-apply" disabled><%:Update FCC%></button>
-				</div>
-				<p class="fcc-muted">
-					<%:Updating reinstalls the FCC runtime from upstream. If a step fails, the previous runtime is put back and your data is left in place.%>
-				</p>
-			</div>
-
-			<div id="fcc-job" style="display:none">
-				<div class="fcc-progress"><span id="fcc-job-bar" style="width:0"></span></div>
-				<pre class="fcc-log" id="fcc-job-log"></pre>
-			</div>
-		</div>
-	</div>
-
-	<!-- ------------------------------------------------------------ doctor -->
-	<div class="cbi-section">
-		<h3><%:Diagnostics%></h3>
-		<div class="cbi-section-node">
-			<div class="fcc-toolbar">
-				<button id="fcc-doctor-run" class="cbi-button"><%:Run checks%></button>
-				<!-- The report below is kept until the next run replaces it, so
-				     this is the way to put an empty page back. It clears what
-				     the page is showing, not any file on disk. Named after the
-				     check report so it cannot be mistaken for the log viewer on
-				     Basic Information. -->
-				<button id="fcc-doctor-clear" class="cbi-button cbi-button-reset"><%:Clear check log%></button>
-			</div>
-			<div id="fcc-doctor"></div>
-		</div>
-	</div>
+	<!-- The runtime lifecycle and the diagnostics report are on the Install
+	     tab, beside the settings they read. -->
 </div>
 
 <script src="<%=resource%>/fcc/fcc-common.js?v=<%=v%>"></script>

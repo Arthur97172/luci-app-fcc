@@ -402,6 +402,7 @@ for _sm_f in \
 	/usr/libexec/fcc/server-run.sh \
 	/usr/lib/lua/luci/controller/fcc.lua \
 	/usr/lib/lua/luci/view/fcc/console.htm \
+	/usr/lib/lua/luci/view/fcc/install.htm \
 	/usr/lib/lua/luci/view/fcc/config.htm \
 	/usr/lib/lua/luci/view/fcc/info.htm \
 	/usr/lib/lua/luci/fcc/agents.lua \
@@ -409,7 +410,8 @@ for _sm_f in \
 	/usr/lib/lua/luci/fcc/util.lua \
 	/usr/share/rpcd/acl.d/luci-app-fcc.json \
 	/usr/share/luci-app-fcc/agents.conf \
-	/www/luci-static/resources/fcc/fcc-terminal.js
+	/www/luci-static/resources/fcc/fcc-terminal.js \
+	/www/luci-static/resources/fcc/fcc-install.js
 do
 	_sm_rc=0
 	smoke_sh "[ -e '$_sm_f' ]" || _sm_rc=$?

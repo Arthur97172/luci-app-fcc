@@ -310,7 +310,7 @@ test_the_translation_package_does_not_depend_on_the_app() {
 }
 
 # ---------------------------------------------------------------------------
-# The Configuration page has no agent table
+# The Install page has no agent table
 #
 # Section 3.6.5 asked for a picker, and for a while the page had one: a table
 # whose first column was a tick box, plus a recommended set and a per-row
@@ -321,16 +321,16 @@ test_the_translation_package_does_not_depend_on_the_app() {
 # The one agent dropdown that now sits before Install (section 79's rollback is
 # why it exists) is not that table coming back, and the difference is the point
 # of this test: one value, no tick boxes, nothing rendered from a second source.
-# What it does is pinned by test_the_config_page_can_install_one_agent.
+# What it does is pinned by test_the_install_page_can_install_one_agent.
 #
 # There is no DOM harness here, so the invariant is pinned against the markup
 # and the script: the table and everything that fed it must be absent, and the
 # two buttons must be present.
 # ---------------------------------------------------------------------------
 
-test_the_config_page_has_no_agent_table() {
-	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
-	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+test_the_install_page_has_no_agent_table() {
+	_ts_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 
 	assert_not_contains "$(cat "$_ts_view")" 'fcc-agent-table' "the view has no agent table"
 	assert_not_contains "$(cat "$_ts_js")" 'fcc-agent-table' "and no script renders one"
@@ -376,9 +376,9 @@ test_the_config_page_has_no_agent_table() {
 # still never listed.
 # ---------------------------------------------------------------------------
 
-test_the_config_page_installs_every_agent() {
-	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
-	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+test_the_install_page_installs_every_agent() {
+	_ts_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 
 	# One button starts both jobs, and it is the only way the page starts an
@@ -386,7 +386,7 @@ test_the_config_page_installs_every_agent() {
 	# them, and the tick boxes that used to choose a subset are asserted gone
 	# by test_the_config_page_has_no_agent_table.
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-runtime-install"' \
-		"the Configuration page has an Install button"
+		"the Install page has an Install button"
 	assert_not_contains "$(cat "$_ts_view")" 'id="fcc-runtime-reinstall"' \
 		"with no separate Reinstall button beside it"
 
@@ -432,8 +432,8 @@ test_the_config_page_installs_every_agent() {
 # ---------------------------------------------------------------------------
 
 test_one_install_button_does_both_jobs() {
-	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
-	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 	_ts_install="$ROOT/root/usr/libexec/fcc/install.sh"
 
@@ -481,8 +481,8 @@ test_one_install_button_does_both_jobs() {
 # ---------------------------------------------------------------------------
 
 test_the_purge_button_is_named_plainly() {
-	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
-	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 
 	assert_contains "$(cat "$_ts_view")" '<%:Uninstall completely%>' \
 		"the destructive button is called Uninstall completely"
@@ -745,7 +745,7 @@ test_console_output_wait_ticks_faster_than_a_second() {
 }
 
 test_the_runtime_help_is_one_warning() {
-	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_view="$ROOT/luasrc/view/fcc/install.htm"
 	_ts_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
 
 	# The five notes that explained each toolbar action are gone — the buttons
@@ -791,9 +791,13 @@ test_the_runtime_help_is_one_warning() {
 test_settings_offer_save_and_reset_and_the_runtime_clears_its_record() {
 	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_install_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_install_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 	_ts_view_text="$(cat "$_ts_view")"
 	_ts_js_text="$(cat "$_ts_js")"
+	_ts_install_view_text="$(cat "$_ts_install_view")"
+	_ts_install_js_text="$(cat "$_ts_install_js")"
 	_ts_ctrl_text="$(cat "$_ts_ctrl")"
 
 	# Three verbs on the settings row, in increasing strength: Save & Apply
@@ -817,12 +821,12 @@ test_settings_offer_save_and_reset_and_the_runtime_clears_its_record() {
 
 	# The runtime toolbar's clear comes after Uninstall completely, where the
 	# record it clears is produced.
-	_ts_after_purge="$(sed -n '/id="fcc-runtime-purge"/,/<\/div>/p' "$_ts_view")"
+	_ts_after_purge="$(sed -n '/id="fcc-runtime-purge"/,/<\/div>/p' "$_ts_install_view")"
 	assert_contains "$_ts_after_purge" 'id="fcc-runtime-clear"' \
 		"Clear record follows Uninstall completely"
-	assert_contains "$_ts_view_text" '<%:Clear record%>' \
+	assert_contains "$_ts_install_view_text" '<%:Clear record%>' \
 		"and is the one button that clears both records"
-	assert_contains "$_ts_view_text" 'id="fcc-runtime-status"' \
+	assert_contains "$_ts_install_view_text" 'id="fcc-runtime-status"' \
 		"the runtime section has its own place to answer a click"
 
 	# The save handler is one function with the flag the backend reads. Both
@@ -852,17 +856,17 @@ test_settings_offer_save_and_reset_and_the_runtime_clears_its_record() {
 	# Clearing the record is page-local, like every other Clear here, and
 	# refused while the job that owns the log is still running. One button
 	# empties both leftovers — the job panel and the version table.
-	assert_contains "$_ts_js_text" 'function clearRecord()' \
+	assert_contains "$_ts_install_js_text" 'function clearRecord()' \
 		"Clear record is its own action"
-	assert_contains "$_ts_js_text" 'if (jobTimer) {' \
+	assert_contains "$_ts_install_js_text" 'if (jobTimer) {' \
 		"it refuses while a job is running"
-	assert_contains "$_ts_js_text" 'panel.style.display = '"'"'none'"'"';' \
+	assert_contains "$_ts_install_js_text" 'panel.style.display = '"'"'none'"'"';' \
 		"and otherwise hides the job panel"
-	assert_contains "$_ts_js_text" "pre.textContent = '';" \
+	assert_contains "$_ts_install_js_text" "pre.textContent = '';" \
 		"empties the log on the page"
-	assert_contains "$_ts_js_text" 'clearUpdateRecord();' \
+	assert_contains "$_ts_install_js_text" 'clearUpdateRecord();' \
 		"and puts the update block back to its unchecked state"
-	assert_contains "$_ts_js_text" "FCC.\$('#fcc-runtime-clear').addEventListener('click', clearRecord)" \
+	assert_contains "$_ts_install_js_text" "FCC.\$('#fcc-runtime-clear').addEventListener('click', clearRecord)" \
 		"the button is wired"
 }
 
@@ -899,14 +903,14 @@ test_every_page_asset_is_cache_stamped() {
 # a shell.
 # ---------------------------------------------------------------------------
 
-test_the_config_page_no_longer_offers_to_delete_the_backups() {
-	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
-	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+test_the_install_page_no_longer_offers_to_delete_the_backups() {
+	_ts_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 	_ts_install="$ROOT/root/usr/libexec/fcc/install.sh"
 
 	assert_not_contains "$(cat "$_ts_view")" 'fcc-runtime-cleanbackups' \
-		"the Configuration page has no Delete backups button"
+		"the Install page has no Delete backups button"
 	assert_not_contains "$(cat "$_ts_view")" 'Delete backups' \
 		"and no explanatory paragraph about it"
 	assert_not_contains "$(cat "$_ts_js")" 'delete_backups' \
@@ -937,9 +941,9 @@ test_the_config_page_no_longer_offers_to_delete_the_backups() {
 # draw from a second source.
 # ---------------------------------------------------------------------------
 
-test_the_config_page_can_install_one_agent() {
-	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
-	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+test_the_install_page_can_install_one_agent() {
+	_ts_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 
 	# The control exists, and it is a <select> with a value — not a set of tick
@@ -1850,12 +1854,12 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 test_basic_information_controls_are_manual_and_named() {
 	_ts_info="$ROOT/luasrc/view/fcc/info.htm"
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"
-	_ts_config="$ROOT/luasrc/view/fcc/config.htm"
-	_ts_js_config="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+	_ts_install_view="$ROOT/luasrc/view/fcc/install.htm"
+	_ts_install_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
 
-	assert_contains "$(cat "$_ts_config")" '<%:Clear check log%>' \
+	assert_contains "$(cat "$_ts_install_view")" '<%:Clear check log%>' \
 		"the diagnostics button is named after the check report, not logs"
-	assert_not_contains "$(cat "$_ts_config")" '<%:Clear log%>' \
+	assert_not_contains "$(cat "$_ts_install_view")" '<%:Clear log%>' \
 		"so it cannot be read as the log viewer's control"
 
 	# The log viewer on this page gets its own clear, next to Load.
@@ -1876,16 +1880,16 @@ test_basic_information_controls_are_manual_and_named() {
 	assert_not_contains "$(cat "$_ts_js")" 'fcc-info-refresh' \
 		"and nothing still binds to it"
 
-	# The whole update block lives under FCC Runtime on Configuration now.
+	# The whole update block lives under FCC Runtime on the Install tab now.
 	assert_not_contains "$(cat "$_ts_info")" 'fcc-info-update' \
 		"Basic Information no longer carries the update controls"
 	assert_not_contains "$(cat "$_ts_info")" 'id="fcc-info-updates"' \
 		"and its update section is gone"
-	assert_contains "$(cat "$_ts_config")" 'class="fcc-update-block"' \
-		"Configuration carries the update block"
-	_ts_warn_line="$(grep -n 'avoid choosing “All agents”' "$_ts_config" | cut -d: -f1)"
-	_ts_block_line="$(grep -n 'class="fcc-update-block"' "$_ts_config" | cut -d: -f1)"
-	_ts_job_line="$(grep -n 'id="fcc-job"' "$_ts_config" | cut -d: -f1)"
+	assert_contains "$(cat "$_ts_install_view")" 'class="fcc-update-block"' \
+		"the Install page carries the update block"
+	_ts_warn_line="$(grep -n 'avoid choosing “All agents”' "$_ts_install_view" | cut -d: -f1)"
+	_ts_block_line="$(grep -n 'class="fcc-update-block"' "$_ts_install_view" | cut -d: -f1)"
+	_ts_job_line="$(grep -n 'id="fcc-job"' "$_ts_install_view" | cut -d: -f1)"
 	if [ -n "$_ts_warn_line" ] && [ -n "$_ts_block_line" ] && [ -n "$_ts_job_line" ] \
 		&& [ "$_ts_block_line" -gt "$_ts_warn_line" ] && [ "$_ts_block_line" -lt "$_ts_job_line" ]; then
 		pass "the block sits below the install warning, above the job panel"
@@ -1893,12 +1897,12 @@ test_basic_information_controls_are_manual_and_named() {
 		fail "the block sits below the install warning, above the job panel" \
 			"warning=$_ts_warn_line block=$_ts_block_line job=$_ts_job_line"
 	fi
-	_ts_updates="$(sed -n '/class="fcc-update-block"/,/id="fcc-job"/p' "$_ts_config")"
+	_ts_updates="$(sed -n '/class="fcc-update-block"/,/id="fcc-job"/p' "$_ts_install_view")"
 	assert_contains "$_ts_updates" 'id="fcc-update-check"' \
 		"Check for updates is in the block's toolbar"
 	assert_contains "$_ts_updates" 'id="fcc-update-run"' \
 		"Update FCC is in the update toolbar"
-	_ts_after_update="$(sed -n '/id="fcc-update-run"/,/<\/div>/p' "$_ts_config")"
+	_ts_after_update="$(sed -n '/id="fcc-update-run"/,/<\/div>/p' "$_ts_install_view")"
 	# The update toolbar has the two buttons that act on the update; the third
 	# one was a Clear that duplicated the runtime toolbar's, so it is gone.
 	assert_not_contains "$_ts_after_update" 'id="fcc-update-clear"' \
@@ -1906,61 +1910,61 @@ test_basic_information_controls_are_manual_and_named() {
 
 	# No check on load. The init body must not call the checker; the block
 	# starts in the same state the clear button restores.
-	_ts_init="$(sed -n '/^	function init()/,/^	}$/p' "$_ts_js_config")"
+	_ts_init="$(sed -n '/^	function init()/,/^	}$/p' "$_ts_install_js")"
 	assert_not_contains "$_ts_init" 'checkUpdates();' \
 		"opening the tab does not run an update check"
 	assert_contains "$_ts_init" 'clearUpdateRecord();' \
 		"it renders the not-checked state instead"
-	assert_not_contains "$(cat "$_ts_js_config")" 'checkUpdates();' \
+	assert_not_contains "$(cat "$_ts_install_js")" 'checkUpdates();' \
 		"no code path runs a check on its own, not even after an update"
-	assert_contains "$(cat "$_ts_js_config")" "text: FCC._('Not checked yet.')" \
+	assert_contains "$(cat "$_ts_install_js")" "text: FCC._('Not checked yet.')" \
 		"which is one shared sentence"
-	assert_contains "$(cat "$_ts_js_config")" 'updateAvailable = false;' \
+	assert_contains "$(cat "$_ts_install_js")" 'updateAvailable = false;' \
 		"clearing also drops the pending update"
-	assert_contains "$(cat "$_ts_js_config")" 'btn.disabled = true;' \
+	assert_contains "$(cat "$_ts_install_js")" 'btn.disabled = true;' \
 		"and disables Update FCC until a new check"
 	# The runtime's "installed" field is the version string, null when absent.
 	# Testing it for `true` left the button disabled after a check that found
 	# an update, so the click did nothing — the reported bug.
-	assert_not_contains "$(cat "$_ts_js_config")" 'f.installed === true' \
+	assert_not_contains "$(cat "$_ts_install_js")" 'f.installed === true' \
 		"the check result's installed field is not treated as a boolean"
-	assert_contains "$(cat "$_ts_js_config")" \
+	assert_contains "$(cat "$_ts_install_js")" \
 		"&& (f.update_available === true || f.update_available === 'true');" \
 		"the button lights from a checked, installed runtime with an update"
 
 	# The update holds fcc-update.lock, so the page must follow that lock. A
 	# watch on 'install' found nothing on the first poll and reported the job
 	# finished before it had started, which is why Update FCC looked inert.
-	assert_contains "$(cat "$_ts_js_config")" \
+	assert_contains "$(cat "$_ts_install_js")" \
 		"runJobAction('update_runtime', {}, 'update', 'fcc-update.log', clearUpdateRecord)" \
 		"the update watches its own lock and clears the record when it ends"
-	assert_not_contains "$(cat "$_ts_js_config")" \
+	assert_not_contains "$(cat "$_ts_install_js")" \
 		"runJobAction('update_runtime', {}, 'install'" \
 		"and never the install lock"
-	assert_contains "$(cat "$_ts_js_config")" \
+	assert_contains "$(cat "$_ts_install_js")" \
 		"FCC.\$('#fcc-runtime-update').addEventListener('click', runUpdate)" \
 		"the runtime toolbar's Update starts the same job"
-	assert_contains "$(cat "$_ts_js_config")" \
+	assert_contains "$(cat "$_ts_install_js")" \
 		"FCC.\$('#fcc-update-check').addEventListener('click', checkUpdates)" \
 		"Check for updates is wired"
-	assert_not_contains "$(cat "$_ts_js_config")" \
+	assert_not_contains "$(cat "$_ts_install_js")" \
 		'fcc-update-clear' \
 		"nothing still binds a second Clear button"
 }
 
-test_configuration_runtime_panel_polls_the_status() {
+test_configuration_server_panel_polls_the_status() {
 	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
 	_ts_poll="$(sed -n '/function pollStatus()/,/^	}$/p' "$_ts_js")"
 	_ts_start="$(sed -n '/function startStatusPoll()/,/^	}$/p' "$_ts_js")"
 
-	# The runtime panel used to be the snapshot the page opened with: it could
+	# The server panel used to be the snapshot the page opened with: it could
 	# still say "Running, uptime 26s" about a process restarted minutes ago.
 	# Basic Information already polls the same call every two seconds, and the
 	# status call is the cheap one, so Configuration follows the same cadence.
 	assert_contains "$_ts_start" 'setInterval(pollStatus, 2000)' \
-		"the runtime panel polls status every two seconds"
+		"the server panel polls status every two seconds"
 	assert_contains "$_ts_poll" '.then(refreshAll)' \
-		"the poll redraws both panels from the one batched call"
+		"the poll redraws the panel from the one batched call"
 	assert_contains "$_ts_poll" 'document.hidden' \
 		"a hidden tab does not poll"
 	assert_contains "$_ts_poll" 'statusBusy' \
@@ -2043,6 +2047,78 @@ test_agent_information_is_opt_in_and_named() {
 		"the clear button is wired"
 	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-info-agent-status').textContent = ''" \
 		"clearing also drops the detection sentence"
+}
+
+# ---------------------------------------------------------------------------
+# The Install tab sits between the console and the settings
+#
+# 1.1.0 split the runtime lifecycle and the diagnostics report out of the
+# Configuration page. The tab they went to is the second one, because installing
+# the runtime is what a new device does before it has settings to change; the
+# order numbers are what LuCI sorts the tab bar by, so they are the thing worth
+# pinning.
+# ---------------------------------------------------------------------------
+
+test_the_install_tab_sits_between_console_and_configuration() {
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+
+	assert_contains "$(cat "$_ts_ctrl")" \
+		'"fcc", "install"}, template("fcc/install"), _("Install"), 15' \
+		"the install tab is registered between the console and the settings"
+	assert_contains "$(cat "$_ts_ctrl")" \
+		'"fcc", "console"}, template("fcc/console"), _("Web Console"), 10' \
+		"the console is still first"
+	assert_contains "$(cat "$_ts_ctrl")" \
+		'"fcc", "config"}, template("fcc/config"), _("Configuration"), 20' \
+		"and the settings are third"
+
+	# The view it names is in the tree and ships.
+	assert_ok "the Install page template exists" test -f "$ROOT/luasrc/view/fcc/install.htm"
+	assert_contains "$(install_block)" './luasrc/view/fcc/install.htm' \
+		"and the manifest installs it"
+	assert_contains "$(install_block)" \
+		'./htdocs/luci-static/resources/fcc/fcc-install.js' \
+		"with the script it loads"
+
+	# The tab bar label reuses the Install msgid the button already has, so the
+	# catalogue needs no new entry for it.
+	assert_contains "$(cat "$ROOT/luasrc/view/fcc/install.htm")" '<%:Install%>' \
+		"the page still names its install button with that msgid"
+
+	# The split is the point: neither half stays behind on the other page.
+	assert_not_contains "$(cat "$ROOT/luasrc/view/fcc/config.htm")" \
+		'id="fcc-runtime-state"' \
+		"the settings page no longer carries the runtime card"
+	assert_not_contains "$(cat "$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js")" \
+		'renderRuntime' "nor does its script"
+	assert_not_contains "$(cat "$ROOT/luasrc/view/fcc/install.htm")" \
+		'id="fcc-install-path"' \
+		"and the install path stays on the settings page that owns it"
+}
+
+# ---------------------------------------------------------------------------
+# The Install page keeps its runtime card current
+#
+# The card is the one place on the page that answers "is the runtime there", and
+# it has to be right after a ten-minute install that ran while the tab was in the
+# background. The poll follows the same rules as the pages before it: two
+# seconds, paused while hidden, no overlap, and stopped on unload. Basic
+# Information and Configuration pin the same rules on their own scripts.
+# ---------------------------------------------------------------------------
+
+test_the_install_page_polls_the_runtime() {
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js"
+	_ts_poll="$(sed -n '/function pollStatus()/,/^	}$/p' "$_ts_js")"
+	_ts_start="$(sed -n '/function startStatusPoll()/,/^	}$/p' "$_ts_js")"
+
+	assert_contains "$_ts_start" 'setInterval(pollStatus, 2000)' \
+		"the runtime card refreshes every two seconds"
+	assert_contains "$_ts_poll" 'document.hidden' "a hidden tab does not poll"
+	assert_contains "$_ts_poll" 'statusBusy' "and a slow answer is not overlapped"
+	assert_contains "$(sed -n '/function refreshAll()/,/^	}$/p' "$_ts_js")" \
+		'renderRuntime(d)' "the refresh redraws the runtime card"
+	assert_contains "$(cat "$_ts_js")" 'startStatusPoll();' \
+		"init starts the poll after the first status answer"
 }
 
 tests_main

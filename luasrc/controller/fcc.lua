@@ -1,10 +1,15 @@
 -- luci-app-fcc — LuCI controller.
 --
--- Three pages, one JSON API:
+-- Four pages, one JSON API:
 --
 --   Web Console      /admin/services/fcc/console   interactive terminal
---   Configuration    /admin/services/fcc/config    settings + runtime lifecycle
+--   Install          /admin/services/fcc/install   runtime lifecycle + diagnostics
+--   Configuration    /admin/services/fcc/config    settings + server control
 --   Basic Info       /admin/services/fcc/info      runtime monitor
+--
+-- Install sits between the console and the settings: it is what a new device
+-- does first, and it acts on storage rather than on the server Configuration
+-- controls.
 --
 -- Every API action follows the same shape: validate every parameter with
 -- luci.fcc.util, run one backend script with an explicit argv, and relay the
@@ -34,6 +39,7 @@ function index()
 	-- may actually reach, so the parent node needs no template of its own.
 	entry({"admin", "services", "fcc"}, firstchild(), _("FCC"), 60)
 	entry({"admin", "services", "fcc", "console"}, template("fcc/console"), _("Web Console"), 10)
+	entry({"admin", "services", "fcc", "install"}, template("fcc/install"), _("Install"), 15)
 	entry({"admin", "services", "fcc", "config"}, template("fcc/config"), _("Configuration"), 20)
 	entry({"admin", "services", "fcc", "info"}, template("fcc/info"), _("Basic Information"), 30)
 

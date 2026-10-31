@@ -6,12 +6,13 @@
 [FCC（Free Claude Code）](https://github.com/Alishahryar1/free-claude-code)
 及其编程 Agent。
 
-一个软件包，三个页面：
+一个软件包，四个页面：
 
 | 页面 | 作用 |
 | --- | --- |
 | **Web 终端** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider、Antigravity CLI 的交互式会话——每个 Agent 一个 tmux 会话，直接在浏览器里用（DeepSeek Harness 只有浏览器界面，见下文）。 |
-| **配置** | 服务器设置（地址、端口、日志级别）、安装与备份路径、Agent 选择、安装/卸载/彻底卸载、更新、启动/停止/重启、诊断报告、FCC Admin 入口（运行信息每 2 秒刷新，后台标签页暂停），以及通过 SSH 控制局域网内另一台机器。 |
+| **安装** | Agent 选择、安装/卸载/彻底卸载、更新、诊断报告（运行时信息每 2 秒刷新，后台标签页暂停）。 |
+| **配置** | 服务器设置（地址、端口、日志级别）、安装与备份路径、启动/停止/重启、FCC Admin 入口，以及通过 SSH 控制局域网内另一台机器。 |
 | **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储。 |
 
 `luci-app-fcc` **只是控制层**：只包含 Lua、JavaScript 和 POSIX shell，**不包含** Python、
@@ -40,7 +41,7 @@ apk add --allow-untrusted luci-i18n-fcc-zh-cn-*.apk   # 中文界面需额外安
 `.ipk` 与 `.apk` 是两种不同的包格式，由 CI 用对应版本的 SDK 构建——把 `.ipk` 改名成
 `.apk` 得到的不是安装包，装不上。
 
-然后打开 `LuCI → 服务 → FCC智能体`。三个页面装完即可使用。
+然后打开 `LuCI → 服务 → FCC智能体`。四个页面装完即可使用。
 
 英文界面随 `luci-app-fcc` 一起安装；简体中文目录在单独的 `luci-i18n-fcc-zh-cn` 包里，
 LuCI 界面语言为中文时会自动加载，无需配置、无需重启。两个包互相独立，可分别升级和卸载。
@@ -65,7 +66,7 @@ make package/luci-app-fcc/compile V=s
 
 ## 首次使用
 
-**1. 安装 FCC 运行时。** 在*配置*页面选择 Agent，点 **安装**。页面通过 HTTPS 拉取官方
+**1. 安装 FCC 运行时。** 在*安装*页面选择 Agent，点 **安装**。页面通过 HTTPS 拉取官方
 安装器、记录其 SHA-256 后执行；Python、`uv` 和运行时本身都装在配置的安装路径下（默认
 `/opt/fcc`），不进入本软件包。
 
@@ -101,7 +102,7 @@ make package/luci-app-fcc/compile V=s
 **3. 使用 Agent。** 在 *Web 终端* 页面选择 Agent 并按 **Start**，每个 Agent 的会话命名为
 `fcc-<agent>-NNN`。
 
-**4. 更新。** *配置* → **FCC 运行时** → **Check for updates** → **Update FCC**。检查只在
+**4. 更新。** *安装* → **FCC 运行时** → **Check for updates** → **Update FCC**。检查只在
 点按钮时执行，打开或切回标签页不会联网；**彻底卸载**之后的 **Clear record** 同时清掉版本表
 和任务记录（进度条与日志），回到"尚未检查"并禁用 **Update FCC**。更新是一串步骤：检查剩余空间、提示仍打开的终端、
 保存状态、停止服务器、重新安装、校验二进制、重启，最后确认服务器在响应才报告成功。
@@ -268,7 +269,7 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 
 ### 安装前自动补齐的包
 
-*配置* → **诊断** → **运行检查** 列出每项检查的值、要求和结果。按下 **安装** 或 **更新**
+*安装* → **诊断** → **运行检查** 列出每项检查的值、要求和结果。按下 **安装** 或 **更新**
 时，如果所有未通过的检查都能由装包解决，安装程序会先补包、重新检查，全部通过后才下载
 运行时；有装包解决不了的项（空间、DNS、HTTPS、没有可用的 Node 构建）则直接拒绝并给出
 完整报告。
@@ -356,7 +357,7 @@ Makefile                  显式的 Package/ 定义（不用 luci.mk）
 VERSION                   上游版本（发布号在 Makefile 的 PKG_RELEASE）
 luasrc/controller/fcc.lua LuCI 调度器与 JSON API
 luasrc/fcc/               util.lua、agents.lua、paths.lua、adminproxy.lua
-luasrc/view/fcc/          三个页面与独立窗口
+luasrc/view/fcc/          四个页面与独立窗口
 htdocs/luci-static/…/fcc/ 浏览器端 JavaScript 与 xterm.js
 root/etc/init.d/fcc       FCC 服务器的 procd 服务
 root/usr/libexec/fcc/     shell 后端

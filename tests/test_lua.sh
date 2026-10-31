@@ -638,7 +638,9 @@ test_the_page_does_not_declare_a_fresh_job_finished() {
 	# forked shell has taken its lock, so the first poll finds the lock unheld —
 	# and the old code read that as "the job is over", stopped the timer, set the
 	# bar to 100% and refreshed the page.
-	_ts_js="$(cat "$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js")"
+	# The job watch moved with the runtime controls to the Install page in
+	# 1.1.0; the guard is the same one, read from the file that now owns it.
+	_ts_js="$(cat "$ROOT/htdocs/luci-static/resources/fcc/fcc-install.js")"
 
 	assert_contains "$_ts_js" 'seenRunning' \
 		"the watch remembers having seen the job running"

@@ -16,7 +16,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fcc
-PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.0.9))
+PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.1.0))
 # Bumped rather than PKG_VERSION: the package's contents changed while its
 # upstream version did not. Section 62 names the release and its tag after both
 # numbers — the release carrying luci-app-fcc_0.1.1-r4_all.ipk is called
@@ -127,6 +127,7 @@ define Package/luci-app-fcc/install
 	$(INSTALL_DATA) ./luasrc/controller/fcc.lua $(1)/usr/lib/lua/luci/controller/fcc.lua
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/fcc
 	$(INSTALL_DATA) ./luasrc/view/fcc/console.htm $(1)/usr/lib/lua/luci/view/fcc/console.htm
+	$(INSTALL_DATA) ./luasrc/view/fcc/install.htm $(1)/usr/lib/lua/luci/view/fcc/install.htm
 	$(INSTALL_DATA) ./luasrc/view/fcc/config.htm $(1)/usr/lib/lua/luci/view/fcc/config.htm
 	$(INSTALL_DATA) ./luasrc/view/fcc/info.htm $(1)/usr/lib/lua/luci/view/fcc/info.htm
 	# The standalone window's page. It is a view like the others, but it renders
@@ -153,6 +154,7 @@ define Package/luci-app-fcc/install
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/addon-fit.min.js $(1)/www/luci-static/resources/fcc/addon-fit.min.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-common.js $(1)/www/luci-static/resources/fcc/fcc-common.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-terminal.js $(1)/www/luci-static/resources/fcc/fcc-terminal.js
+	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-install.js $(1)/www/luci-static/resources/fcc/fcc-install.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-config.js $(1)/www/luci-static/resources/fcc/fcc-config.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-info.js $(1)/www/luci-static/resources/fcc/fcc-info.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-popout.js $(1)/www/luci-static/resources/fcc/fcc-popout.js
