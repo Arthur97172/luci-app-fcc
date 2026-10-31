@@ -34,6 +34,7 @@
 	var term = null;
 	var fit = null;
 	var lastSize = null;    // last cols/rows sent to the session
+	var paneSize = null;    // the pane's own grid, as the last output answer said
 	var offset = 0;
 	var polling = false;
 	var pollAbort = null;
@@ -109,29 +110,83 @@
 
 	function attach() {
 		note('');
-		lastSize = null;
+		repaint();
+	}
 
-		// The pane is resized to this window first: the capture below is the
-		// pane's grid, and a grid wider than the terminal wraps at the wrong
-		// column. Then repaint from that screen and continue from the end of
-		// the captured stream — a reload shows what is on screen now instead
-		// of replaying everything the window has already shown.
-		fitNow().then(function () {
+	/**
+	 * Paint the pane's current screen into this terminal, then resume polling.
+	 *
+	 * `lastSize` is dropped first so the resize is sent even when this window's
+	 * own size has not changed: the console tab shows the same session and may
+	 * have taken the pane to its own grid while this window was in the
+	 * background, and it is the pane's size that the captured screen and the
+	 * agent's next paint are drawn for.
+	 *
+	 * The capture is taken before polling stops, so a failed capture leaves the
+	 * poll running and this window live rather than frozen on its last frame.
+	 */
+	function repaint() {
+		lastSize = null;
+		return fitNow().then(function () {
 			return FCC.api('session_capture', { name: session }, { method: 'GET' });
 		}).then(function (r) {
+			stopPolling();
 			term.reset();
 			term.write(FCC.captureBytes(r.data));
 			return FCC.api('session_output', { name: session, offset: 0, wait: 0 },
 				{ method: 'GET' });
 		}).then(function (r) {
 			offset = r.offset;
+			notePaneSize(r);
 			startPolling();
 			fitNow();
 			term.focus();
 		}).catch(function (err) {
 			note((I18N.attach || FCC._('Could not attach to the session:')) + ' ' +
 				((err && err.message) ? err.message : ''));
+			/* The screen was not repainted, so the offset still means what it
+			 * meant: keep the window live from there. */
+			if (!polling) { startPolling(); }
 		});
+	}
+
+	/**
+	 * The pane's own grid, as the last output answer reported it.
+	 *
+	 * The pane is shared with the console tab, and whichever page resized it
+	 * last decides the size the agent draws for. An answer from a backend
+	 * without the two fields leaves the last reading standing.
+	 */
+	function notePaneSize(r) {
+		if (!r) { return; }
+		var cols = r.cols, rows = r.rows;
+		if (typeof cols !== 'number' || typeof rows !== 'number') { return; }
+		if (cols < 20 || rows < 5) { return; }
+		paneSize = { cols: cols, rows: rows };
+	}
+
+	var reclaiming = false;
+
+	/**
+	 * Take the pane back after the console tab resized it.
+	 *
+	 * Whether this window is the foreground one changes no window or box size,
+	 * so like the console it hears only `visibilitychange`/`focus` and the
+	 * output answers. `document.hasFocus()` is the condition that keeps the two
+	 * from resizing the pane back and forth: only the window the user is
+	 * actually in reclaims.
+	 *
+	 * Returns true when it started a repaint, so a poll that asked does not go
+	 * on to start another request the repaint is about to abort.
+	 */
+	function reclaim() {
+		if (reclaiming) { return false; }
+		if (document.visibilityState === 'hidden' || !document.hasFocus()) { return false; }
+		if (!polling || !term || !paneSize) { return false; }
+		if (paneSize.cols === term.cols && paneSize.rows === term.rows) { return false; }
+		reclaiming = true;
+		repaint().then(function () { reclaiming = false; });
+		return true;
 	}
 
 	function startPolling() {
@@ -164,6 +219,11 @@
 				if (r.reset) { term.reset(); }
 				if (r.data) { term.write(FCC.b64ToBytes(r.data)); }
 				offset = r.offset;
+				notePaneSize(r);
+				/* The console tab may have taken the pane to its own grid while
+				 * this answer was on its way. If this window holds the focus,
+				 * it speaks for the pane again now. */
+				if (reclaim()) { return; }
 
 				if (r.alive) {
 					pollLoop();
@@ -247,6 +307,11 @@
 		ensureTerm();
 		loadSessionsState();
 		attach();
+		/* The console tab shows the same session and may have resized the pane
+		 * while this window was in the background. Returning here changes
+		 * nothing this page watches, so the two events are the only signals. */
+		document.addEventListener('visibilitychange', reclaim);
+		window.addEventListener('focus', reclaim);
 	}
 
 	if (document.readyState === 'loading') {

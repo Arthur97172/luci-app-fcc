@@ -431,10 +431,30 @@ cmd_output() {
 	# when tmux cannot report it.
 	_ou_exit="$(session_exit_code "$_ou_name" 2>/dev/null || true)"
 
+	# The pane's own grid, which is not necessarily the reader's. One pane can be
+	# shown by more than one page — the console tab and the standalone window
+	# (Open in browser) — and resize() speaks for the whole pane, so whichever
+	# page resized it last decides the size the agent draws for. A page that was
+	# hidden while another one resized the pane is therefore painting bytes
+	# drawn for someone else's grid into its own, which is how a returning tab
+	# ended up with the agent's status line folded into the rows above it. The
+	# reader compares these numbers with its terminal and repaints itself from
+	# capture() when they differ; reporting them here costs one tmux query per
+	# answer and means the reader has to guess nothing.
+	_ou_dims="$(tmux display-message -p -t "$_ou_name" '#{pane_width}x#{pane_height}' 2>/dev/null)"
+	_ou_cols=""; _ou_rows=""
+	case "$_ou_dims" in
+		*[!0-9]*x*[!0-9]*) : ;;
+		*x*) _ou_cols="${_ou_dims%x*}"; _ou_rows="${_ou_dims#*x}" ;;
+	esac
+	case "$_ou_cols" in ''|*[!0-9]*) _ou_cols="" ;; esac
+	case "$_ou_rows" in ''|*[!0-9]*) _ou_rows="" ;; esac
+
 	# Header line (JSON), then the raw bytes.
-	printf '{"name": %s, "offset": %s, "reset": %s, "alive": %s, "eof": %s, "exit_code": %s}\n' \
+	printf '{"name": %s, "offset": %s, "reset": %s, "alive": %s, "eof": %s, "exit_code": %s, "cols": %s, "rows": %s}\n' \
 		"$(fcc_json_str "$_ou_name")" "$_ou_abs" "$_ou_reset" "$_ou_alive" "$_ou_eof" \
-		"$(fcc_json_num_or_null "${_ou_exit:-}")"
+		"$(fcc_json_num_or_null "${_ou_exit:-}")" \
+		"$(fcc_json_num_or_null "$_ou_cols")" "$(fcc_json_num_or_null "$_ou_rows")"
 	if [ "$_ou_abs" -gt "$_ou_off" ]; then
 		tail -c "+$(( _ou_skip + 1 ))" "$_ou_f" 2>/dev/null
 	fi

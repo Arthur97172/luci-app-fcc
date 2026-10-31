@@ -1258,6 +1258,51 @@ tmux_start_exiting() { # tmux_start_exiting <name> <command>
 	tmux respawn-pane -k -t "$1" "$2" 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# The pane's own grid, reported with every output answer
+#
+# tmux keeps one size per pane, and two pages can show that one pane — the
+# console tab and the standalone window (Open in browser) — so resize() speaks
+# for whichever page called it last. A page that was hidden while another one
+# resized the pane needs to know the screen it is painting no longer matches its
+# terminal; the header carries the numbers so it can decide without guessing.
+# ---------------------------------------------------------------------------
+
+test_output_carries_the_panes_own_grid() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — the pane size is tmux's answer"
+		return 0
+	fi
+
+	_pz_name="fcc-claude-903"
+	tmux kill-session -t "$_pz_name" 2>/dev/null
+	tmux new-session -d -s "$_pz_name" -x 80 -y 24 'cat' 2>/dev/null
+
+	_pz_hdr="$(sh_script session.sh output "$_pz_name" 0 0 | head -n 1)"
+	assert_contains "$_pz_hdr" '"cols": 80' "the answer carries the pane's column count"
+	assert_contains "$_pz_hdr" '"rows": 24' "and its row count"
+
+	# A resize changes the pane for every reader, so the next answer has to say
+	# the new size: that comparison is what sends a returning page back to
+	# capture() instead of painting another grid's bytes into its own.
+	assert_ok "the pane is resized" sh_script session.sh resize "$_pz_name" 120 30
+	_pz_hdr2="$(sh_script session.sh output "$_pz_name" 0 0 | head -n 1)"
+	assert_contains "$_pz_hdr2" '"cols": 120' "a resize is visible in the next answer"
+	assert_contains "$_pz_hdr2" '"rows": 30'  "in both dimensions"
+
+	tmux kill-session -t "$_pz_name" 2>/dev/null
+}
+
+test_a_session_that_is_gone_reports_no_grid() {
+	setup_sandbox
+	# Nobody should have to read a size that belongs to some other session.
+	# tmux answers nothing, and the header says null rather than a stale number.
+	_gone_hdr="$(sh_script session.sh output fcc-claude-904 0 0 | head -n 1)"
+	assert_contains "$_gone_hdr" '"cols": null' "a session tmux does not know has no columns"
+	assert_contains "$_gone_hdr" '"rows": null' "and no rows"
+}
+
 test_a_dead_session_reports_its_exit_code() {
 	setup_sandbox
 	if ! command -v tmux >/dev/null 2>&1; then

@@ -29,6 +29,7 @@
 		fit: null,          // FitAddon
 		ro: null,           // ResizeObserver on the terminal's box
 		size: null,         // last cols/rows sent to the active session
+		paneSize: null,     // the pane's own grid, as the last output answer said
 		offset: 0,
 		polling: false,
 		pollAbort: null,
@@ -355,7 +356,6 @@
 
 	function attach(name) {
 		state.active = name;
-		state.size = null;      // the new session's pane may be a different size
 		clearBanner();
 		renderTabs();
 		ensureTerm();
@@ -365,23 +365,99 @@
 		// every row at the wrong column. Then repaint from that screen and
 		// continue from the end of the captured stream, so reconnecting shows
 		// what is on screen now rather than replaying everything.
-		fitNow().then(function () {
+		repaint(name);
+
+		state.term.focus();
+	}
+
+	/**
+	 * Paint the pane's current screen into this terminal, then resume polling.
+	 *
+	 * `state.size` is dropped first so the resize is sent even when this
+	 * terminal's own size has not changed: the pane may have been resized by
+	 * another page since this one last spoke, and it is the pane's size — not
+	 * this page's — that the captured screen and the agent's next paint are
+	 * drawn for.
+	 *
+	 * The capture is taken before polling stops, so a failed capture leaves the
+	 * poll running from the offset it had reached and the terminal live. The
+	 * reset that follows discards whatever arrived between the two, and the
+	 * offset read from `output 0` brings all of it back.
+	 */
+	function repaint(name) {
+		state.size = null;
+		return fitNow().then(function () {
 			return FCC.api('session_capture', { name: name }, { method: 'GET' });
 		}).then(function (r) {
 			if (state.active !== name) { return null; }   // the user switched tabs
+			stopPolling();
 			state.term.reset();
 			state.term.write(FCC.captureBytes(r.data));
 			return FCC.api('session_output', { name: name, offset: 0, wait: 0 }, { method: 'GET' });
 		}).then(function (r) {
 			if (!r || state.active !== name) { return; }
 			state.offset = r.offset;
+			notePaneSize(r);
 			startPolling();
 		}).catch(function (err) {
 			FCC.notice(FCC.$('#fcc-term-status'), 'fail',
 				FCC._('Could not attach to the session:') + ' ' + err.message);
+			/* The screen was not repainted, so the offset still means what it
+			 * meant: keep the terminal live from there. A session that is gone
+			 * says so through the poll's ending rather than freezing here. */
+			if (state.active === name && !state.polling) { startPolling(); }
 		});
+	}
 
-		state.term.focus();
+	/**
+	 * The pane's own grid, as the last output answer reported it.
+	 *
+	 * tmux keeps one size per pane, and this page shares the pane with the
+	 * standalone window (Open in browser). The size the agent draws for is
+	 * whichever page resized the pane last, which is not necessarily this one.
+	 * An answer from a backend without the two fields leaves the last reading
+	 * standing rather than clearing it.
+	 */
+	function notePaneSize(r) {
+		if (!r) { return; }
+		var cols = r.cols, rows = r.rows;
+		if (typeof cols !== 'number' || typeof rows !== 'number') { return; }
+		if (cols < 20 || rows < 5) { return; }
+		state.paneSize = { cols: cols, rows: rows };
+	}
+
+	var reclaiming = false;
+
+	/**
+	 * Take the pane back after another page resized it.
+	 *
+	 * A tab switch fires neither `resize` nor the ResizeObserver — the window
+	 * and the terminal's box are exactly the size they were — so nothing here
+	 * used to notice that the pane had moved to the standalone window's grid
+	 * while this page was hidden. The bytes that arrived meanwhile were painted
+	 * for that grid and cannot be undone a row at a time, which is how the
+	 * agent's status line came to sit folded into the rows above it. The whole
+	 * screen is repainted from a capture instead, once this page is the one the
+	 * user is looking at again.
+	 *
+	 * That last condition is `document.hasFocus()`, not just visibility: a tab
+	 * whose window is in the background is still "visible", and a page that
+	 * kept resizing from there would fight the window the user is actually
+	 * using. Only one window can hold the focus, so only one page reclaims.
+	 *
+	 * Returns true when it started a repaint, so a poll that asked does not go
+	 * on to start another request the repaint is about to abort.
+	 */
+	function reclaim() {
+		if (reclaiming) { return false; }
+		if (document.visibilityState === 'hidden' || !document.hasFocus()) { return false; }
+		if (!state.active || !state.polling || !state.term || !state.paneSize) { return false; }
+		if (state.paneSize.cols === state.term.cols && state.paneSize.rows === state.term.rows) {
+			return false;
+		}
+		reclaiming = true;
+		repaint(state.active).then(function () { reclaiming = false; });
+		return true;
 	}
 
 	function startPolling() {
@@ -419,6 +495,11 @@
 				}
 				if (r.data) { state.term.write(FCC.b64ToBytes(r.data)); }
 				state.offset = r.offset;
+				notePaneSize(r);
+				/* The pane may have been taken to another size while this
+				 * answer was on its way. If this page is the focused one, it
+				 * gives its own grid back now rather than at the next visit. */
+				if (reclaim()) { return; }
 
 				if (r.alive) {
 					if (banner) { clearBanner(); }
@@ -954,6 +1035,15 @@
 			// Re-attach to the most recent session after a page reload.
 			if (state.sessions.length) { attach(state.sessions[0].name); }
 		});
+
+		/* The pane can be taken to another size while this page is hidden — the
+		 * standalone window fits the same session to its own grid — and coming
+		 * back fires neither `resize` nor the ResizeObserver. Two events cover
+		 * the two ways back: `visibilitychange` for a tab switch and `focus` for
+		 * a window that stayed visible while another window had the keyboard.
+		 * reclaim() does nothing unless the pane really did move. */
+		document.addEventListener('visibilitychange', reclaim);
+		window.addEventListener('focus', reclaim);
 
 		// The existing ten-second tick refreshes the session list, and costs one
 		// more UCI read to see whether the Configuration tab was switched while

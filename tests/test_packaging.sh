@@ -1142,9 +1142,10 @@ test_a_reattached_screen_is_painted_with_crlf() {
 		"the console still paints the live stream as it arrived"
 
 	# fitNow() now resolves when the pane has been told the new size, and
-	# attach waits on it before asking for the screen.
+	# repaint() — the one path both an attach and a reclaim take — waits on it
+	# before asking for the screen.
 	_ts_order="$(awk '
-		/^	function attach\(/ { inside = 1 }
+		/^	function repaint\(/ { inside = 1 }
 		inside && /fitNow\(\)/ { fit = NR }
 		inside && /session_capture/ { cap = NR }
 		inside && /^	}$/ {
@@ -1154,6 +1155,74 @@ test_a_reattached_screen_is_painted_with_crlf() {
 	' "$_ts_term")"
 	assert_eq "sized" "$_ts_order" \
 		"the console sizes the pane before it captures its screen"
+}
+
+# ---------------------------------------------------------------------------
+# Coming back to a pane another page resized
+#
+# tmux gives a session one grid, and the console tab and the standalone window
+# (Open in browser) both show that one pane. resize() speaks for the pane, so
+# whichever page resized it last decides what the agent draws for. A tab switch
+# fires neither window `resize` nor the ResizeObserver — nothing here changed
+# size — so the page that was hidden painted bytes drawn for the other grid into
+# its own, and came back showing the agent's status line folded into the rows
+# above it.
+#
+# The fix is in two places and both are checked here: every output answer now
+# reports the pane's own cols/rows, and a page that is visible again compares
+# them with its terminal and repaints from a capture when they differ. Only the
+# visible page does it; two pages that both reclaimed would resize the pane back
+# and forth between them.
+# ---------------------------------------------------------------------------
+
+test_the_visible_page_reclaims_the_pane() {
+	_ts_term="$ROOT/htdocs/luci-static/resources/fcc/fcc-terminal.js"
+	_ts_pop="$ROOT/htdocs/luci-static/resources/fcc/fcc-popout.js"
+	_ts_sess="$ROOT/root/usr/libexec/fcc/session.sh"
+
+	assert_contains "$(sed -n '/^cmd_output()/,/^}/p' "$_ts_sess")" \
+		"'#{pane_width}x#{pane_height}'" \
+		"the output answer asks tmux for the pane's grid"
+	assert_contains "$(sed -n '/^cmd_output()/,/^}/p' "$_ts_sess")" \
+		'"cols": %s, "rows": %s' "and reports it as two fields of the header"
+
+	assert_contains "$(cat "$_ts_term")" 'paneSize: null' \
+		"the console remembers the size the pane was last said to have"
+	assert_contains "$(cat "$_ts_term")" 'notePaneSize(r);' \
+		"which every output answer updates"
+	assert_contains "$(cat "$_ts_term")" "document.addEventListener('visibilitychange', reclaim);" \
+		"a tab becoming visible is one of the moments it looks"
+	assert_contains "$(cat "$_ts_term")" "window.addEventListener('focus', reclaim);" \
+		"a window regaining focus is the other"
+	assert_contains "$(cat "$_ts_term")" "document.visibilityState === 'hidden'" \
+		"and a hidden page does not reclaim"
+	# Visibility is not enough: a tab whose window is in the background is still
+	# "visible", and reclaiming from there would fight the window in use.
+	assert_contains "$(cat "$_ts_term")" 'document.hasFocus()' \
+		"only the focused page reclaims the pane"
+	assert_contains "$(cat "$_ts_term")" 'if (reclaim()) { return; }' \
+		"an answer that finds the pane moved repaints instead of polling on"
+	assert_contains "$(cat "$_ts_term")" 'repaint(state.active)' \
+		"reclaiming repaints the screen from a capture"
+
+	# The resize has to be sent even when this page's own size did not change:
+	# it is the pane that moved, and the state.size guard would otherwise skip
+	# it precisely when it is needed.
+	_ts_body="$(sed -n '/function repaint(name)/,/^	}$/p' "$_ts_term")"
+	assert_contains "$_ts_body" 'state.size = null;' \
+		"the repaint drops the remembered size so its own is spoken again"
+	assert_contains "$_ts_body" 'session_capture' \
+		"and it repaints from the pane's current screen"
+
+	assert_contains "$(cat "$_ts_pop")" 'paneSize = null' \
+		"the standalone window does the same for its own grid"
+	assert_contains "$(cat "$_ts_pop")" 'notePaneSize(r);' \
+		"reading the same fields"
+	assert_contains "$(cat "$_ts_pop")" "document.addEventListener('visibilitychange', reclaim);" \
+		"and looking at the same two moments"
+	_ts_popbody="$(sed -n '/function repaint()/,/^	}$/p' "$_ts_pop")"
+	assert_contains "$_ts_popbody" 'lastSize = null;' \
+		"its repaint drops the size it last sent, for the same reason"
 }
 
 # ---------------------------------------------------------------------------
