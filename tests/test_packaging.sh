@@ -1844,6 +1844,33 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 }
 
 # ---------------------------------------------------------------------------
+# The server controls end their row, like the settings verbs above them
+#
+# Settings closes on three right-aligned verbs. The FCC Server controls a
+# section below started at the left edge, so two rows of buttons on one page
+# began on opposite sides. The row keeps the toolbar's gap and wrap and only
+# gains the alignment.
+# ---------------------------------------------------------------------------
+
+test_the_server_controls_end_their_row() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
+
+	assert_contains "$(sed -n '/id="fcc-server-state"/,/id="fcc-server-status"/p' "$_ts_view")" \
+		'class="fcc-toolbar fcc-toolbar-end"' \
+		"the local Start/Stop/Restart row ends at the right"
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/id="fcc-remote-platform"/p' "$_ts_view")" \
+		'class="fcc-toolbar fcc-toolbar-end"' \
+		"and so does the LAN one"
+	assert_contains "$(sed -n '/^\.fcc-toolbar-end {/,/^}/p' "$_ts_css")" \
+		'justify-content: flex-end;' \
+		"a modifier the stylesheet defines as a right-aligned toolbar"
+	# The settings row keeps its own class: it has no toolbar gap to inherit.
+	assert_contains "$(cat "$_ts_view")" 'class="fcc-actions"' \
+		"the settings verbs keep their own right-aligned row"
+}
+
+# ---------------------------------------------------------------------------
 # Basic Information has manual, named controls
 #
 # A tab switch must not cost a network request, so the update check is a

@@ -157,6 +157,15 @@
 	margin: .5em 0 1em;
 }
 
+/* A toolbar that ends its row instead of starting it. The Settings form's
+ * Save & Apply / Save settings / Reset changes already sit at the right end of
+ * their row; the FCC Server controls directly below them used to start at the
+ * left, so two rows of buttons a section apart began on opposite sides. The
+ * actions stay .fcc-toolbar, because they keep its gap and wrap. */
+.fcc-toolbar-end {
+	justify-content: flex-end;
+}
+
 /* Argon lays every form row out as a label column plus a field, and sizes the
  * column at --form-label-width: 23rem, right-aligned. That fits a form whose
  * labels are sentences; this page's labels are two words ("Enable FCC",
