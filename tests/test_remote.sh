@@ -104,15 +104,35 @@ case "${last:-}" in
 			printf '%s\n' "$SSH_FW_OUT"
 			exit "${SSH_FW_EXIT:-0}"
 		fi ;;
-	*status.sh*)
+	# The agent table and the server details travel in the same connection on
+	# a bare host, so the combined script names both questions at once. It is
+	# recognised by the row the agent probe prints — which the details script
+	# does not contain — before either question's own fixture can claim it.
+	# The same connection asks about status.sh first, so a test that supplies
+	# the document is answered with it; otherwise the agent lines come back,
+	# and a test that also wants a server object puts its key=value lines into
+	# that same fixture.
+	*"agent \$_far_a installed"*)
 		if [ -n "${SSH_DETAIL_OUT+x}" ]; then
 			printf '%s\n' "$SSH_DETAIL_OUT"
 			exit 0
+		fi
+		if [ -n "${SSH_PROBE_OUT+x}" ]; then
+			printf '%s\n' "$SSH_PROBE_OUT"
+			exit "${SSH_PROBE_EXIT:-0}"
 		fi ;;
 	*etime*)
 		if [ -n "${SSH_DETAILS_OUT+x}" ]; then
 			printf '%s\n' "$SSH_DETAILS_OUT"
 			exit "${SSH_DETAILS_EXIT:-0}"
+		fi ;;
+	# The status.sh question comes after it: the details script mentions
+	# status.sh in one of its own comments, so recognising it first would hand
+	# the process-list question the document fixture's answer.
+	*status.sh*)
+		if [ -n "${SSH_DETAIL_OUT+x}" ]; then
+			printf '%s\n' "$SSH_DETAIL_OUT"
+			exit 0
 		fi ;;
 	# The Windows details script is the process-list question asked in
 	# PowerShell, and it also names Get-Process — so it is recognised by the
@@ -1987,6 +2007,49 @@ test_agents_fold_a_bare_machines_probe_lines() {
 		"a stopped one keeps its version and dashes for what a stopped process cannot answer"
 	assert_contains "$out" '"dsh":{"name":"DeepSeek Harness","installed":false' \
 		"and an agent that is not installed is reported as such"
+	drop_sandbox
+}
+
+test_agents_carry_the_bare_servers_own_facts() {
+	# The same connection that lists a bare machine's agents also describes
+	# its server, so Basic Information's FCC Server, Health, PID and Memory
+	# cards can show the LAN machine's numbers instead of this router's.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_PROBE_OUT="$AGENT_ROWS
+running=1
+pid=4242
+uptime=151
+rss_kb=76800
+version=6.18.3
+listening=1
+port=8082
+bind=0.0.0.0
+http_status=200
+healthy=1" run_remote agents)" || true
+	assert_contains "$out" '"agents":{"claude":' \
+		"the agent table still arrives"
+	assert_contains "$out" \
+		'"server":{"running":true,"pid":4242,"uptime":151,"memory_rss_kb":76800,"bind":"0.0.0.0","port":8082,"version":"6.18.3","listening":true,"http_status":200,"healthy":true}' \
+		"and the server's facts travel in the same answer"
+	assert_contains "$(ssh_command 1)" 'ps -o etimes=' \
+		"asked for in the agent rows' own connection"
+	drop_sandbox
+}
+
+test_agents_describe_a_stopped_bare_server_without_guessing() {
+	# A stopped server answers nothing a stopped process cannot know: running
+	# and healthy are the only facts, and the page draws dashes for the rest.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_PROBE_OUT="$AGENT_ROWS
+running=0
+healthy=0" run_remote agents state)" || true
+	assert_contains "$out" \
+		'"server":{"running":false,"pid":null,"uptime":null,"memory_rss_kb":null,"bind":null,"port":null,"version":null,"listening":null,"http_status":null,"healthy":false}' \
+		"a stopped server is false, and every unknown stays null"
 	drop_sandbox
 }
 

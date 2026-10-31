@@ -522,6 +522,17 @@ fcc_json_bool() {
 	esac
 }
 
+fcc_json_bool_or_null() {
+	# A boolean the far side may simply not have answered: the server probe
+	# leaves a fact out rather than guessing, and the page draws a dash for
+	# null. `false` is an answer, so only a non-answer becomes null.
+	case "$1" in
+		1|true|yes|on)  printf 'true' ;;
+		0|false|no|off) printf 'false' ;;
+		*)              printf 'null' ;;
+	esac
+}
+
 fcc_json_num_or_null() {
 	# A whole number, or null. One leading minus is allowed, because a core
 	# temperature is a signed reading: a device in a cold room reports below

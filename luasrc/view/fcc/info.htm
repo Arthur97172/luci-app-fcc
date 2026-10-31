@@ -2,8 +2,11 @@
  luci-app-fcc — Basic Information.
 
  The runtime monitor: versions, process state and resource use.
- Everything on this page is read-only and comes from one batched status call.
- Update checks and the update itself live on the Install tab, under FCC Runtime.
+ Everything on this page is read-only. In local mode it all comes from one
+ batched status call. In LAN mode the FCC Server cards and the Agents table
+ come from the same request to the other machine, so both describe the machine
+ Configuration's FCC Server section targets. Update checks and the update
+ itself live on the Install tab, under FCC Runtime.
 -%>
 
 <% local v = require("luci.fcc.paths").asset_version() %>

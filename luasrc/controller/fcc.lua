@@ -310,8 +310,18 @@ local function relay_agents(args)
 	if not next(list) and type(d.status) == "table" and type(d.status.agents) == "table" then
 		list = d.status.agents
 	end
+	-- The server's own facts travel with the table. The package host's status
+	-- document already carries them; a bare machine's probe folds its key=value
+	-- lines into the same answer. The Basic Information page renders these in
+	-- the FCC section so that, in LAN mode, the four server cards describe the
+	-- machine the rest of the page is describing. `null` means the far side
+	-- answered with no server facts at all, and the cards show dashes.
+	local srv = type(d.server) == "table" and d.server
+		or (type(d.status) == "table" and type(d.status.server) == "table" and d.status.server)
+		or nil
 	json_out('{"ok":true,"target":"lan","host":' .. util.json_encode(d.host or "") ..
-		',"agents":' .. util.json_encode(list) .. '}')
+		',"agents":' .. util.json_encode(list) ..
+		',"server":' .. (srv and util.json_encode(srv) or "null") .. '}')
 end
 
 function act_agents()

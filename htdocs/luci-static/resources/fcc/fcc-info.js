@@ -36,6 +36,14 @@
 	var agentsBusy = false;
 	/* The last LAN answer, so a state-only re-read keeps its version column. */
 	var lastAgents = {};
+	/* The LAN server's own facts, from the same answer as `lastAgents`. The FCC
+	 * section renders these four cards from it in LAN mode, so the server the
+	 * page describes and the agents it lists are always the same machine.
+	 * `lastStatus` is the local status document kept for the cards that stay
+	 * local (LuCI App, FCC Runtime), so a LAN render does not need a second
+	 * fetch. */
+	var lanServer = null;
+	var lastStatus = {};
 
 	/* What the LAN side calls each refusal, in the interface language.
 	 *
@@ -153,27 +161,39 @@
 	function renderFcc(d) {
 		var box = FCC.$('#fcc-info-fcc');
 		box.innerHTML = '';
-		var s = d.server || {}, f = d.fcc || {}, l = d.luci_fcc || {};
+		var local = d.server || {}, f = d.fcc || {}, l = d.luci_fcc || {};
+		/* The four server cards follow the same switch as the Agents table:
+		 * this router in local mode, the LAN machine in LAN mode. LuCI App and
+		 * FCC Runtime stay local — they describe this installation, not the
+		 * other machine. Until the LAN answer arrives the server facts are a
+		 * dash rather than this router's numbers under the other machine's
+		 * name; a failed read leaves them that way. */
+		var s = (target === 'lan') ? (lanServer || {}) : local;
+		var running = s.running === true;
 
 		box.appendChild(card(FCC._('LuCI App'), l.version || '—', 'luci-app-fcc'));
 		box.appendChild(card(FCC._('FCC Runtime'), f.version || '—',
 			f.installed ? FCC._('installed') : FCC._('not installed')));
 		box.appendChild(card(FCC._('FCC Server'),
-			s.running ? FCC._('Running') : FCC._('Stopped'),
-			(s.bind || '—') + ':' + (s.port || '—')));
+			running ? FCC._('Running') : (s.running === false ? FCC._('Stopped') : '—'),
+			(s.bind || '—') + ':' + (s.port != null ? s.port : '—')));
 		// Section 49's three signals, shown live rather than only being applied
 		// after an update. A server can be up but not listening (a crash loop)
 		// or listening but not answering (hung), and those want different
-		// reactions, so they are not collapsed into one badge.
+		// reactions, so they are not collapsed into one badge. A bare LAN
+		// machine answers all three from its own probe; one that cannot is a
+		// dash, never "unhealthy".
 		box.appendChild(card(FCC._('Health'),
-			s.healthy ? FCC._('healthy') : FCC._('unhealthy'),
-			s.listening
+			s.healthy === true ? FCC._('healthy')
+				: (s.healthy === false ? FCC._('unhealthy') : '—'),
+			s.listening === true
 				? FCC._('listening') + (s.http_status ? ' · HTTP ' + s.http_status : '')
-				: FCC._('not listening')));
-		box.appendChild(card(FCC._('PID'), s.running ? String(s.pid) : '—',
-			s.running ? FCC.fmtDuration(s.uptime) + ' ' + FCC._('uptime') : ''));
+				: (s.listening === false ? FCC._('not listening') : '—')));
+		box.appendChild(card(FCC._('PID'),
+			running && s.pid != null ? String(s.pid) : '—',
+			running && s.uptime != null ? FCC.fmtDuration(s.uptime) + ' ' + FCC._('uptime') : ''));
 		box.appendChild(card(FCC._('Memory (RSS)'),
-			s.running ? FCC.fmtKB(s.memory_rss_kb) : '—', ''));
+			running && s.memory_rss_kb != null ? FCC.fmtKB(s.memory_rss_kb) : '—', ''));
 	}
 
 	function renderAgents(agents, remote) {
@@ -320,6 +340,8 @@
 				{ method: refresh ? 'POST' : 'GET' }).then(function (d) {
 			if (!d || d.ok !== true) {
 				renderAgents({}, true);
+				lanServer = null;
+				renderFcc(lastStatus);
 				FCC.notice(status, 'fail', agentsReason(d));
 				keepAgentPolling(false);
 				return;
@@ -327,12 +349,16 @@
 			var agents = d.agents || {};
 			if (state) { mergeAgentVersions(agents); }
 			lastAgents = agents;
+			lanServer = (d.server && typeof d.server === 'object') ? d.server : null;
+			renderFcc(lastStatus);
 			renderAgents(agents, true);
 			if (btn) { FCC.notice(status, 'ok', FCC._('Versions updated.')); }
 			else if (!state) { FCC.notice(status, '', ''); }
 			keepAgentPolling(target === 'lan' && agentShown);
 		}).catch(function (err) {
 			renderAgents({}, true);
+			lanServer = null;
+			renderFcc(lastStatus);
 			FCC.notice(status, 'fail', agentsReason((err && err.body) || err));
 			keepAgentPolling(false);
 		}).then(function () {
@@ -352,7 +378,12 @@
 			if (next === target && host === lanHost) { return; }
 			target = next;
 			lanHost = host;
+			/* The server cards belong to the machine being described. On a
+			 * switch they go back to dashes immediately rather than keeping
+			 * the previous machine's numbers until the next answer. */
+			lanServer = null;
 			renderAgentSource();
+			renderFcc(lastStatus);
 			var status = FCC.$('#fcc-info-agent-status');
 			if (status) { FCC.notice(status, '', ''); }
 			if (target === 'lan') {
@@ -453,8 +484,9 @@
 		var action = refresh ? 'status_refresh' : 'status';
 		var method = refresh ? 'POST' : 'GET';
 		return FCC.api(action, {}, { method: method }).then(function (d) {
+			lastStatus = d || {};
 			renderSystem(d.system || {});
-			renderFcc(d);
+			renderFcc(lastStatus);
 			/* The status document is this router's. On the LAN machine the
 			 * table comes from its own fetch, and letting a poll write this
 			 * document into it would put local numbers under a LAN heading. */

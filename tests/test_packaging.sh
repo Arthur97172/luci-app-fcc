@@ -2174,6 +2174,55 @@ test_agents_follow_the_server_mode() {
 }
 
 # ---------------------------------------------------------------------------
+# The four FCC Server cards follow the same mode
+#
+# Basic Information's FCC section is about the machine the Agents table is
+# about. In local mode that is this router, and the cards come from its own
+# status document. In LAN mode the four server cards used to keep showing this
+# router's stopped server while the table above them listed another machine's
+# agents. They now take the server object from the same LAN answer: the package
+# host's status document already carries one, and a bare host's probe folds its
+# key=value lines into the same request. LuCI App and FCC Runtime stay local —
+# they describe this installation, not the other machine.
+# ---------------------------------------------------------------------------
+test_the_server_cards_follow_the_agents_mode() {
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+	_ts_remote="$ROOT/root/usr/libexec/fcc/remote.sh"
+	_ts_common="$ROOT/root/usr/libexec/fcc/common.sh"
+
+	assert_contains "$(cat "$_ts_js")" 'var lanServer = null;' \
+		"the page keeps the LAN machine's server facts beside its agents"
+	assert_contains "$(cat "$_ts_js")" 'var lastStatus = {};' \
+		"and the local document for the cards that stay local"
+	_ts_fcc="$(sed -n '/^	function renderFcc/,/^	}$/p' "$_ts_js")"
+	assert_contains "$_ts_fcc" \
+		"var s = (target === 'lan') ? (lanServer || {}) : local;" \
+		"the four server cards choose their machine by mode"
+	assert_contains "$_ts_fcc" 's.running === false ? FCC._('"'"'Stopped'"'"')' \
+		"a stopped server is only said when the far side said so"
+	assert_contains "$(cat "$_ts_js")" \
+		"lanServer = (d.server && typeof d.server === 'object') ? d.server : null;" \
+		"the LAN answer fills them"
+	_ts_lan="$(sed -n '/^	function loadLanAgents/,/^	}$/p' "$_ts_js")"
+	assert_contains "$_ts_lan" 'renderFcc(lastStatus);' \
+		"and redraws the section as soon as it arrives"
+
+	assert_contains "$(cat "$_ts_ctrl")" \
+		'type(d.status) == "table" and type(d.status.server) == "table"' \
+		"the controller lifts the server object out of the package host's document"
+	assert_contains "$(cat "$_ts_ctrl")" "',\"server\":' .. (srv and" \
+		"and passes it through with the table"
+
+	assert_contains "$(cat "$_ts_common")" 'fcc_json_bool_or_null()' \
+		"a fact the far side did not answer is null, not false"
+	assert_contains "$(cat "$_ts_remote")" '"server":{"running":' \
+		"the bare host's probe folds its server lines into the agent answer"
+	assert_contains "$(cat "$_ts_remote")" 'fcc_remote_bare_details_script ${_ac_state:+state}' \
+		"in the same connection as the agent rows"
+}
+
+# ---------------------------------------------------------------------------
 # The Install tab sits between the console and the settings
 #
 # 1.1.0 split the runtime lifecycle and the diagnostics report out of the

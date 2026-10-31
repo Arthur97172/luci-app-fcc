@@ -272,6 +272,15 @@ not made to start every agent's CLI twice a minute. A failure writes its reason
 in the table's place and stops the clock instead of falling back to this
 router's data.
 
+The **FCC Server**, **Health**, **PID** and **Memory (RSS)** cards in the same
+section follow that switch too: in `[LAN]` mode they show the other machine's
+server, taken from the same request as the table — a machine carrying this
+package answers with its status document, and a bare one folds its probe's
+lines into the same connection. Until that answer arrives they show dashes
+rather than this router's stopped server under the other machine's name. The
+**LuCI App** and **FCC Runtime** cards stay local: they describe this
+installation's versions, not the other machine's.
+
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.
 

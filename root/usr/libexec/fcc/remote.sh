@@ -861,12 +861,17 @@ fcc_remote_bare_agent_rows_cmd() {
 }
 
 fcc_remote_bare_details_script() {
-	# The six facts the panel shows for the server here, as key=value lines:
-	# pid, uptime, rss_kb, version, bind and port. A machine that ran only the
-	# upstream install has no status.sh to print the document this page renders,
-	# so the same facts are read from the process list and from the launcher
-	# itself. `fcc-server --version` is documented by upstream as safe to run and
-	# is what status.sh uses too; it never starts anything.
+	# The facts the panel shows for the server here, as key=value lines:
+	# running, pid, uptime, rss_kb, version, bind, port, listening, http_status
+	# and healthy. A machine that ran only the upstream install has no status.sh
+	# to print the document this page renders, so the same facts are read from
+	# the process list, from the listening socket and — when curl is there — from
+	# the admin endpoint itself. `fcc-server --version` is documented by upstream
+	# as safe to run and is what status.sh uses too; it never starts anything.
+	#
+	# `state` leaves the version line out, for the same reason the agent rows
+	# script does: the page's thirty-second refresh must not start a process on
+	# the far side just to re-print a number that only changes on an update.
 	#
 	# A field the machine cannot answer is left out rather than guessed at: the
 	# page shows a dash for it. That is the same rule the local panel follows.
@@ -881,13 +886,32 @@ fcc_remote_bare_details_script() {
 	# it is the first field that carries a numeric port. A peer address prints
 	# `*` as its port, and a queue depth has no colon at all, so neither can be
 	# taken for it.
+	#
+	# Health follows status.sh's definition: the process is up, the port is
+	# listening, and — the documented minimum — the admin endpoint answers.
+	# Without curl that last leg cannot be tested, so process+socket stands
+	# rather than calling a working server unhealthy over a missing tool.
+	_bds_ver=""
+	if [ "${1:-}" != "state" ]; then
+		_bds_ver='
+if command -v "$s" >/dev/null 2>&1; then
+	_bds_v="$("$s" --version 2>/dev/null | head -n 1 | tr -d "\r")"
+	_bds_v="${_bds_v##* }"
+	[ -n "$_bds_v" ] && echo "version=$_bds_v"
+fi'
+	fi
 	_bds_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; s=fcc; s=\${s}-server; "
-	printf '%s%s' "$_bds_head" '
+	printf '%s%s%s%s' "$_bds_head" '
 _bds_p=""
 if command -v pgrep >/dev/null 2>&1; then
 	_bds_p="$(pgrep -f "[f]cc-server" 2>/dev/null | grep -vx "$$" | head -n 1)"
 fi
-[ -n "$_bds_p" ] || exit 0
+if [ -z "$_bds_p" ]; then
+	echo "running=0"
+	echo "healthy=0"
+	exit 0
+fi
+echo "running=1"
 echo "pid=$_bds_p"
 _bds_u="$(ps -o etimes= -p "$_bds_p" 2>/dev/null | tr -d " ")"
 # macOS has no etimes, and when asked for one its ps writes the whole keyword
@@ -917,19 +941,19 @@ fi
 [ -n "$_bds_u" ] && echo "uptime=$_bds_u"
 _bds_r="$(ps -o rss= -p "$_bds_p" 2>/dev/null | tr -d " ")"
 [ -n "$_bds_r" ] && echo "rss_kb=$_bds_r"
-if command -v "$s" >/dev/null 2>&1; then
-	_bds_v="$("$s" --version 2>/dev/null | head -n 1 | tr -d "\r")"
-	_bds_v="${_bds_v##* }"
-	[ -n "$_bds_v" ] && echo "version=$_bds_v"
-fi
+' "$_bds_ver" '
 _bds_l=""
+_bds_t=""
 if command -v ss >/dev/null 2>&1; then
+	_bds_t=1
 	_bds_l="$(ss -ltnp 2>/dev/null | grep "pid=$_bds_p," | head -n 1)"
 fi
 if [ -z "$_bds_l" ] && command -v lsof >/dev/null 2>&1; then
+	_bds_t=1
 	_bds_l="$(lsof -nP -a -p "$_bds_p" -iTCP -sTCP:LISTEN 2>/dev/null | sed -n "2p")"
 fi
 if [ -z "$_bds_l" ] && command -v netstat >/dev/null 2>&1; then
+	_bds_t=1
 	_bds_l="$(netstat -ltnp 2>/dev/null | grep "$_bds_p/" | head -n 1)"
 fi
 _bds_a=""
@@ -944,6 +968,7 @@ for _bds_w in $_bds_l; do
 	if [ -z "$_bds_a" ]; then _bds_a="$_bds_w"; fi
 done
 if [ -n "$_bds_a" ]; then
+	echo "listening=1"
 	echo "port=${_bds_a##*:}"
 	_bds_b="${_bds_a%:*}"
 	_bds_b="${_bds_b#[}"
@@ -959,12 +984,28 @@ if [ -n "$_bds_a" ]; then
 		esac
 	fi
 	[ -n "$_bds_b" ] && echo "bind=$_bds_b"
+	# One short request to the admin endpoint, the URL status.sh asks on this
+	# router. Any code at all proves the server is talking; without curl that
+	# leg cannot be tested, so process+socket stands instead of calling a
+	# working server unhealthy over a missing tool.
+	if command -v curl >/dev/null 2>&1; then
+		_bds_h="$(curl --silent --output /dev/null --max-time 2 --proto "=http" --write-out "%{http_code}" "http://127.0.0.1:${_bds_a##*:}/admin" 2>/dev/null)"
+		case "$_bds_h" in
+		""|000|*[!0-9]*) echo "healthy=0" ;;
+		*) echo "http_status=$_bds_h"; echo "healthy=1" ;;
+		esac
+	else
+		echo "healthy=1"
+	fi
+elif [ -n "$_bds_t" ]; then
+	echo "listening=0"
+	echo "healthy=0"
 fi
 exit 0'
 }
 
 fcc_remote_bare_details_cmd() {
-	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_details_script)")"
+	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_details_script "${1:-}")")"
 }
 
 # ---------------------------------------------------------------------------
@@ -1549,32 +1590,49 @@ fcc_remote_win_server_cmd() {
 # remote command is a single line. The script is therefore written one
 # statement per line, each ending in `;`, and flattened at the end.
 fcc_remote_win_details_script() {
-	# <admin port> — the port this router tunnels to, which is the one the server
+	# <admin port> [state] — the port this router tunnels to, which is the one the server
 	# is expected to listen on. Anything but a bare number falls back to 8082
 	# rather than being pasted into the script.
 	_wd_port="$1"
 	case "$_wd_port" in
 		''|*[!0-9]*) _wd_port=8082 ;;
 	esac
-	_wd_body="$(cat <<'FCCEOF'
+	# The version is the launcher's own probe; the thirty-second state read must
+	# not start a process on the far side to re-print a number that only changes
+	# on an update. It is build-time here rather than a test inside the script,
+	# so a `state` read carries none of that text at all — the same rule the
+	# agent rows script follows.
+	_wd_ver=""
+	if [ "${2:-}" != "state" ]; then
+		_wd_ver="$(cat <<'FCCEOF'
+$g = Get-Command 'fcc-server' -ErrorAction SilentlyContinue; if ($g) { $v = @(& $g.Source --version 2>$null) | Where-Object { $_ } | Select-Object -First 1; if ($v) { $w = ($v -split '\s+') | Where-Object { $_ } | Select-Object -Last 1; if ($w) { Write-Output ('version=' + $w) } } };
+FCCEOF
+)"
+	fi
+	_wd_head="$(cat <<'FCCEOF'
 $l = $null;
 $s = $null;
+$wdseen = $false;
 if (Get-Command 'Get-NetTCPConnection' -ErrorAction SilentlyContinue) { $l = @(Get-NetTCPConnection -State Listen -LocalPort __FCC_WIN_PORT__ -ErrorAction SilentlyContinue) | Select-Object -First 1 };
 if ($l) { $s = Get-Process -Id $l.OwningProcess -ErrorAction SilentlyContinue; if ($s -and @('fcc-server','fcc-desktop','python','pythonw') -notcontains $s.ProcessName) { $s = $null; $l = $null } };
 if (-not $s) { $s = @(Get-Process -Name 'fcc-server','fcc-desktop' -ErrorAction SilentlyContinue) | Select-Object -First 1 };
-if (-not $s) { exit 0 };
+if (-not $s) { Write-Output ('running=0'); Write-Output ('healthy=0'); exit 0 };
+Write-Output ('running=1');
 Write-Output ('pid=' + $s.Id);
 try { Write-Output ('uptime=' + [int]((Get-Date) - $s.StartTime).TotalSeconds) } catch { };
 try { Write-Output ('rss_kb=' + [int]($s.WorkingSet64 / 1KB)) } catch { };
-$g = Get-Command 'fcc-server' -ErrorAction SilentlyContinue;
-if ($g) { $v = @(& $g.Source --version 2>$null) | Where-Object { $_ } | Select-Object -First 1; if ($v) { $w = ($v -split '\s+') | Where-Object { $_ } | Select-Object -Last 1; if ($w) { Write-Output ('version=' + $w) } } };
+FCCEOF
+)"
+	_wd_tail="$(cat <<'FCCEOF'
 if (-not $l) { if (Get-Command 'Get-NetTCPConnection' -ErrorAction SilentlyContinue) { $l = @(Get-NetTCPConnection -State Listen -OwningProcess $s.Id -ErrorAction SilentlyContinue) | Select-Object -First 1 } };
-if ($l) { Write-Output ('port=' + $l.LocalPort); if ($l.LocalAddress) { Write-Output ('bind=' + $l.LocalAddress) } };
-if (-not $l) { $n = @(netstat -ano | Where-Object { $_ -match ('^\s*TCP\s+\S+\s+\S+\s+LISTENING\s+' + $s.Id + '\s*$') }) | Select-Object -First 1; if ($n) { $f = ($n.Trim() -split '\s+')[1]; $pt = ($f -split ':') | Select-Object -Last 1; Write-Output ('port=' + $pt); $ad = $f -replace ':\d+$',''; if ($ad) { Write-Output ('bind=' + $ad) } } };
+if ($l) { $wdseen = $true; Write-Output ('listening=1'); Write-Output ('port=' + $l.LocalPort); if ($l.LocalAddress) { Write-Output ('bind=' + $l.LocalAddress) } };
+if (-not $l) { $n = @(netstat -ano | Where-Object { $_ -match ('^\s*TCP\s+\S+\s+\S+\s+LISTENING\s+' + $s.Id + '\s*$') }) | Select-Object -First 1; if ($n) { $wdseen = $true; Write-Output ('listening=1'); $f = ($n.Trim() -split '\s+')[1]; $pt = ($f -split ':') | Select-Object -Last 1; Write-Output ('port=' + $pt); $ad = $f -replace ':\d+$',''; if ($ad) { Write-Output ('bind=' + $ad) } } };
+if (-not $wdseen) { Write-Output ('listening=0') };
 exit 0
 FCCEOF
 )"
-	_wd_body="$(printf '%s' "$_wd_body" | sed "s/__FCC_WIN_PORT__/$_wd_port/")"
+	_wd_body="$(printf '%s\n%s\n%s' "$_wd_head" "$_wd_ver" "$_wd_tail")"
+	_wd_body="$(printf '%s' "$_wd_body" | sed -e "s/__FCC_WIN_PORT__/$_wd_port/")"
 	printf '%s; %s' "$(fcc_remote_win_path_script)" \
 		"$(printf '%s' "$_wd_body" | tr '\n' ' ')"
 }
@@ -1833,9 +1891,9 @@ fcc_remote_agents_cmd() {
 	fi
 	case "$(fcc_remote_platform)" in
 		linux|macos)
-			printf 'sh -c %s' "$(fcc_shquote "if [ -x /usr/libexec/fcc/status.sh ]; then $_ac_doc; else $(fcc_remote_bare_agent_rows_script ${_ac_state:+state}); fi")" ;;
+			printf 'sh -c %s' "$(fcc_shquote "if [ -x /usr/libexec/fcc/status.sh ]; then $_ac_doc; else $(fcc_remote_bare_agent_rows_script ${_ac_state:+state}); $(fcc_remote_bare_details_script ${_ac_state:+state}); fi")" ;;
 		windows)
-			fcc_remote_win_cmd "$(fcc_remote_win_path_script); $(fcc_remote_win_agent_rows_script ${_ac_state:+state})" ;;
+			fcc_remote_win_cmd "$(fcc_remote_win_path_script); $(fcc_remote_win_agent_rows_script ${_ac_state:+state}); $(fcc_remote_win_details_script "$(fcc_remote_aport)" ${_ac_state:+state})" ;;
 		*)
 			# OpenWrt carries this package by definition: there is no bare
 			# probe to fall back to, exactly as for the console.
@@ -1885,8 +1943,28 @@ fcc_remote_agents_from_rows() {
 $_apr_data
 EOF
 	[ "$_apr_seen" = "1" ] || return 1
-	printf '{"ok":true,"host":%s,"agents":{%s}}\n' \
-		"$(fcc_json_str "$_apr_host")" "$_apr_agents"
+
+	# The same answer also carries the server's own facts on a bare machine:
+	# the details probe was appended to the rows command, so one SSH round trip
+	# describes both the agents and the server. A package host does not come
+	# through here at all — its status document already has the server object.
+	_apr_sv=""
+	_apr_srun="$(printf '%s\n' "$2" | sed -n 's/^running=//p' | head -n 1)"
+	if [ -n "$_apr_srun" ]; then
+		_apr_sv=",\"server\":{\"running\":$(fcc_json_bool "$_apr_srun")"
+		_apr_sv="$_apr_sv,\"pid\":$(fcc_json_num_or_null "$(printf '%s\n' "$2" | sed -n 's/^pid=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"uptime\":$(fcc_json_num_or_null "$(printf '%s\n' "$2" | sed -n 's/^uptime=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"memory_rss_kb\":$(fcc_json_num_or_null "$(printf '%s\n' "$2" | sed -n 's/^rss_kb=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"bind\":$(fcc_json_str_or_null "$(printf '%s\n' "$2" | sed -n 's/^bind=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"port\":$(fcc_json_num_or_null "$(printf '%s\n' "$2" | sed -n 's/^port=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"version\":$(fcc_json_str_or_null "$(printf '%s\n' "$2" | sed -n 's/^version=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"listening\":$(fcc_json_bool_or_null "$(printf '%s\n' "$2" | sed -n 's/^listening=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"http_status\":$(fcc_json_num_or_null "$(printf '%s\n' "$2" | sed -n 's/^http_status=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv,\"healthy\":$(fcc_json_bool_or_null "$(printf '%s\n' "$2" | sed -n 's/^healthy=//p' | head -n 1)")"
+		_apr_sv="$_apr_sv}"
+	fi
+	printf '{"ok":true,"host":%s,"agents":{%s}%s}\n' \
+		"$(fcc_json_str "$_apr_host")" "$_apr_agents" "$_apr_sv"
 }
 
 fcc_remote_agents() {
