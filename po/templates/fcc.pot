@@ -78,7 +78,13 @@ msgstr ""
 msgid "An interactive terminal running a coding agent. Sessions keep running after you close this page, and reattaching to one restores its screen."
 msgstr ""
 
+msgid "Antigravity CLI could not be connected:"
+msgstr ""
+
 msgid "Antigravity CLI has not been connected to FCC yet. Connect it on the Integrations page, then start the session again."
+msgstr ""
+
+msgid "Antigravity CLI has to be connected to FCC once before it can start."
 msgstr ""
 
 msgid "Antigravity CLI starts only after it has been connected on the Integrations page of the machine it runs on."
@@ -148,6 +154,12 @@ msgid "Component"
 msgstr ""
 
 msgid "Configuration"
+msgstr ""
+
+msgid "Connect now?"
+msgstr ""
+
+msgid "Connecting writes FCC models into the Antigravity settings on this machine and switches its provider to FCC. Integrations can disconnect it again."
 msgstr ""
 
 msgid "Connection works."

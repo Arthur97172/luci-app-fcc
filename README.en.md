@@ -478,12 +478,17 @@ and exits 1 when the answer is no, printing `Connect it on the Integrations
 page first:` followed by the server's loopback address — nothing a browser on
 another machine can open. What it needs is the Integrations page of FCC's own
 admin UI (*Configuration* → **Open FCC Admin**), connected once. The console
-therefore refuses to create the session: pick Antigravity CLI, press **New
-session**, and the panel says why and offers a link to the Integrations page
-through this package's LuCI reverse proxy (§13). A connected machine is never
-refused. In LAN mode this router cannot see the other machine's connection
-state, so the session is created as usual and the banner names the page when it
-exits.
+therefore checks first: pick Antigravity CLI, press **New session**, and when
+the answer is no the panel says why and asks whether to **connect now**. On a
+yes it calls the same FCC admin endpoint the Integrations page's **Connect**
+button uses, through the same LuCI reverse proxy (§13), and then creates the
+session that was asked for. Because that writes into Antigravity's own settings
+— the previous provider is recorded, and Integrations can disconnect it again —
+it is one confirmation rather than something the click does on its own. The
+**Open the Integrations page** link stays beside the sentence for doing it by
+hand. A connected machine is never refused. In LAN mode this router cannot see
+the other machine's connection state, so the session is created as usual and
+the banner names the page when it exits.
 
 ---
 

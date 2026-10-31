@@ -675,6 +675,26 @@ test_the_console_offers_the_integrations_page_when_antigravity_cannot_start() {
 	# the new tab answered {"detail":"Not Found"}.
 	assert_not_contains "$(cat "$_js")" "base + '/admin/integrations'" \
 		"without repeating the prefix the proxy puts back itself"
+
+	# The refusal is answered by the page itself, so the one connection becomes
+	# a click rather than a trip to another page. It asks first: connecting
+	# writes into Antigravity's own settings, which is why upstream made it an
+	# explicit act. The call is FCC's admin API through the same proxy, with the
+	# LuCI session already open — no token travels, the proxied route is gated by
+	# that session and the server trusts the loopback peer.
+	assert_contains "$(cat "$_js")" "/api/integrations/antigravity/connect" \
+		"the console offers to connect Antigravity itself"
+	assert_contains "$(cat "$_js")" "credentials: 'same-origin'" \
+		"through the session this page already has"
+	assert_contains "$(cat "$_js")" "'Connect now?'" \
+		"after a question, because the connection rewrites Antigravity settings"
+	assert_contains "$(cat "$_js")" 'createSession(agent, { connected: true })' \
+		"and then starts the session that was asked for"
+	assert_contains "$(sed -n '/^	function offerAntigravityConnect/,/^	}/p' "$_js")" \
+		'if (opts.connected) { return; }' \
+		"a retry that still cannot start does not ask again"
+	assert_contains "$(cat "$_js")" "FCC._('Antigravity CLI could not be connected:') + ' ' + err.message" \
+		"a refused connection shows the server's own sentence"
 	assert_contains "$(cat "$_js")" 'Antigravity CLI starts only after it has been connected' \
 		"a crashed Antigravity session says what it needs"
 

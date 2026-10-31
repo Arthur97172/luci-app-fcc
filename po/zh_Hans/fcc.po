@@ -105,19 +105,25 @@ msgstr ""
 "运行智能体的交互式终端。关闭本页面后会话仍会继续运行，重新连接即可恢复会话记"
 "录。"
 
+msgid "Antigravity CLI could not be connected:"
+msgstr "无法连接 Antigravity CLI："
+
 msgid ""
 "Antigravity CLI has not been connected to FCC yet. Connect it on the "
 "Integrations page, then start the session again."
 msgstr ""
-"Antigravity CLI 尚未连接到 FCC。请先在 FCC Admin 的 Integrations 页面完成连接，"
-"然后重新新建会话。"
+"Antigravity CLI 尚未连接到 FCC。请先在 FCC Admin 的 Integrations 页面完成连"
+"接，然后重新新建会话。"
+
+msgid "Antigravity CLI has to be connected to FCC once before it can start."
+msgstr "Antigravity CLI 必须先与 FCC 连接一次才能启动。"
 
 msgid ""
 "Antigravity CLI starts only after it has been connected on the Integrations "
 "page of the machine it runs on."
 msgstr ""
-"Antigravity CLI 只有在它运行的那台机器的 FCC Admin 的 Integrations 页面上完成连接"
-"后才能启动。"
+"Antigravity CLI 只有在它运行的那台机器的 FCC Admin 的 Integrations 页面上完成"
+"连接后才能启动。"
 
 msgid "Architecture"
 msgstr "架构"
@@ -198,6 +204,16 @@ msgstr "组件"
 
 msgid "Configuration"
 msgstr "配置管理"
+
+msgid "Connect now?"
+msgstr "现在连接吗？"
+
+msgid ""
+"Connecting writes FCC models into the Antigravity settings on this machine "
+"and switches its provider to FCC. Integrations can disconnect it again."
+msgstr ""
+"连接会把 FCC 的模型写入本机 Antigravity 的设置，并把它的提供方切换为 FCC。之后"
+"可在 Integrations 页面断开还原。"
 
 msgid "Connection works."
 msgstr "连接正常。"

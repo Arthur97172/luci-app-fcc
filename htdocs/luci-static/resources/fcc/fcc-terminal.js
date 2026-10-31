@@ -522,7 +522,7 @@
 	 * {"detail":"Not Found"} this link first answered with.
 	 */
 	function integrationsLink() {
-		var base = (typeof FCC_ADMIN === 'string') ? FCC_ADMIN : '';
+		var base = adminBase();
 		if (!base) { return null; }
 		return FCC.el('a', {
 			class: 'cbi-button cbi-button-action',
@@ -531,6 +531,94 @@
 			rel: 'noopener',
 			text: FCC._('Open the Integrations page')
 		});
+	}
+
+	/** The proxied FCC Admin base this page was opened with, or ''. */
+	function adminBase() {
+		return (typeof FCC_ADMIN === 'string') ? FCC_ADMIN : '';
+	}
+
+	/**
+	 * Connect Antigravity CLI to FCC, through the proxy the Integrations page is
+	 * served from.
+	 *
+	 * This is FCC's own admin API — the call the Integrations page's Connect
+	 * button makes — reached below the same base: adminproxy.lua's serve() puts
+	 * the server's /admin back and forwards to the loopback FCC server, so the
+	 * request leaves from this router and satisfies the server's
+	 * loopback-only admin check. No token travels here because none is asked
+	 * for: LuCI's session is the gate on the proxied route, and the server
+	 * trusts the peer it is reached from.
+	 *
+	 * The answer on success is the integration status the page shows
+	 * ({"connected":true,…}); a refusal is {"detail":…} with a non-2xx status,
+	 * and the detail is upstream's own sentence — shown as it came, because it
+	 * names what in the user's Antigravity settings stands in the way.
+	 */
+	function connectAntigravity() {
+		return fetch(adminBase() + '/api/integrations/antigravity/connect', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Accept': 'application/json' }
+		}).then(function (res) {
+			return res.text().then(function (body) {
+				var data = null;
+				try { data = JSON.parse(body); } catch (e) { data = null; }
+				if (!res.ok || !data || data.connected !== true) {
+					throw new Error((data && data.detail) || body || ('HTTP ' + res.status));
+				}
+				return data;
+			});
+		});
+	}
+
+	/** Put `text` on the status line, with the Integrations link beside it. */
+	function noticeWithIntegrationsLink(style, text) {
+		var status = FCC.$('#fcc-term-status');
+		FCC.notice(status, style, text);
+		var link = integrationsLink();
+		if (status && link && status.firstChild) {
+			status.firstChild.appendChild(link);
+		}
+	}
+
+	/**
+	 * Offer to make the one connection Antigravity CLI needs, then start the
+	 * session that was asked for.
+	 *
+	 * The connection is a write into Antigravity's own settings — FCC adds its
+	 * models there and switches the provider to FCC, keeping the previous value
+	 * so Integrations → Disconnect can put it back. That is why this asks rather
+	 * than doing it inside the click: the setting belongs to Antigravity, not to
+	 * this page, and upstream deliberately made connecting an explicit act. A
+	 * refusal is not retried (opts.connected), so an answer that still cannot
+	 * start leaves the sentence and the link rather than a loop.
+	 *
+	 * The question is three lines joined by '\n' rather than one msgid containing
+	 * one: po2lmo stores the .po text verbatim, so a C escape inside a msgid
+	 * never matches the runtime string (see closeSession()).
+	 */
+	function offerAntigravityConnect(agent, opts) {
+		if (opts.connected) { return; }
+		/* No base means this page cannot reach FCC at all; the sentence already
+		 * says where the page is, and there is nothing to call. */
+		if (!adminBase()) { return; }
+		if (!window.confirm(
+				FCC._('Antigravity CLI has to be connected to FCC once before it can start.') + '\n' +
+				FCC._('Connecting writes FCC models into the Antigravity settings on this machine and switches its provider to FCC. Integrations can disconnect it again.') + '\n' +
+				FCC._('Connect now?'))) {
+			return;
+		}
+		connectAntigravity()
+			.then(function () { createSession(agent, { connected: true }); })
+			.catch(function (err) {
+				/* The sentence and the message are joined here rather than
+				 * written into one msgid with a trailing space: the catalogue
+				 * generator trims both ends of every string, so a key that
+				 * ended in a space would never match at runtime. */
+				noticeWithIntegrationsLink('fail',
+					FCC._('Antigravity CLI could not be connected:') + ' ' + err.message);
+			});
 	}
 
 	function exitCodeLine(code) {
@@ -639,8 +727,15 @@
 
 	/* ----------------------------------------------------------------- actions */
 
-	/** Open a new session, for `agent` or for whatever the toolbar has selected. */
-	function createSession(agent) {
+	/**
+	 * Open a new session, for `agent` or for whatever the toolbar has selected.
+	 *
+	 * `opts.connected` marks the retry that follows a connection this page made
+	 * on the user's behalf, so a second refusal is reported rather than offered
+	 * again.
+	 */
+	function createSession(agent, opts) {
+		opts = opts || {};
 		if (!agent) {
 			var sel = FCC.$('#fcc-agent-select');
 			agent = sel ? sel.value : '';
@@ -668,17 +763,17 @@
 				 * ones come from remote.sh; agy-not-connected comes from
 				 * session.sh itself. */
 				if (r && r.ok === false) {
-					FCC.notice(FCC.$('#fcc-term-status'), 'fail', consoleReason(r));
-					/* The one refusal with a page to go to: a link beside the
-					 * sentence, so fixing it is one click rather than a hunt
-					 * for a page LuCI's menu does not list. */
+					/* The one refusal this page can fix itself: Antigravity CLI
+					 * needs one connection to FCC, and the page offers to make
+					 * it rather than sending the user to find it. The sentence
+					 * and the link stay either way, so declining is one click
+					 * and no dead end. */
 					if (r.reason === 'agy-not-connected') {
-						var status = FCC.$('#fcc-term-status');
-						var link = integrationsLink();
-						if (status && link && status.firstChild) {
-							status.firstChild.appendChild(link);
-						}
+						noticeWithIntegrationsLink('fail', consoleReason(r));
+						offerAntigravityConnect(agent, opts);
+						return;
 					}
+					FCC.notice(FCC.$('#fcc-term-status'), 'fail', consoleReason(r));
 					return;
 				}
 				clearBanner();
