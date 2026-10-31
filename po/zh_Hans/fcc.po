@@ -360,6 +360,9 @@ msgstr "加载"
 msgid "Loading…"
 msgstr "正在加载…"
 
+msgid "Local system"
+msgstr "本机系统"
+
 msgid "Log level"
 msgstr "日志级别"
 
@@ -605,9 +608,6 @@ msgstr "已切换到本机。尚未配置局域网服务器。"
 
 msgid "Switched to this router. The LAN FCC Server was stopped."
 msgstr "已切换到本机，局域网的 FCC Server 已停止。"
-
-msgid "System"
-msgstr "系统"
 
 msgid "Temperature"
 msgstr "温度"
@@ -1113,6 +1113,9 @@ msgid ""
 msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid "System"
+#~ msgstr "系统"
 
 #~ msgid "One-time setup on the LAN machine"
 #~ msgstr "局域网主机的一次性准备"

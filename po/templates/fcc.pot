@@ -285,6 +285,9 @@ msgstr ""
 msgid "Loading…"
 msgstr ""
 
+msgid "Local system"
+msgstr ""
+
 msgid "Log level"
 msgstr ""
 
@@ -493,9 +496,6 @@ msgid "Switched to this router. No LAN server is configured."
 msgstr ""
 
 msgid "Switched to this router. The LAN FCC Server was stopped."
-msgstr ""
-
-msgid "System"
 msgstr ""
 
 msgid "Temperature"
