@@ -1736,17 +1736,33 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 
 	# The one-time helper is about the LAN machine's sshd, not a third kind of
 	# key, so it stays on the key row rather than on a row of its own further
-	# down — the one-time command first, the public key for that account after
-	# it.
-	_ts_keys="$(sed -n '/id="fcc-remote-keygen"/,/id="fcc-remote-helper"/p' "$_ts_view")"
+	# down. It is the repair for a refused start, so the ordinary key controls
+	# come first and it follows them; both of those buttons are hidden until
+	# they can do something.
+	_ts_keys="$(sed -n '/id="fcc-remote-keygen"/,/id="fcc-remote-key-panel"/p' "$_ts_view")"
 	assert_contains "$_ts_keys" 'id="fcc-remote-keygen"' \
 		"the key row starts with the control that makes a key"
 	assert_contains "$_ts_keys" '<%:One-time authorization%>' \
 		"under the name it now carries"
 	_ts_helper_line="$(grep -n 'id="fcc-remote-helper"' "$_ts_view" | cut -d: -f1)"
 	_ts_show_line="$(grep -n 'id="fcc-remote-showkey"' "$_ts_view" | cut -d: -f1)"
-	assert_ok "Show public key comes after the one-time authorization button" \
-		test "$_ts_helper_line" -lt "$_ts_show_line"
+	assert_ok "the one-time authorization button follows Show public key" \
+		test "$_ts_show_line" -lt "$_ts_helper_line"
+	# It is revealed only by the answer that says this account may not change
+	# the far SSH configuration — there is no probe that could ask earlier.
+	assert_contains "$(cat "$_ts_js")" 'var remoteHelperNeeded = false;' \
+		"the one-time button starts hidden"
+	assert_contains "$(cat "$_ts_js")" "if (d.forwarding === 'denied')" \
+		"and only a denied arrangement reveals it"
+	assert_contains "$(cat "$_ts_js")" \
+		"helper.hidden = remote.platform !== 'linux' || !remoteHelperNeeded;" \
+		"which the renderer honours"
+	# The public-key button names the panel's state, so the next click always
+	# does what the label says.
+	assert_contains "$(cat "$_ts_js")" "FCC._('Hide public key')" \
+		"the key button reads Hide while the panel is open"
+	assert_contains "$(cat "$_ts_js")" 'setKeyPanel(true);' \
+		"and follows a key that was just generated"
 
 	# The page is translated and remote.sh is not. A failure must not carry the
 	# script's English sentence into a Chinese interface, and ssh's own warning

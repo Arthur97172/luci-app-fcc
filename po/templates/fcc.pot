@@ -240,6 +240,9 @@ msgstr ""
 msgid "Hide"
 msgstr ""
 
+msgid "Hide public key"
+msgstr ""
+
 msgid "Host fingerprint"
 msgstr ""
 
@@ -576,7 +579,7 @@ msgstr ""
 msgid "The LAN machine refused the SSH key. Add the public key shown here to that account’s authorized_keys."
 msgstr ""
 
-msgid "The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time authorization” above has the command."
+msgid "The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time authorization” below has the command."
 msgstr ""
 
 msgid "The LAN machine’s SSH daemon rejected the forwarding setting, so it was taken away again. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration."

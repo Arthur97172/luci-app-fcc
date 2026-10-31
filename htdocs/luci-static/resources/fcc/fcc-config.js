@@ -386,7 +386,7 @@
 	 * setting. */
 	var FORWARDING_TEXT = {
 		'denied':
-			FCC._('The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time authorization” above has the command.'),
+			FCC._('The LAN machine’s SSH daemon may still refuse the Admin tunnel: this account is not allowed to change its configuration. AllowTcpForwarding local has to be set there by an administrator — “One-time authorization” below has the command.'),
 		'foreign':
 			FCC._('A file named 00-fcc-local-forwarding.conf was already on the LAN machine and was left as it is. The Admin tunnel needs AllowTcpForwarding local in that machine’s SSH configuration.'),
 		'invalid':
@@ -419,6 +419,17 @@
 	 * thing that invalidates it (saveRemoteConfig clears it). */
 	var remoteHelperBlock = '';
 
+	/* Start, stop and restart arrange that setting by themselves. "denied" is
+	 * the one answer that says this account may not change the far machine's
+	 * SSH configuration, and the one-time command is then the only way left —
+	 * so its button is hidden until that answer arrives. There is no probe on
+	 * page load to ask the same question early: status carries no forwarding
+	 * word, and every start or stop asks again, which is what brings the
+	 * button back after a reload. "foreign", "invalid", "reload-failed" and
+	 * "unsupported" are not helped by the block (it checks the same file and
+	 * runs the same validation), so they do not reveal it. */
+	var remoteHelperNeeded = false;
+
 	function showRemoteHelper(open) {
 		var panel = FCC.$('#fcc-remote-helper-panel');
 		if (!panel) { return; }
@@ -444,6 +455,24 @@
 				state.textContent = remoteCaught(err, FCC._('Could not read the one-time setup.'));
 			}
 		});
+	}
+
+	/* The key panel and the button that opens it. The label says what the next
+	 * click does rather than naming the panel, so it changes with the panel —
+	 * both here and after generating a key, which opens the same panel. */
+	function keyPanelIsOpen() {
+		var panel = FCC.$('#fcc-remote-key-panel');
+		return !!(panel && !panel.hidden);
+	}
+
+	function setKeyPanel(open) {
+		var panel = FCC.$('#fcc-remote-key-panel');
+		if (!panel) { return; }
+		panel.hidden = !open;
+		var button = FCC.$('#fcc-remote-showkey');
+		if (button) {
+			button.textContent = open ? FCC._('Hide public key') : FCC._('Show public key');
+		}
 	}
 
 	function remoteErrorText(text) {
@@ -856,12 +885,19 @@
 		var gen = FCC.$('#fcc-remote-keygen');
 		if (gen) { gen.hidden = remote.key_ready; }
 		var show = FCC.$('#fcc-remote-showkey');
-		if (show) { show.hidden = !remote.key_ready; }
+		if (show) {
+			show.hidden = !remote.key_ready;
+			/* A status reload must not rename a panel the reader has open. */
+			show.textContent = keyPanelIsOpen()
+				? FCC._('Hide public key')
+				: FCC._('Show public key');
+		}
 
 		/* The one-time setup is the sshd_config.d drop-in, which only Linux
-		 * reads: an OpenWrt or macOS machine is never offered it. */
+		 * reads, and it only helps when this account was refused the
+		 * arrangement: see remoteHelperNeeded. */
 		var helper = FCC.$('#fcc-remote-helper');
-		if (helper) { helper.hidden = remote.platform !== 'linux'; }
+		if (helper) { helper.hidden = remote.platform !== 'linux' || !remoteHelperNeeded; }
 		if (remote.platform !== 'linux') { showRemoteHelper(false); }
 
 		var fp = FCC.$('#fcc-remote-fingerprint');
@@ -933,6 +969,10 @@
 	function setRemoteMode(mode) {
 		showRemoteMode(mode);
 		if (mode === remote.target) { return Promise.resolve(); }
+		/* The one-time button belongs to the target that answered "denied";
+		 * the other side has not been asked yet, and its panel is stale. */
+		remoteHelperNeeded = false;
+		showRemoteHelper(false);
 		/* Read before the request: the answer's remote_stopped only says the
 		 * remote stop ran, and a LAN that was never configured would otherwise
 		 * be reported as one that could not be stopped. */
@@ -971,8 +1011,13 @@
 		return FCC.api('remote_set', remoteFields(), { method: 'POST' })
 			.then(function (r) {
 				/* The generated block carries the account name, so a saved
-				 * settings change makes the copy stale. */
+				 * settings change makes the copy stale. Whether the setting
+				 * was refused is about the old account too: the next start or
+				 * stop asks the new one and reveals the button again if that
+				 * answer is still "denied". */
 				remoteHelperBlock = '';
+				remoteHelperNeeded = false;
+				showRemoteHelper(false);
 				/* A changed address or SSH port is a different host, and the
 				 * controller has already discarded the pinned key. Saying so is
 				 * the difference between "the buttons went grey for no reason"
@@ -1082,10 +1127,9 @@
 				return;
 			}
 			remote.public_key = d.public_key || '';
-			var panel = FCC.$('#fcc-remote-key-panel');
 			var text = FCC.$('#fcc-remote-pubkey');
 			if (text) { text.textContent = remote.public_key; }
-			if (panel) { panel.hidden = false; }
+			setKeyPanel(true);
 			FCC.notice(remoteStatus(), 'ok',
 				d.repaired ? FCC._('The public key was rebuilt from the private key. It is shown below.')
 				: d.replaced ? FCC._('The unusable key was replaced. Add the public key below to the LAN machine.')
@@ -1117,6 +1161,14 @@
 			 * sentence says what happened and names the button that has the
 			 * command, and only that button opens it. */
 			var warn = forwardingWarning(d, op);
+			/* "denied" is the answer that says this account may not arrange
+			 * the setting, which is the one case the one-time command
+			 * settles; the warning below names it, and this is what puts it
+			 * on the row for the reader to find. */
+			if (d.forwarding === 'denied') {
+				remoteHelperNeeded = true;
+				renderRemoteState();
+			}
 			if (!d.ok) {
 				FCC.notice(remoteStatus(), 'fail',
 					remoteFailure(d, FCC._('The operation failed.')));
@@ -1547,10 +1599,10 @@
 		FCC.$('#fcc-remote-test').addEventListener('click', remoteTest);
 		FCC.$('#fcc-remote-keygen').addEventListener('click', remoteKeygen);
 		FCC.$('#fcc-remote-showkey').addEventListener('click', function () {
-			var panel = FCC.$('#fcc-remote-key-panel');
-			if (!panel) { return; }
-			panel.hidden = !panel.hidden;
-			if (!panel.hidden) {
+			/* The label reads "Hide" while the panel is open, so opening is
+			 * simply the state it is not in. */
+			setKeyPanel(!keyPanelIsOpen());
+			if (keyPanelIsOpen()) {
 				var text = FCC.$('#fcc-remote-pubkey');
 				if (text) { text.textContent = remote.public_key; }
 			}

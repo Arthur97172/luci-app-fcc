@@ -170,7 +170,9 @@ machine: Windows, Linux, macOS or OpenWrt, one at a time.
    machine has to be running **OpenSSH Server** first — add it under Settings →
    System → Optional features (or run the OpenSSH MSI), set the `sshd` service
    to start automatically, and let inbound TCP 22 through the firewall — and the
-   page says so next to the two paths. No password
+   page says so next to the two paths. The public half is shown on demand:
+   **Show public key** opens it and the button then reads **Hide public key**;
+   a successful **Generate key** opens the same panel by itself. No password
    is stored or asked for: the connection offers this key and nothing else
    (`PreferredAuthentications=publickey`, `BatchMode=yes`,
    `IdentitiesOnly=yes`).
@@ -300,8 +302,12 @@ macOS and OpenWrt do not read that directory, so nothing is changed on those
 machines.
 
 For a machine that does block forwarding and whose administrator does not want
-to hand that account `tee` into `/etc/ssh`, the page's **One-time
-authorization** gives a block to paste once: `sudo sh -s` as an administrator
+to hand that account `tee` into `/etc/ssh`, **Start** or **Stop** reports that
+this account may not change the machine's configuration, and only then does a
+**One-time authorization** button appear, after **Show public key** /
+**Hide public key** — most machines never need it, so it is not on the page
+before that answer arrives. The button gives a block to paste once:
+`sudo sh -s` as an administrator
 (`sh -s` where that machine logs in as root), which installs the helper and a
 `sudoers` rule allowing only `fcc-local-forwarding on` and
 `fcc-local-forwarding off`. The program accepts those two words and nothing
