@@ -223,7 +223,8 @@
 	}
 
 	/** String -> base64 of its UTF-8 bytes. */
-	function strToB64(str) {		var bytes = new TextEncoder().encode(str);
+	function strToB64(str) {
+		var bytes = new TextEncoder().encode(str);
 		var bin = '';
 		for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
 		return btoa(bin);
