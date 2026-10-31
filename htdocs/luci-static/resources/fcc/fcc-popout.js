@@ -133,6 +133,7 @@
 			stopPolling();
 			term.reset();
 			term.write(FCC.captureBytes(r.data));
+			term.write(FCC.captureCursor(r));
 			return FCC.api('session_output', { name: session, offset: 0, wait: 0 },
 				{ method: 'GET' });
 		}).then(function (r) {

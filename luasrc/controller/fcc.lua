@@ -1023,14 +1023,21 @@ function act_session_resize()
 end
 
 --- The visible screen with escape sequences, base64-encoded, so a reconnecting
---  browser can repaint faithfully.
+--  browser can repaint faithfully. The first line of session.sh's answer is the
+--  pane's cursor, captured in the same tmux command list as the screen; the
+--  page positions its terminal with it before the live stream resumes.
 function act_session_capture()
 	local name = util.valid_session(http.formvalue("name"))
 	if not name then return fail("invalid session") end
 	local out, code = run("session", { "capture", name })
 	if code ~= 0 then return fail("session not found") end
-	json_out('{"name":' .. util.json_encode(name) ..
-		',"data":' .. util.json_encode(util.base64_encode(out)) .. '}')
+	local nl = out:find("\n", 1, true)
+	if not nl then return fail("malformed session capture") end
+	local h = util.json_decode(out:sub(1, nl - 1))
+	if type(h) ~= "table" then h = { name = name } end
+	h.name = name
+	h.data = util.base64_encode(out:sub(nl + 1))
+	json_out(util.json_encode(h))
 end
 
 function act_session_close()

@@ -393,6 +393,7 @@
 			stopPolling();
 			state.term.reset();
 			state.term.write(FCC.captureBytes(r.data));
+			state.term.write(FCC.captureCursor(r));
 			return FCC.api('session_output', { name: name, offset: 0, wait: 0 }, { method: 'GET' });
 		}).then(function (r) {
 			if (!r || state.active !== name) { return; }

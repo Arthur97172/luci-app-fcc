@@ -196,9 +196,34 @@
 		return out;
 	}
 
+	/**
+	 * The escape sequences that leave the cursor where the pane's cursor is.
+	 *
+	 * A capture is painted row after row and carries no cursor addressing, so
+	 * painting it ends with the cursor at the end of the pane's last row. The
+	 * live stream that resumes after a repaint is the agent's own incremental
+	 * drawing: it moves the cursor relative to where its previous frame ended,
+	 * which is on the prompt. Painted from the bottom of the screen, the echo
+	 * of typing therefore lands at the bottom instead. The pane's cursor comes
+	 * with the capture, captured in the same frame; attributes are reset first
+	 * so the next stroke does not inherit the last painted cell's colours, and
+	 * the cursor is shown or hidden exactly as the pane has it.
+	 *
+	 * A backend that sends no cursor fields yields '', leaving the old
+	 * behaviour rather than moving to a guessed position.
+	 */
+	function captureCursor(r) {
+		var x = r && r.cursor_x, y = r && r.cursor_y;
+		if (typeof x !== 'number' || typeof y !== 'number') { return ''; }
+		if (x < 0 || y < 0) { return ''; }
+		var seq = '\x1b[0m';
+		if (r.cursor_visible === 0 || r.cursor_visible === false) { seq += '\x1b[?25l'; }
+		else if (r.cursor_visible === 1 || r.cursor_visible === true) { seq += '\x1b[?25h'; }
+		return seq + '\x1b[' + (y + 1) + ';' + (x + 1) + 'H';
+	}
+
 	/** String -> base64 of its UTF-8 bytes. */
-	function strToB64(str) {
-		var bytes = new TextEncoder().encode(str);
+	function strToB64(str) {		var bytes = new TextEncoder().encode(str);
 		var bin = '';
 		for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
 		return btoa(bin);
@@ -230,6 +255,7 @@
 		notice: notice,
 		b64ToBytes: b64ToBytes,
 		captureBytes: captureBytes,
+		captureCursor: captureCursor,
 		strToB64: strToB64
 	};
 })();

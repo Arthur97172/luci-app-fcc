@@ -1167,6 +1167,73 @@ test_a_reattached_screen_is_painted_with_crlf() {
 }
 
 # ---------------------------------------------------------------------------
+# Where a repainted screen leaves the cursor
+#
+# A capture is painted row after row with no cursor addressing, so the cursor
+# ends at the end of the pane's last row. The live stream that resumes after a
+# repaint is the agent's own incremental drawing — it moves the cursor relative
+# to its previous frame, which is on the prompt — so typing after a repaint
+# echoed at the bottom of the screen instead of on the prompt. The capture now
+# carries the pane's cursor, read in the same tmux command list as the screen,
+# and each page writes it right after the captured screen.
+# ---------------------------------------------------------------------------
+
+test_a_capture_carries_the_cursor_that_follows_it() {
+	_ts_common="$ROOT/htdocs/luci-static/resources/fcc/fcc-common.js"
+	_ts_term="$ROOT/htdocs/luci-static/resources/fcc/fcc-terminal.js"
+	_ts_pop="$ROOT/htdocs/luci-static/resources/fcc/fcc-popout.js"
+	_ts_sess="$ROOT/root/usr/libexec/fcc/session.sh"
+	_ts_lua="$ROOT/luasrc/controller/fcc.lua"
+
+	_ts_cap="$(sed -n '/^cmd_capture()/,/^}/p' "$_ts_sess")"
+	assert_contains "$_ts_cap" '#{cursor_x}' \
+		"the capture asks tmux for the pane's cursor column"
+	assert_contains "$_ts_cap" '#{cursor_y}' "and its row"
+	assert_contains "$_ts_cap" '#{cursor_flag}' "and whether the pane shows it"
+	# One tmux command list, not two calls: an agent redrawing on a resize must
+	# not be able to move the cursor between the screen that was captured and
+	# the cursor that is sent beside it.
+	assert_contains "$_ts_cap" 'display-message' \
+		"the cursor is asked of tmux in the same command list"
+	assert_contains "$_ts_cap" '\; capture-pane' "as the screen it belongs to"
+
+	_ts_ctl="$(sed -n '/^function act_session_capture/,/^end$/p' "$_ts_lua")"
+	assert_contains "$_ts_ctl" 'out:sub(1, nl - 1)' \
+		"the controller splits the cursor header from the screen"
+	assert_contains "$_ts_ctl" 'util.base64_encode(out:sub(nl + 1))' \
+		"and encodes the screen only"
+
+	assert_contains "$(cat "$_ts_common")" 'function captureCursor(r)' \
+		"the shared helpers build the cursor's position"
+	assert_contains "$(cat "$_ts_common")" 'captureCursor: captureCursor' \
+		"and export it to the pages"
+	_ts_cur="$(sed -n '/function captureCursor/,/^	}$/p' "$_ts_common")"
+	assert_contains "$_ts_cur" 'r.cursor_x' "the position is the pane's column"
+	assert_contains "$_ts_cur" 'r.cursor_y' "and row"
+	# Reset first: the last painted cell may be coloured, and the agent's next
+	# stroke would otherwise inherit its attributes.
+	assert_contains "$_ts_cur" '\x1b[0m' "attributes are reset before positioning"
+	assert_contains "$_ts_cur" '\x1b[?25l' "a hidden cursor stays hidden"
+	assert_contains "$_ts_cur" '\x1b[?25h' "and a shown one stays shown"
+
+	assert_contains "$(cat "$_ts_term")" 'state.term.write(FCC.captureCursor(r))' \
+		"the console positions the cursor after painting a capture"
+	assert_contains "$(cat "$_ts_pop")" 'term.write(FCC.captureCursor(r))' \
+		"and so does the standalone window"
+	# Order matters: the position must follow the screen, or the screen's own
+	# row breaks would move the cursor again.
+	for _ts_page in "$_ts_term" "$_ts_pop"; do
+		_ts_order="$(awk '
+			/captureBytes\(r\.data\)\)/ { paint = NR }
+			/captureCursor\(r\)\)/ { cur = NR }
+			END { print (paint && cur && paint < cur) ? "positioned" : "painted" }
+		' "$_ts_page")"
+		assert_eq "positioned" "$_ts_order" \
+			"$(basename "$_ts_page") positions the cursor after the screen"
+	done
+}
+
+# ---------------------------------------------------------------------------
 # Coming back to a pane another page resized
 #
 # tmux gives a session one grid, and the console tab and the standalone window

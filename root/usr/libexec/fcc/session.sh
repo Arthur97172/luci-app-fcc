@@ -11,6 +11,8 @@
 #   * `output <name> <abs-offset>` returns the bytes after that offset
 #   * `input <name> <hex>` writes raw bytes into the pane
 #   * `resize`, `capture`, `close`, `cleanup`
+#   * `capture <name>` answers with one JSON header line (the pane's cursor),
+#     then the visible screen with escape sequences, for a client repaint
 #
 # Every local variable is prefixed with its function's tag: POSIX sh functions
 # share one global scope, so a bare `_name` here would collide with the `_name`
@@ -500,8 +502,16 @@ cmd_capture() {
 	# a reloaded standalone window apart from a closed one (cmd_close_later).
 	bump_generation "$_cp_name"
 	# Current visible screen WITH escape sequences, so a reconnecting client can
-	# repaint faithfully.
-	tmux capture-pane -p -e -t "$_cp_name" 2>/dev/null
+	# repaint faithfully, preceded by a header line carrying the pane's cursor.
+	# The cursor and the screen are one tmux command list, so they belong to the
+	# same frame: the client paints the capture and then leaves its terminal
+	# where the agent's own incremental drawing expects it. Painted without
+	# that, the cursor sits at the end of the last captured row, and the echo
+	# of typing lands at the bottom of the screen instead of on the prompt.
+	# A second tmux process would let a redraw move the cursor between the two.
+	tmux display-message -p -t "$_cp_name" \
+		'{"name": "'"$_cp_name"'", "cursor_x": #{cursor_x}, "cursor_y": #{cursor_y}, "cursor_visible": #{cursor_flag}}' \
+		\; capture-pane -p -e -t "$_cp_name" 2>/dev/null
 }
 
 cmd_close() {

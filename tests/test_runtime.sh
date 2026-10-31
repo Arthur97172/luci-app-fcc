@@ -1294,6 +1294,38 @@ test_output_carries_the_panes_own_grid() {
 	tmux kill-session -t "$_pz_name" 2>/dev/null
 }
 
+test_a_capture_carries_the_panes_cursor() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — the cursor is tmux's answer"
+		return 0
+	fi
+
+	# A repainted screen is painted row by row, which leaves the cursor at the
+	# end of the pane's last row. The live stream that follows is the agent's
+	# own incremental drawing, made relative to the prompt row — so typing
+	# after a repaint echoed at the bottom of the screen. The capture carries
+	# the pane's cursor for the page to restore; it is read in the same tmux
+	# command list as the screen, so the two belong to one frame.
+	_cp_name="fcc-claude-905"
+	tmux kill-session -t "$_cp_name" 2>/dev/null
+	tmux new-session -d -s "$_cp_name" -x 80 -y 24 'cat' 2>/dev/null
+	tmux send-keys -t "$_cp_name" 'abc' 2>/dev/null
+	sleep 1
+
+	_cp_out="$(sh_script session.sh capture "$_cp_name")"
+	_cp_hdr="$(printf '%s\n' "$_cp_out" | head -n 1)"
+	assert_contains "$_cp_hdr" '"cursor_x": 3' "the capture carries the cursor's column"
+	assert_contains "$_cp_hdr" '"cursor_y": 0' "and its row"
+	assert_contains "$_cp_hdr" '"cursor_visible": 1' "and whether the pane shows it"
+
+	# The header is exactly one line; the screen follows it unchanged.
+	_cp_body="$(printf '%s\n' "$_cp_out" | sed -n '2,$p')"
+	assert_contains "$_cp_body" 'abc' "the pane's screen follows the header line"
+
+	tmux kill-session -t "$_cp_name" 2>/dev/null
+}
+
 test_a_session_that_is_gone_reports_no_grid() {
 	setup_sandbox
 	# Nobody should have to read a size that belongs to some other session.
