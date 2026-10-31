@@ -284,13 +284,65 @@ end
 -- they went with it (section 104.25) — an install now takes the whole registry,
 -- and the shell's `agent.sh install|remove <id>` is still there for the command
 -- line.
+--
+-- Which machine the report is about follows control_target, the way the Web
+-- Console's agent list already does: Local means this router, LAN means the
+-- other machine, and the page says which it is showing. A LAN refusal carries
+-- a reason code rather than a sentence, because the page is translated and the
+-- script is not.
 -- ---------------------------------------------------------------------------
+local function relay_agents(args)
+	local out = util.trim(run("remote", args))
+	local d = util.json_decode(out)
+	if type(d) ~= "table" then
+		return json_out('{"ok":false,"target":"lan","reason":"unreadable","error":'
+			.. util.json_encode(out:sub(1, 300)) .. '}')
+	end
+	if d.ok ~= true then
+		return json_out('{"ok":false,"target":"lan","reason":'
+			.. util.json_encode(d.reason or "unreadable") ..
+			',"error":' .. util.json_encode(d.error or "") .. '}')
+	end
+	-- Two shapes, one meaning. A machine carrying this package answers with its
+	-- status document and the map is lifted out of it; a bare machine answers
+	-- with the map directly (remote.sh folds its probe lines into it).
+	local list = type(d.agents) == "table" and d.agents or {}
+	if not next(list) and type(d.status) == "table" and type(d.status.agents) == "table" then
+		list = d.status.agents
+	end
+	json_out('{"ok":true,"target":"lan","host":' .. util.json_encode(d.host or "") ..
+		',"agents":' .. util.json_encode(list) .. '}')
+end
+
 function act_agents()
-	relay("agent", { "list" })
+	local target = "local"
+	local c = cfg_cursor()
+	if c and c:get("fcc", "main", "control_target") == "lan" then target = "lan" end
+
+	if target == "local" then
+		local out = util.trim(run("agent", { "list" }))
+		if not looks_like_json(out) then out = "{}" end
+		return json_out('{"ok":true,"target":"local","agents":' .. out .. '}')
+	end
+	-- The page re-reads the table on a thirty-second clock while it is on the
+	-- LAN machine. `state` asks for the columns a process changes by itself
+	-- and leaves version detection alone: the far side's status document
+	-- answers from its cache either way, and a bare machine stops starting
+	-- every agent's CLI twice a minute.
+	if http.formvalue("state") == "1" then
+		return relay_agents({ "agents", "state" })
+	end
+	relay_agents({ "agents" })
 end
 
 function act_agent_versions()
 	if not require_post() then return end
+	local c = cfg_cursor()
+	if c and c:get("fcc", "main", "control_target") == "lan" then
+		-- One request: re-detect over there, and answer with the table it
+		-- produced. The page has nothing left to fetch.
+		return relay_agents({ "agents", "--refresh" })
+	end
 	relay("agent", { "versions", "--refresh" })
 end
 

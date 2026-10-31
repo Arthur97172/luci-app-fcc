@@ -728,6 +728,13 @@ fcc_remote_bare_agents() {
 	fcc_agents_each | awk -F'|' 'NF >= 3 && $1 != "" { printf "%s:%s\n", $1, $3 }'
 }
 
+fcc_remote_bare_agent_rows() {
+	# id:launcher:probe triples. The launcher is the process that keeps an
+	# agent up on the far side; the probe is the CLI whose --version is the
+	# version column (hermes has none — its row is the launcher itself).
+	fcc_agents_each | awk -F'|' 'NF >= 3 && $1 != "" { printf "%s:%s:%s\n", $1, $3, $7 }'
+}
+
 fcc_remote_bare_server_script() {
 	# One line of POSIX sh that prints "server running" or "server stopped".
 	#
@@ -756,6 +763,101 @@ fcc_remote_bare_probe_script() {
 
 fcc_remote_bare_probe_cmd() {
 	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_probe_script)")"
+}
+
+fcc_remote_bare_agent_rows_script() {
+	# Every column of the agent table, for a machine that runs only the upstream
+	# install: `agent <id> installed 0|1`, then version, running, pid, uptime and
+	# rss_kb for the ones that answer. The page draws a dash for a line the
+	# machine did not print — the same rule the server panel follows.
+	#
+	# Installed means the same two names the console probe asks about: the CLI
+	# and the launcher. The version is the registry's own probe, run the way
+	# status.sh runs it, and normalised the same way — a semver-shaped token if
+	# there is one, otherwise the first line cut short.
+	#
+	# `state` leaves the version line out. The page's thirty-second refresh
+	# asks for the columns a process changes by itself — state, pid, uptime,
+	# memory — and keeps the versions from the last full read, so a bare
+	# machine is not made to start every agent's CLI twice a minute. The
+	# version cache status.sh keeps does the same job on a package host, which
+	# is why only this branch needs the mode.
+	#
+	# Running is read from the process list, and the launcher's name is
+	# assembled at run time so the probe's own command line cannot match it. A
+	# match counts when its first word is the launcher (a detached launcher) or
+	# when it has a real terminal — which is how a session started from this
+	# router appears over there, `ssh -tt` and all. The probe's own shell and
+	# its parent have neither, so neither is ever taken for an agent.
+	#
+	# The uptime parse repeats the macOS etimes fallback from the server
+	# details for the same reason: macOS ps has no etimes, and asking for one
+	# makes it print its whole keyword list on stdout.
+	_ars_triples="$(fcc_remote_bare_agent_rows | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+	_ars_head="PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; export PATH; for _far_t in $_ars_triples; do "
+	_ars_ver='
+if [ "$_far_i" = "1" ] && [ -n "$_far_v" ] && command -v "$_far_v" >/dev/null 2>&1; then
+	_far_vo="$("$_far_v" --version < /dev/null 2>/dev/null | head -n 1 | tr -d "\r")"
+	_far_ver="$(printf "%s\n" "$_far_vo" | grep -oE "[0-9]+\.[0-9]+(\.[0-9]+)?([-+.][A-Za-z0-9.]+)?" | head -n 1)"
+	[ -n "$_far_ver" ] || _far_ver="$(printf "%s\n" "$_far_vo" | grep -v "^[[:space:]]*$" | head -n 1 | cut -c1-40)"
+	[ -n "$_far_ver" ] && echo "agent $_far_a version $_far_ver"
+fi'
+	[ "${1:-}" = "state" ] && _ars_ver=""
+	printf '%s%s%s%s' "$_ars_head" '
+_far_a=${_far_t%%:*}; _far_r=${_far_t#*:}; _far_l=${_far_r%%:*}; _far_v=${_far_r#*:}
+_far_i=0
+if command -v "$_far_a" >/dev/null 2>&1 && command -v "$_far_l" >/dev/null 2>&1; then _far_i=1; fi
+echo "agent $_far_a installed $_far_i"
+' "$_ars_ver" '
+_far_p=""
+if command -v pgrep >/dev/null 2>&1; then
+	for _far_c in $(pgrep -f "[f]cc-$_far_a" 2>/dev/null); do
+		[ "$_far_c" = "$$" ] && continue
+		_far_first="$(ps -o args= -p "$_far_c" 2>/dev/null)"
+		_far_first="${_far_first%% *}"
+		if [ -n "$_far_first" ] && [ "${_far_first##*/}" = "$_far_l" ]; then _far_p="$_far_c"; break; fi
+		_far_tty="$(ps -o tty= -p "$_far_c" 2>/dev/null | tr -d " ")"
+		case "$_far_tty" in
+		""|"?"|"??"|"-") continue ;;
+		esac
+		_far_p="$_far_c"; break
+	done
+fi
+if [ -n "$_far_p" ]; then
+	echo "agent $_far_a running 1"
+	echo "agent $_far_a pid $_far_p"
+	_far_u="$(ps -o etimes= -p "$_far_p" 2>/dev/null | tr -d " ")"
+	case "$_far_u" in
+	""|*[!0-9]*) _far_u="" ;;
+	esac
+	if [ -z "$_far_u" ]; then
+		_far_e="$(ps -o etime= -p "$_far_p" 2>/dev/null | tr -d " ")"
+		if [ -n "$_far_e" ]; then
+			_far_d=0
+			case "$_far_e" in
+			*-*) _far_d="${_far_e%%-*}"; _far_e="${_far_e#*-}" ;;
+			esac
+			_far_o=$IFS; IFS=:
+			set -- $_far_e
+			IFS=$_far_o
+			if [ $# -eq 3 ]; then
+				_far_u="$(expr "$_far_d" \* 86400 + "$1" \* 3600 + "$2" \* 60 + "$3" 2>/dev/null)"
+			elif [ $# -eq 2 ]; then
+				_far_u="$(expr "$_far_d" \* 86400 + "$1" \* 60 + "$2" 2>/dev/null)"
+			fi
+		fi
+	fi
+	[ -n "$_far_u" ] && echo "agent $_far_a uptime $_far_u"
+	_far_rss="$(ps -o rss= -p "$_far_p" 2>/dev/null | tr -d " ")"
+	[ -n "$_far_rss" ] && echo "agent $_far_a rss_kb $_far_rss"
+else
+	echo "agent $_far_a running 0"
+fi
+done'
+}
+
+fcc_remote_bare_agent_rows_cmd() {
+	printf 'sh -c %s' "$(fcc_shquote "$(fcc_remote_bare_agent_rows_script)")"
 }
 
 fcc_remote_bare_details_script() {
@@ -1367,6 +1469,39 @@ fcc_remote_win_probe_script() {
 	printf '%s' "$(fcc_remote_win_path_script); $(fcc_remote_win_server_script);$(fcc_remote_win_agents_script)"
 }
 
+fcc_remote_win_agent_rows_script() {
+	# The same lines the POSIX rows script prints, asked of PowerShell: the
+	# installed test is the console probe's two names, the version is the
+	# launcher's --version, and the process facts come from a process whose
+	# name is the launcher's. A launcher that execs away to another program —
+	# the Node-based agents do — leaves no process of that name, and the
+	# running column is then the dash: a field the machine cannot answer is
+	# left out rather than guessed at.
+	#
+	# `state` drops the version probe for the same reason as on the POSIX
+	# side: the page's thirty-second refresh reads the columns a process
+	# changes and keeps the versions from the last full read.
+	#
+	# Written one statement per line and flattened, because the whole script
+	# travels inside cmd.exe's one quoted argument and may hold no double
+	# quote.
+	_war_state=""
+	[ "${1:-}" = "state" ] && _war_state=1
+	_war_out=""
+	_war_triples="$(fcc_remote_bare_agent_rows)"
+	while IFS=: read -r _war_id _war_launcher _war_probe; do
+		[ -n "$_war_id" ] || continue
+		_war_out="$_war_out \$i = 0; if ((Get-Command '$_war_id' -ErrorAction SilentlyContinue) -and (Get-Command '$_war_launcher' -ErrorAction SilentlyContinue)) { \$i = 1 }; Write-Output ('agent $_war_id installed ' + \$i);"
+		if [ -n "$_war_probe" ] && [ "$_war_state" != "1" ]; then
+			_war_out="$_war_out if (\$i -eq 1) { \$g = Get-Command '$_war_probe' -ErrorAction SilentlyContinue; if (\$g) { \$v = @(& \$g.Source --version 2>\$null) | Where-Object { \$_ } | Select-Object -First 1; if (\$v) { \$w = (\$v -split '\s+') | Where-Object { \$_ } | Select-Object -Last 1; if (\$w) { Write-Output ('agent $_war_id version ' + \$w) } } } };"
+		fi
+		_war_out="$_war_out \$p = @(Get-Process -Name 'fcc-$_war_id' -ErrorAction SilentlyContinue) | Select-Object -First 1; if (\$p) { Write-Output ('agent $_war_id running 1'); Write-Output ('agent $_war_id pid ' + \$p.Id); try { Write-Output ('agent $_war_id uptime ' + [int]((Get-Date) - \$p.StartTime).TotalSeconds) } catch { }; try { Write-Output ('agent $_war_id rss_kb ' + [int](\$p.WorkingSet64 / 1KB)) } catch { } } else { Write-Output ('agent $_war_id running 0') };"
+	done <<EOF
+$_war_triples
+EOF
+	printf '%s' "$_war_out"
+}
+
 fcc_remote_win_cmd() {
 	# fcc_remote_win_cmd <script> -> the remote command, one line.
 	#
@@ -1652,6 +1787,147 @@ fcc_remote_console() {
 	fi
 	fcc_remote_console_error "unreadable" \
 		"the LAN machine answered with something that is not a status document"
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# The agents on the LAN machine, with every column of the table
+# ---------------------------------------------------------------------------
+#
+# The console asks only which agents a session could start, because that is all
+# a pane needs. Basic Information shows the whole table — version, state, pid,
+# uptime, memory — so this verb asks the same machine a bigger question and
+# returns one document the page can render directly.
+#
+# Two kinds of answer again, through one connection either way. A machine that
+# carries this package answers with its status document, which already holds
+# every field (and a version cache that --refresh rewrites first). A machine
+# that ran only the upstream install has no such document, so its own shell —
+# or PowerShell on Windows — reads the process list and each launcher's
+# --version instead, printing the same lines the console probe prints, one
+# field per line.
+#
+# Refresh is a hint, not a mode: on the package host it re-runs the version
+# detection before the document is read; on a bare machine every probe is a
+# fresh detection anyway, and Windows ignores it for the same reason.
+#
+# `state` is the opposite hint, and it exists because the page re-reads the
+# table every thirty seconds while it is on the LAN machine. The package host
+# already answers from its version cache; a bare machine would start every
+# installed agent's CLI on every pass, so it is told to leave the version line
+# out and the page keeps the versions from the last full read.
+
+fcc_remote_agents_cmd() {
+	# fcc_remote_agents_cmd [refresh|state] -> the remote command.
+	_ac_mode="${1:-}"
+	_ac_refresh=""
+	[ "$_ac_mode" = "--refresh" ] && _ac_refresh=1
+	_ac_state=""
+	[ "$_ac_mode" = "state" ] && _ac_state=1
+	# What the package host is told. The status document is only read when the
+	# script that prints it is there; the refresh runs first so the version
+	# column is the one this request asked for.
+	_ac_doc='/usr/libexec/fcc/status.sh'
+	if [ "$_ac_refresh" = "1" ]; then
+		_ac_doc='[ -x /usr/libexec/fcc/agent.sh ] && /usr/libexec/fcc/agent.sh versions --refresh >/dev/null 2>&1; /usr/libexec/fcc/status.sh'
+	fi
+	case "$(fcc_remote_platform)" in
+		linux|macos)
+			printf 'sh -c %s' "$(fcc_shquote "if [ -x /usr/libexec/fcc/status.sh ]; then $_ac_doc; else $(fcc_remote_bare_agent_rows_script ${_ac_state:+state}); fi")" ;;
+		windows)
+			fcc_remote_win_cmd "$(fcc_remote_win_path_script); $(fcc_remote_win_agent_rows_script ${_ac_state:+state})" ;;
+		*)
+			# OpenWrt carries this package by definition: there is no bare
+			# probe to fall back to, exactly as for the console.
+			printf '[ -x /usr/libexec/fcc/status.sh ] && { %s; }' "$_ac_doc" ;;
+	esac
+}
+
+fcc_remote_agents_from_rows() {
+	# fcc_remote_agents_from_rows <host> <lines> -> the agent map as a
+	# document, or 1 when the lines held no agent at all.
+	#
+	# The far side's words are used as answers to a question, never as JSON:
+	# ids are checked against this router's registry, and every value goes
+	# through the quoting helpers on the way into the document. The lines are
+	# folded per agent first, so one awk decides the field order and the shell
+	# only has to quote.
+	_apr_host="$1"
+	_apr_us="$(printf '\037')"
+	_apr_data="$(printf '%s\n' "$2" | awk '
+		$1 == "agent" && NF >= 4 {
+			id = $2
+			if (id == "") next
+			if (!(id in seen)) { seen[id] = 1; n++; order[n] = id }
+			key = $3
+			if (key == "installed" || key == "running" || key == "pid" ||
+			    key == "uptime" || key == "rss_kb" || key == "version")
+				f[id, key] = $4
+		}
+		END {
+			for (i = 1; i <= n; i++) {
+				id = order[i]
+				printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
+					id, f[id, "installed"], f[id, "running"], f[id, "pid"],
+					f[id, "uptime"], f[id, "rss_kb"], f[id, "version"]
+			}
+		}')"
+	_apr_agents=""
+	_apr_seen=0
+	while IFS="$_apr_us" read -r _apr_id _apr_inst _apr_run _apr_pid _apr_up _apr_rss _apr_ver; do
+		[ -n "$_apr_id" ] || continue
+		fcc_valid_agent "$_apr_id" || continue
+		_apr_seen=1
+		_apr_inst_b=false; [ "$_apr_inst" = "1" ] && _apr_inst_b=true
+		_apr_run_b=false;  [ "$_apr_run" = "1" ] && _apr_run_b=true
+		_apr_agents="$_apr_agents${_apr_agents:+,}\"$_apr_id\":{\"name\":$(fcc_json_str "$(fcc_agent_name "$_apr_id")"),\"installed\":$_apr_inst_b,\"running\":$_apr_run_b,\"pid\":$(fcc_json_num_or_null "$_apr_pid"),\"uptime\":$(fcc_json_num_or_null "$_apr_up"),\"memory_rss_kb\":$(fcc_json_num_or_null "$_apr_rss"),\"version\":$(fcc_json_str_or_null "$_apr_ver")}"
+	done <<EOF
+$_apr_data
+EOF
+	[ "$_apr_seen" = "1" ] || return 1
+	printf '{"ok":true,"host":%s,"agents":{%s}}\n' \
+		"$(fcc_json_str "$_apr_host")" "$_apr_agents"
+}
+
+fcc_remote_agents() {
+	# fcc_remote_agents [--refresh|state]
+	fcc_remote_console_ready || return 1
+
+	_an_host="$(fcc_remote_host)"
+	_an_raw="$(fcc_remote_ssh "$(fcc_remote_agents_cmd "${1:-}")")"
+	_an_code=$?
+	_an_out="$(printf '%s\n' "$_an_raw" | fcc_remote_output_filter | tr -d '\r' \
+		| sed -e 's/[[:space:]]*$//' -e '/^$/d')"
+
+	# The package host's status document already carries every field, so it is
+	# passed through whole — the controller lifts the agent map, the same way
+	# the console does, and nothing here has to read it.
+	case "$_an_out" in
+		'{'*)
+			printf '{"ok":true,"host":%s,"status":%s}\n' \
+				"$(fcc_json_str "$_an_host")" "$_an_out"
+			return 0 ;;
+	esac
+
+	if [ "$_an_code" -eq 255 ]; then
+		_an_why="$(printf '%s' "$_an_out" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
+		[ -n "$_an_why" ] || _an_why="the LAN machine could not be reached"
+		fcc_remote_console_error "unreachable" "$_an_why"
+		return 1
+	fi
+
+	case "$(fcc_remote_platform)" in
+		linux|macos|windows)
+			fcc_remote_agents_from_rows "$_an_host" "$_an_out" && return 0 ;;
+	esac
+
+	if [ -z "$_an_out" ]; then
+		fcc_remote_console_error "no-agent-tools" \
+			"the LAN machine does not answer with an agent list"
+		return 1
+	fi
+	fcc_remote_console_error "unreadable" \
+		"the LAN machine answered with something that is not an agent list"
 	return 1
 }
 
@@ -2355,6 +2631,9 @@ case "${1:-}" in
 		fcc_remote_tunnel_ensure ;;
 	console)
 		fcc_remote_console ;;
+	agents)
+		shift
+		fcc_remote_agents "${1:-}" ;;
 	session-command)
 		shift
 		fcc_remote_session_command "${1:-}" ;;

@@ -2065,14 +2065,18 @@ test_agent_information_is_opt_in_and_named() {
 
 	# Nothing is detected on entry: the render is gated, and the per-minute
 	# version refresh is gated with it, so a tab left open on another page
-	# costs no agent processes.
-	assert_contains "$(cat "$_ts_js")" 'if (agentShown) { renderAgents(' \
-		"the table is drawn only once asked for"
+	# costs no agent processes. The gate also keeps a local status document
+	# out of a table that is showing the LAN machine.
+	assert_contains "$(cat "$_ts_js")" \
+		"if (agentShown && target === 'local') { renderAgents(" \
+		"the table is drawn only once asked for, and only from this router"
 	assert_contains "$(cat "$_ts_js")" 'if (!agentShown) { return; }' \
 		"the version refresh does not run while the table is cleared"
 	_ts_init="$(sed -n '/^	function init()/,/^	}$/p' "$_ts_js")"
 	assert_not_contains "$_ts_init" 'agent_versions' \
 		"opening the tab does not run a version detection"
+	assert_not_contains "$_ts_init" 'loadLanAgents' \
+		"and does not ask the LAN machine for a second table by itself"
 
 	# Version status turns the table on before it asks the backend;
 	# Clear information turns it off and empties what is on screen.
@@ -2087,6 +2091,86 @@ test_agent_information_is_opt_in_and_named() {
 		"the clear button is wired"
 	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-info-agent-status').textContent = ''" \
 		"clearing also drops the detection sentence"
+}
+
+# ---------------------------------------------------------------------------
+# The Agents section follows Configuration's FCC Server mode
+#
+# The same six columns describe whichever machine the Configuration tab
+# targets. Local mode keeps the poll-driven table above. LAN mode cannot be
+# read from /proc, so it costs an SSH round trip: it is fetched when the page
+# opens on that mode or the mode changes under it, re-read every thirty seconds
+# on the same clock Configuration's LAN panel uses, and re-detected only when
+# Version status is pressed. The thirty-second read asks for state alone, so a
+# bare machine is not made to start every agent's CLI twice a minute. The
+# section names its subject, and a refusal empties the table rather than
+# leaving one machine's rows under the other's name.
+# ---------------------------------------------------------------------------
+test_agents_follow_the_server_mode() {
+	_ts_info="$ROOT/luasrc/view/fcc/info.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-info.js"
+
+	assert_contains "$(cat "$_ts_info")" 'id="fcc-info-agent-source"' \
+		"the section has a line naming the machine it describes"
+	assert_contains "$(cat "$_ts_js")" "FCC.\$('#fcc-info-agent-source')" \
+		"and the renderer writes it"
+
+	assert_contains "$(cat "$_ts_js")" "'Showing the agents on the LAN machine'" \
+		"LAN mode says the table is the other machine's"
+	assert_contains "$(cat "$_ts_js")" "'Showing the agents on this router'" \
+		"and local mode says it is this one's"
+
+	# One request chooses the action by mode, and the clock's tick by kind: a
+	# GET for the table as it stands (`state` leaves versions alone), the POST
+	# when the button asked for a re-detect.
+	_ts_lan="$(sed -n '/^	function loadLanAgents/,/^	}$/p' "$_ts_js")"
+	assert_contains "$_ts_lan" "'agents'" \
+		"the entry fetch reads the agent table"
+	assert_contains "$_ts_lan" "'agent_versions'" \
+		"and the button's fetch is the version re-detect"
+	assert_contains "$_ts_lan" 'state ? { state: 1 } : {}' \
+		"the clock's read asks for state only"
+	assert_contains "$_ts_lan" 'mergeAgentVersions(agents);' \
+		"and keeps the versions from the last full read"
+	assert_contains "$_ts_lan" "renderAgents({}, true);" \
+		"a refusal empties the table instead of leaving the last answer"
+
+	# Thirty seconds, like Configuration's LAN panel, and stopped by every way
+	# out of that mode.
+	assert_contains "$(cat "$_ts_js")" 'var AGENT_POLL_MS = 30000;' \
+		"the LAN table's clock is thirty seconds"
+	_ts_poll="$(sed -n '/^	function keepAgentPolling/,/^	}$/p' "$_ts_js")"
+	assert_contains "$_ts_poll" 'loadLanAgents(false, true)' \
+		"a tick is a state-only re-read"
+	assert_contains "$_ts_poll" 'if (agentsBusy) { return; }' \
+		"and an answer still on its way is not queued behind"
+	_ts_clear="$(sed -n '/^	function clearAgentInfo/,/^	}$/p' "$_ts_js")"
+	assert_contains "$_ts_clear" 'keepAgentPolling(false);' \
+		"Clear information stops the clock with the table"
+	assert_contains "$(cat "$_ts_js")" 'if (agentsTimer) { clearInterval(agentsTimer); }' \
+		"and leaving the page stops it too"
+	assert_contains "$(cat "$_ts_js")" "if (target !== 'local') { return; }" \
+		"the per-minute version refresh still never reaches the LAN machine"
+	assert_contains "$(cat "$_ts_js")" 'targetTimer = setInterval(checkTarget, 5000);' \
+		"the mode is re-read cheaply so a switch is noticed"
+	assert_contains "$(cat "$_ts_js")" "if (target === 'lan') { return loadLanAgents(true); }" \
+		"Version status is the LAN table's version re-detect"
+
+	# The action behind the requests is target-aware in the controller, and
+	# the refusal travels as a code so the page can translate it.
+	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
+	_ts_act="$(sed -n '/^function act_agents()/,/^end$/p' "$_ts_ctrl")"
+	_ts_ver="$(sed -n '/^function act_agent_versions()/,/^end$/p' "$_ts_ctrl")"
+	assert_contains "$_ts_act" 'relay_agents({ "agents" })' \
+		"the agent report follows control_target"
+	assert_contains "$_ts_act" 'relay_agents({ "agents", "state" })' \
+		"the clock's read does too, in state-only form"
+	assert_contains "$_ts_act" 'http.formvalue("state") == "1"' \
+		"and is chosen by the request's own flag"
+	assert_contains "$_ts_ver" 'relay_agents({ "agents", "--refresh" })' \
+		"and so does the version re-detect"
+	assert_contains "$(cat "$_ts_ctrl")" '"reason":"unreadable"' \
+		"a malformed answer is a reason code"
 }
 
 # ---------------------------------------------------------------------------

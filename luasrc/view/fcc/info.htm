@@ -51,6 +51,11 @@
 				<button id="fcc-info-agent-clear" class="cbi-button cbi-button-reset"><%:Clear information%></button>
 				<div class="spacer"></div>
 			</div>
+			<!-- Which machine the six columns describe. Configuration → FCC
+			     Server decides it, and the same table renders either one, so
+			     the page says out loud which it is instead of leaving a reader
+			     to remember the other tab. -->
+			<div id="fcc-info-agent-source" class="fcc-muted"></div>
 			<table class="fcc-table" id="fcc-info-agents" hidden>
 				<thead>
 					<tr>

@@ -453,6 +453,12 @@ msgstr ""
 msgid "Show public key"
 msgstr ""
 
+msgid "Showing the agents on the LAN machine"
+msgstr ""
+
+msgid "Showing the agents on this router"
+msgstr ""
+
 msgid "Start"
 msgstr ""
 

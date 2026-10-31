@@ -259,6 +259,19 @@ described first and the name is the fallback. While the server is running those
 six lines are re-read every 30 seconds; once it is not running, or the page
 leaves LAN mode, the refresh stops.
 
+The **Agents** section of *Basic Information* follows the same switch:
+`[This router]` reads this machine, `[LAN]` reads the other one, with all six
+columns (agent, version, state, PID, uptime, memory (RSS)), and a line above the
+table says which machine the numbers describe. In LAN mode the table is read in
+full when the page opens, when the mode changes, or when **Version status** is
+pressed; after that it is re-read every 30 seconds for state, PID, uptime and
+memory — the same clock Configuration's LAN panel uses. Those re-reads do not
+probe versions: the version column keeps the last full read's answer, and only
+**Version status** re-detects over there, so a machine without this package is
+not made to start every agent's CLI twice a minute. A failure writes its reason
+in the table's place and stops the clock instead of falling back to this
+router's data.
+
 **Only private IPv4 addresses are accepted** (`10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`). Hostnames are refused: a name can resolve to a public address.
 

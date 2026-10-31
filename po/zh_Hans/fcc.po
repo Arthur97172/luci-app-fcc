@@ -564,6 +564,12 @@ msgstr "设置已保存。"
 msgid "Show public key"
 msgstr "显示公钥"
 
+msgid "Showing the agents on the LAN machine"
+msgstr "正在显示局域网主机上的智能体"
+
+msgid "Showing the agents on this router"
+msgstr "正在显示本机上的智能体"
+
 msgid "Start"
 msgstr "启动"
 
@@ -1116,9 +1122,6 @@ msgstr ""
 
 #~ msgid "System"
 #~ msgstr "系统"
-
-#~ msgid "One-time setup on the LAN machine"
-#~ msgstr "局域网主机的一次性准备"
 
 #~ msgid ""
 #~ "The FCC Server did not start on the LAN machine. Its log on that machine, "

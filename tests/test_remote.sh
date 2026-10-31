@@ -117,6 +117,15 @@ case "${last:-}" in
 	# The Windows details script is the process-list question asked in
 	# PowerShell, and it also names Get-Process — so it is recognised by the
 	# memory it reads, before the probe's own case can claim it.
+	#
+	# The agent table's Windows probe reads the same memory and must not be
+	# answered with the server's key=value lines: it is recognised by the
+	# lines it prints, which no other PowerShell script here contains.
+	*"Write-Output ('agent "*)
+		if [ -n "${SSH_PROBE_OUT+x}" ]; then
+			printf '%s\n' "$SSH_PROBE_OUT"
+			exit 0
+		fi ;;
 	*WorkingSet64*)
 		if [ -n "${SSH_DETAILS_OUT+x}" ]; then
 			printf '%s\n' "$SSH_DETAILS_OUT"
@@ -1907,6 +1916,193 @@ test_console_calls_an_answer_it_cannot_read_unreadable() {
 	out="$(SSH_DETAIL_OUT='hello there' run_remote console)" || true
 	assert_contains "$out" '"reason":"unreadable"' \
 		"anything else is unreadable, not a status"
+	drop_sandbox
+}
+
+# ---------------------------------------------------------------------------
+# The agent table on the LAN machine
+#
+# Basic Information's Agents section shows whichever machine Configuration
+# targets. On the LAN machine that is one SSH connection per fetch and the same
+# six columns as the local table — from the package's status document where it
+# exists, and from the probe lines the console already understands where it
+# does not. Unlike the console, the answer is the whole table, so a run state
+# and a pid travel with it.
+# ---------------------------------------------------------------------------
+
+# The probe lines a bare Linux or macOS machine prints, one field per line.
+AGENT_ROWS='agent claude installed 1
+agent claude version 2.1.303
+agent claude running 1
+agent claude pid 3713
+agent claude uptime 448535
+agent claude rss_kb 37680
+agent codex installed 1
+agent codex version 0.150.1
+agent codex running 0
+agent dsh installed 0
+agent dsh running 0'
+
+# The same probe asked for state alone: every line a full read prints except
+# the version.
+AGENT_STATE_ROWS='agent claude installed 1
+agent claude running 1
+agent claude pid 3713
+agent claude uptime 448535
+agent claude rss_kb 37680
+agent codex installed 1
+agent codex running 0'
+
+test_agents_pass_the_status_document_through() {
+	# A machine carrying this package answers with its own document, which
+	# already holds every column. It travels whole, the way the console's does;
+	# the controller lifts the map out of it.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_DETAIL_OUT="$LAN_DOC" run_remote agents)" || true
+	assert_contains "$out" '"ok":true' "the agent table is answered, not refused"
+	assert_contains "$out" '"host":"192.168.5.20"' "the answer names the machine"
+	assert_contains "$out" '"status":{"luci_fcc"' "with the remote's document whole"
+	assert_contains "$out" '"claude": {"name": "Claude Code"' \
+		"so its agent map keeps every field status.sh reported"
+	assert_contains "$(ssh_command 1)" '[ -x /usr/libexec/fcc/status.sh ]' \
+		"asked for the helper first"
+	assert_contains "$(ssh_command 1)" 'pgrep -f "[f]cc-$_far_a"' \
+		"with the bare probe as the fallback in the same connection"
+	drop_sandbox
+}
+
+test_agents_fold_a_bare_machines_probe_lines() {
+	# No package over there: the lines are folded into the same map the page
+	# renders, and every column survives the trip.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_DETAIL_OUT="$AGENT_ROWS" run_remote agents)" || true
+	assert_contains "$out" '"ok":true' "the bare machine's table is answered"
+	assert_contains "$out" '"name":"Claude Code","installed":true,"running":true,"pid":3713,"uptime":448535,"memory_rss_kb":37680,"version":"2.1.303"' \
+		"the running agent carries every column"
+	assert_contains "$out" '"codex":{"name":"Codex","installed":true,"running":false,"pid":null,"uptime":null,"memory_rss_kb":null,"version":"0.150.1"}' \
+		"a stopped one keeps its version and dashes for what a stopped process cannot answer"
+	assert_contains "$out" '"dsh":{"name":"DeepSeek Harness","installed":false' \
+		"and an agent that is not installed is reported as such"
+	drop_sandbox
+}
+
+test_agents_drop_an_agent_the_registry_does_not_have() {
+	# The remote's words are answers to a question, never JSON.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_DETAIL_OUT='agent ../../etc installed 1
+agent claude installed 1' run_remote agents)" || true
+	assert_contains "$out" '"claude":{"name":"Claude Code"' "the registry agent is kept"
+	assert_not_contains "$out" '../../etc' "and an id outside it is dropped"
+	drop_sandbox
+}
+
+test_agents_refuse_a_target_that_is_not_configured() {
+	fresh
+	out="$(run_remote agents)" || true
+	assert_contains "$out" '"ok":false' "an unconfigured target is refused"
+	assert_contains "$out" '"reason":"not-configured"' "naming the missing setting"
+	assert_not_contains "$(cat "$TMP/ssh.log" 2>/dev/null)" 'CALL' \
+		"without attempting a connection"
+	drop_sandbox
+}
+
+test_agents_report_an_unreachable_machine() {
+	fresh
+	ready_lan
+	out="$(SSH_EXIT=255 run_remote agents)" || true
+	assert_contains "$out" '"ok":false' "a failed connection is a refusal"
+	assert_contains "$out" '"reason":"unreachable"' "not an empty table"
+	drop_sandbox
+}
+
+test_agents_state_read_leaves_version_probing_out() {
+	# The page's thirty-second clock asks for state alone. A bare machine has
+	# no version cache to answer from, so the probe is told to leave the
+	# version line out: state, pid, uptime and memory still travel, and the
+	# page keeps the version from its last full read.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_DETAIL_OUT="$AGENT_STATE_ROWS" run_remote agents state)" || true
+	assert_contains "$out" '"claude":{"name":"Claude Code","installed":true,"running":true,"pid":3713,"uptime":448535,"memory_rss_kb":37680,"version":null}' \
+		"state alone fills every column but the version"
+	assert_contains "$out" '"codex":{"name":"Codex","installed":true,"running":false,"pid":null,"uptime":null,"memory_rss_kb":null,"version":null}' \
+		"a stopped agent is answered without a version too"
+	assert_not_contains "$(ssh_command 1)" '--version' \
+		"and the bare probe never starts the agent's CLI"
+
+	# The full read the page makes on entry is unchanged, versions included.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_DETAIL_OUT="$AGENT_ROWS" run_remote agents)" || true
+	assert_contains "$out" '"version":"2.1.303"' \
+		"a full read still carries the version"
+	assert_contains "$(ssh_command 1)" '--version' \
+		"because it asks for it"
+	drop_sandbox
+}
+
+test_agents_state_on_windows_asks_the_process_list_only() {
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT='agent claude installed 1
+agent claude running 1
+agent claude pid 4060
+agent claude uptime 120
+agent claude rss_kb 51200' run_remote agents state)" || true
+	assert_contains "$out" '"pid":4060,"uptime":120,"memory_rss_kb":51200,"version":null' \
+		"the process facts still arrive on a state read"
+	assert_not_contains "$(ssh_command 1)" '--version' \
+		"and PowerShell never runs the launcher's version probe"
+	drop_sandbox
+}
+
+test_agents_refresh_re_detects_versions_before_reading() {
+	# Version status re-detects over there and answers with the table in one
+	# connection: the cache is rewritten first, then the document is read.
+	fresh
+	ready_lan
+	uci_set remote_platform linux
+	out="$(SSH_DETAIL_OUT="$LAN_DOC" run_remote agents --refresh)" || true
+	assert_contains "$out" '"ok":true' "the refresh is answered"
+	assert_contains "$(ssh_command 1)" '/usr/libexec/fcc/agent.sh versions --refresh' \
+		"the remote's version cache is rewritten first"
+	assert_contains "$(ssh_command 1)" '/usr/libexec/fcc/status.sh' \
+		"and the document is read afterwards"
+	drop_sandbox
+}
+
+test_agents_read_a_windows_machine_from_the_process_list() {
+	# No sh, no status.sh and no fcc-env: one PowerShell line asks the process
+	# list and each launcher's --version, and prints the same field lines with
+	# spaces in place of the POSIX script's.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	out="$(SSH_PROBE_OUT='agent claude installed 1
+agent claude version 2.1.303
+agent claude running 1
+agent claude pid 4060
+agent claude uptime 120
+agent claude rss_kb 51200' run_remote agents)" || true
+	assert_contains "$out" '"claude":{"name":"Claude Code","installed":true,"running":true' \
+		"Windows answers the same table"
+	assert_contains "$out" '"memory_rss_kb":51200' "with memory and uptime included"
+	assert_contains "$(ssh_command 1)" \
+		'powershell.exe -NoProfile -NonInteractive -Command "$p = @(' \
+		"asked with one PowerShell line"
+	assert_contains "$(ssh_command 1)" "Get-Process -Name 'fcc-claude'" \
+		"which looks for the launcher's own process"
+	assert_not_contains "$(ssh_command 1)" 'status.sh' \
+		"and never with the POSIX helper it does not have"
 	drop_sandbox
 }
 
