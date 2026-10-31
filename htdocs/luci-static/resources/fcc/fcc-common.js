@@ -165,19 +165,30 @@
 	 * Painting a captured screen unchanged therefore starts every row where
 	 * the one above it ended: the screen arrives as a staircase. The capture is
 	 * the only input that needs this; the live stream must not be touched.
+	 *
+	 * The capture ends the pane's *last* row with an LF as well. Written
+	 * verbatim, that line ending moves the cursor one past the bottom, scrolls
+	 * the top row into the scrollback and leaves a blank row where the last one
+	 * was — the whole screen one line off, which is not the pane's screen. The
+	 * final line ending is dropped for that reason; every other one stays.
 	 */
 	function captureBytes(b64) {
 		var src = b64ToBytes(b64);
+		var end = src.length;
+		if (end && src[end - 1] === 10) {
+			end--;
+			if (end && src[end - 1] === 13) { end--; }
+		}
 		var extra = 0, prev = 0, i;
-		for (i = 0; i < src.length; i++) {
+		for (i = 0; i < end; i++) {
 			if (src[i] === 10 && prev !== 13) { extra++; }
 			prev = src[i];
 		}
-		if (!extra) { return src; }
-		var out = new Uint8Array(src.length + extra);
+		if (!extra) { return src.subarray(0, end); }
+		var out = new Uint8Array(end + extra);
 		var n = 0;
 		prev = 0;
-		for (i = 0; i < src.length; i++) {
+		for (i = 0; i < end; i++) {
 			if (src[i] === 10 && prev !== 13) { out[n++] = 13; }
 			out[n++] = src[i];
 			prev = src[i];

@@ -1131,6 +1131,15 @@ test_a_reattached_screen_is_painted_with_crlf() {
 		"the shared helpers turn a capture's bare LFs into CRLF"
 	assert_contains "$(cat "$_ts_common")" 'captureBytes: captureBytes' \
 		"and export that to the pages"
+	# A capture ends its last row with an LF too. Converted like the others it
+	# would scroll the top row away and leave a blank bottom row, so the screen
+	# would be one line off the pane's — drop exactly that one.
+	assert_contains "$(sed -n '/function captureBytes/,/^	}$/p' "$_ts_common")" \
+		'if (end && src[end - 1] === 10)' \
+		"the capture's final line ending is not painted"
+	assert_contains "$(sed -n '/function captureBytes/,/^	}$/p' "$_ts_common")" \
+		'src.subarray(0, end)' \
+		"and a capture with nothing to convert is still trimmed"
 
 	assert_contains "$(cat "$_ts_term")" 'state.term.write(FCC.captureBytes(r.data))' \
 		"the console paints a reattached screen with CRLF line endings"
