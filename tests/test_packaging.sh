@@ -1495,13 +1495,13 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	# The four buttons exist on both sides. The local ones keep data-op; the LAN
 	# ones are data-remote-op, so the two handlers cannot bind to each other's
 	# buttons.
-	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/id="fcc-remote-status"/p' "$_ts_view")" \
 		'data-remote-op="start"' "LAN mode has Start"
-	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/id="fcc-remote-status"/p' "$_ts_view")" \
 		'data-remote-op="stop"' "LAN mode has Stop"
-	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/id="fcc-remote-status"/p' "$_ts_view")" \
 		'data-remote-op="restart"' "LAN mode has Restart"
-	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/<\/details>/p' "$_ts_view")" \
+	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/id="fcc-remote-status"/p' "$_ts_view")" \
 		'id="fcc-remote-admin-link"' "LAN mode has Open FCC Admin"
 	assert_contains "$(cat "$_ts_js")" \
 		"document.querySelectorAll('#fcc-local-controls [data-op]')" \
@@ -1543,11 +1543,10 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	# Advanced settings are collapsed: the section is meant to stay small, and
 	# everything that is only touched once belongs behind the summary. The
 	# platform is not one of those things — it decides what each button sends,
-	# so it is read before the address. Directly under the summary comes the
-	# status line, where every action's answer is written: a refused key, a
-	# machine that cannot be reached, a fingerprint that changed. The key row
-	# closes the section, and the panels its buttons open sit underneath it,
-	# so a message never ends up separated from its field by that row.
+	# so it is read before the address. Below the summary comes the key row,
+	# and the panels its buttons open sit underneath it; the state line and the
+	# four server buttons follow those, and the line every action's answer is
+	# written to closes the panel.
 	_ts_adv="$(sed -n '/<details class="fcc-advanced" id="fcc-remote-advanced">/,/<\/details>/p' "$_ts_view")"
 	assert_contains "$_ts_adv" '<details class="fcc-advanced" id="fcc-remote-advanced">' \
 		"the advanced settings are a collapsed details block"
@@ -1568,12 +1567,12 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		| head -1 | cut -d: -f1)"
 	assert_eq 1 "$((_ts_platform_line < _ts_host_line))" \
 		"the platform comes before the address it belongs to"
-	assert_eq 1 "$((_ts_adv_line < _ts_status_line))" \
-		"the status line follows the advanced settings"
-	assert_eq 1 "$((_ts_status_line < _ts_key_line))" \
-		"and the key row comes after it"
+	assert_eq 1 "$((_ts_adv_line < _ts_key_line))" \
+		"the key row follows the advanced settings"
 	assert_eq 1 "$((_ts_key_line < _ts_helper_line))" \
 		"with the panels it opens underneath that row"
+	assert_eq 1 "$((_ts_helper_line < _ts_status_line))" \
+		"and the action status closes the panel"
 
 	# One row of air where two rows answer different questions. The spacer is
 	# its own element: the margins between .cbi-value rows belong to the theme,
@@ -1827,20 +1826,23 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	assert_contains "$(cat "$_ts_view")" '<div id="fcc-remote-server-state"' \
 		"the LAN state is a container now — a table cannot live in a paragraph"
 
-	# Both panels are read in the same order: the one-server notice, then what
-	# the server is doing, then the buttons that act on it. A panel that offers
-	# Start before it says what is running answers the question the user asks
-	# second before the one they ask first.
+	# The LAN panel reads settings first, then the key those settings decide
+	# on: neither the state nor a button means anything until this router can
+	# reach that machine. The state and its buttons therefore follow the key
+	# row, and the line every action answers into closes the panel.
 	_ts_notice=$(grep -n 'Only one FCC Server runs at a time' "$_ts_view" | head -1 | cut -d: -f1)
 	_ts_state=$(grep -n 'id="fcc-remote-server-state"' "$_ts_view" | head -1 | cut -d: -f1)
 	_ts_start=$(grep -n 'data-remote-op="start"' "$_ts_view" | head -1 | cut -d: -f1)
-	_ts_host=$(grep -n 'id="fcc-remote-host"' "$_ts_view" | head -1 | cut -d: -f1)
-	assert_eq 1 "$((_ts_notice < _ts_state))" \
-		"the LAN state follows the one-server notice"
+	assert_eq 1 "$((_ts_notice < _ts_host_line))" \
+		"the LAN fields follow the one-server notice"
+	assert_eq 1 "$((_ts_host_line < _ts_key_line))" \
+		"and the key row follows the settings it belongs to"
+	assert_eq 1 "$((_ts_key_line < _ts_state))" \
+		"the LAN state follows the key it depends on"
 	assert_eq 1 "$((_ts_state < _ts_start))" \
 		"the LAN buttons follow the state"
-	assert_eq 1 "$((_ts_start < _ts_host))" \
-		"and the connection fields follow the buttons"
+	assert_eq 1 "$((_ts_start < _ts_status_line))" \
+		"and every action's answer is the last line of the panel"
 }
 
 # ---------------------------------------------------------------------------
@@ -1859,7 +1861,7 @@ test_the_server_controls_end_their_row() {
 	assert_contains "$(sed -n '/id="fcc-server-state"/,/id="fcc-server-status"/p' "$_ts_view")" \
 		'class="fcc-toolbar fcc-toolbar-end"' \
 		"the local Start/Stop/Restart row ends at the right"
-	assert_contains "$(sed -n '/id="fcc-remote-controls"/,/id="fcc-remote-platform"/p' "$_ts_view")" \
+	assert_contains "$(sed -n '/id="fcc-remote-key-state"/,/id="fcc-remote-status"/p' "$_ts_view")" \
 		'class="fcc-toolbar fcc-toolbar-end"' \
 		"and so does the LAN one"
 	assert_contains "$(sed -n '/^\.fcc-toolbar-end {/,/^}/p' "$_ts_css")" \

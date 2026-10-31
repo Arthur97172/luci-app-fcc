@@ -166,28 +166,11 @@
 			     The four buttons stay disabled until the address, the account,
 			     the key and the host key are all in place. -->
 			<div id="fcc-remote-controls" hidden>
-				<!-- What the machine on the other side is doing, first. The
-				     local panel reads state then buttons in that order, and
-				     this one answers the same question, so a glance at the
-				     top of the panel means the same thing on both sides. The
-				     switch position is stored and survives a logout; these
-				     lines are read over SSH when the panel is shown, so a
-				     reload reports the running server and not only the side
-				     that was chosen. -->
-				<div id="fcc-remote-server-state" class="fcc-key-state"></div>
-
-				<div class="fcc-toolbar fcc-toolbar-end">
-					<button type="button" class="cbi-button cbi-button-apply" data-remote-op="start"><%:Start%></button>
-					<button type="button" class="cbi-button cbi-button-reset" data-remote-op="stop"><%:Stop%></button>
-					<button type="button" class="cbi-button" data-remote-op="restart"><%:Restart%></button>
-					<!-- The same LuCI proxy as the local link. In LAN mode it
-					     reaches the remote server through an SSH local forward,
-					     so the remote sees a loopback peer and the browser still
-					     never talks to the FCC port. -->
-					<a id="fcc-remote-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
-					   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
-				</div>
-
+				<!-- The settings come first: what the far machine is, where it
+				     is and who to log in as, then the key those answers decide
+				     on. What that machine is running, and the buttons that
+				     change it, follow the key — neither means anything until
+				     this router can reach it. -->
 				<!-- What the far machine is, first: it decides which of the
 				     commands below a click sends — systemctl, the init script,
 				     launchctl or PowerShell — so it is read before the address
@@ -286,14 +269,6 @@
 					</div>
 				</details>
 
-				<!-- Where every action's answer lands: a refused key, a machine
-				     that cannot be reached, a host whose fingerprint changed.
-				     It sits directly under the settings that produce those
-				     answers and above the key row, whose own panels open
-				     underneath it, so a message is never separated from the
-				     field it is about. -->
-				<div id="fcc-remote-status"></div>
-
 				<!-- Opening the Admin page is an SSH tunnel, so that machine's
 				     sshd has to allow local forwarding. The buttons arrange the
 				     setting by themselves everywhere else; a machine whose SSH
@@ -344,6 +319,35 @@
 					<pre id="fcc-remote-helper-text" class="fcc-key-text"></pre>
 					<p class="fcc-muted" id="fcc-remote-helper-state"></p>
 				</div>
+
+				<!-- What the machine on the other side is doing, and the
+				     buttons that change it, under the key row: the four stay
+				     disabled until the address, the account, the key and the
+				     host key are all in place, so reading the key state just
+				     above them says why they are unavailable while it is
+				     missing. The switch position is stored and survives a
+				     logout; these lines are read over SSH when the panel is
+				     shown, so a reload reports the running server and not only
+				     the side that was chosen. -->
+				<div id="fcc-remote-server-state" class="fcc-key-state"></div>
+
+				<div class="fcc-toolbar fcc-toolbar-end">
+					<button type="button" class="cbi-button cbi-button-apply" data-remote-op="start"><%:Start%></button>
+					<button type="button" class="cbi-button cbi-button-reset" data-remote-op="stop"><%:Stop%></button>
+					<button type="button" class="cbi-button" data-remote-op="restart"><%:Restart%></button>
+					<!-- The same LuCI proxy as the local link. In LAN mode it
+					     reaches the remote server through an SSH local forward,
+					     so the remote sees a loopback peer and the browser still
+					     never talks to the FCC port. -->
+					<a id="fcc-remote-admin-link" class="cbi-button" target="_blank" rel="noopener noreferrer"
+					   href="<%=url("admin/services/fcc/adminproxy")%>"><%:Open FCC Admin%></a>
+				</div>
+
+				<!-- Where every action's answer lands: a refused key, a machine
+				     that cannot be reached, a host whose fingerprint changed.
+				     It closes the panel, so the answer to a click is never
+				     buried among the settings that produced it. -->
+				<div id="fcc-remote-status"></div>
 			</div>
 		</div>
 	</div>
