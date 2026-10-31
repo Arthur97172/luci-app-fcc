@@ -747,8 +747,18 @@
 			return;
 		}
 		if (remote.server_running === false) {
-			box.className = 'fcc-key-state off';
-			box.textContent = FCC._('The LAN FCC Server is not running.');
+			/* The same card the stopped local panel shows, with the fields a
+			 * stopped server cannot answer left as dashes. The panel answers
+			 * "what is it doing?" the same way whichever machine is the
+			 * target, and a reader should not have to start a server to see
+			 * what the six lines say — the state is one of them. */
+			box.className = 'fcc-card';
+			box.innerHTML = '';
+			box.appendChild(FCC.el('div', {}, [
+				FCC.el('span', { class: 'fcc-dot off' }),
+				FCC.el('strong', { text: FCC._('Stopped') })
+			]));
+			renderServerRows(box, {});
 			return;
 		}
 		if (remote.server_error) {

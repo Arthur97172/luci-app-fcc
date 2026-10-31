@@ -1825,6 +1825,17 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 		"the LAN panel renders the document when one arrives"
 	assert_contains "$(cat "$_ts_view")" '<div id="fcc-remote-server-state"' \
 		"the LAN state is a container now — a table cannot live in a paragraph"
+	# A stopped LAN server gets the same card as a stopped local one. The six
+	# lines are the answer to "what is it doing?", and the state is the first
+	# of them — not a sentence that replaces the rest and leaves the panel
+	# blank-looking until Start is pressed.
+	_ts_stop=$(sed -n '/remote.server_running === false/,/^		}/p' "$_ts_js")
+	assert_contains "$_ts_stop" "FCC.el('strong', { text: FCC._('Stopped') })" \
+		"a stopped LAN server renders the shared card"
+	assert_contains "$_ts_stop" 'renderServerRows(box, {});' \
+		"with the same rows, the fields it cannot answer left as dashes"
+	assert_not_contains "$_ts_stop" 'textContent' \
+		"and not a sentence in their place"
 
 	# The LAN panel reads settings first, then the key those settings decide
 	# on: neither the state nor a button means anything until this router can

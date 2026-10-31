@@ -649,9 +649,6 @@ msgid ""
 "Configuration tab."
 msgstr "局域网主机上的 FCC Server 未运行。请在“配置管理”标签页启动它。"
 
-msgid "The LAN FCC Server is not running."
-msgstr "局域网的 FCC Server 未运行。"
-
 msgid "The LAN FCC Server is running."
 msgstr "局域网的 FCC Server 正在运行。"
 
@@ -1113,6 +1110,9 @@ msgid ""
 msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid "The LAN FCC Server is not running."
+#~ msgstr "局域网的 FCC Server 未运行。"
 
 #~ msgid "System"
 #~ msgstr "系统"

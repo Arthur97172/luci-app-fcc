@@ -525,9 +525,6 @@ msgstr ""
 msgid "The FCC Server on the LAN machine is not running. Start it on the Configuration tab."
 msgstr ""
 
-msgid "The LAN FCC Server is not running."
-msgstr ""
-
 msgid "The LAN FCC Server is running."
 msgstr ""
 
