@@ -969,6 +969,15 @@ util.json_decode = function(s)
 	return nil
 end
 
+-- This package is not installed as a service on a development host, so the
+-- init script answers 127 there. The test answers it instead: a stop that went
+-- through is what the controller has to see before it closes sessions.
+local real_exec = util.exec_argv
+util.exec_argv = function(path, args)
+	if path == "/etc/init.d/fcc" then return "", 0 end
+	return real_exec(path, args)
+end
+
 local ctrl = require "luci.controller.fcc"
 local function body() return table.concat(written) end
 
@@ -997,7 +1006,8 @@ print("target=" .. tostring(store.control_target) .. " commits=" .. commits)
 print("calls_local=" .. calls())
 
 -- Entering the LAN commits the target; the local stop is /etc/init.d/fcc.
--- Nothing on the far side stops, so no session closes.
+-- Nothing on the far side stops, so the LAN sessions stay — but this router's
+-- own server goes, and the sessions started against it go with it.
 form = { mode = "lan" }
 written = {}; commits = 0
 reset_calls()
@@ -1016,6 +1026,15 @@ print("server=" .. body())
 print("after=" .. tostring(store.control_target))
 print("calls_start=" .. calls())
 
+-- The local page's Stop ends this router's own sessions, the ones that talk
+-- to the server it just took down.
+form = { op = "stop" }
+written = {}
+reset_calls()
+ctrl.act_server()
+print("stoplocal=" .. body())
+print("calls_stoplocal=" .. calls())
+
 -- The LAN page's Stop closes the sessions a confirmed stop just orphaned.
 form = { op = "stop" }
 written = {}
@@ -1023,6 +1042,15 @@ reset_calls()
 ctrl.act_remote_control()
 print("stop=" .. body())
 print("calls_stop=" .. calls())
+
+-- Starting on the LAN side stops this router's server first, so the sessions
+-- started here go with it.
+form = { op = "start" }
+written = {}
+reset_calls()
+ctrl.act_remote_control()
+print("lanstart=" .. body())
+print("calls_lanstart=" .. calls())
 
 -- A stop the far side did not confirm leaves them open: their server may
 -- still be running, and killing them would throw the work away.
@@ -1111,8 +1139,10 @@ LUA
 		"and reports what happened to this router's server"
 
 	_ts_calls_lan="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_lan=//p')"
-	assert_not_contains "$_ts_calls_lan" 'close-target' \
-		"entering the LAN closes no session: [$_ts_calls_lan]"
+	assert_contains "$_ts_calls_lan" 'close-target local' \
+		"entering the LAN closes this router's own sessions: [$_ts_calls_lan]"
+	assert_not_contains "$_ts_calls_lan" 'close-target lan' \
+		"and leaves the LAN machine's alone: [$_ts_calls_lan]"
 
 	_ts_srv="$(printf '%s\n' "$_ts_out" | sed -n 's/^server=//p')"
 	assert_contains "$_ts_srv" '"remote_stopped":true' \
@@ -1123,6 +1153,15 @@ LUA
 	_ts_calls_start="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_start=//p')"
 	assert_contains "$_ts_calls_start" 'close-target lan' \
 		"a local start takes the LAN sessions down too: [$_ts_calls_start]"
+	assert_not_contains "$_ts_calls_start" 'close-target local' \
+		"starting here leaves this router's sessions alone: [$_ts_calls_start]"
+
+	_ts_stoplocal="$(printf '%s\n' "$_ts_out" | sed -n 's/^stoplocal=//p')"
+	assert_contains "$_ts_stoplocal" '"ok":true' \
+		"this router's stop is reported: [$_ts_stoplocal]"
+	_ts_calls_stoplocal="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_stoplocal=//p')"
+	assert_contains "$_ts_calls_stoplocal" 'close-target local' \
+		"the local page's Stop closes this router's sessions: [$_ts_calls_stoplocal]"
 
 	_ts_stop="$(printf '%s\n' "$_ts_out" | sed -n 's/^stop=//p')"
 	assert_contains "$_ts_stop" '"ok":true' \
@@ -1130,6 +1169,10 @@ LUA
 	_ts_calls_stop="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_stop=//p')"
 	assert_contains "$_ts_calls_stop" 'close-target lan' \
 		"the LAN page's Stop closes the sessions: [$_ts_calls_stop]"
+
+	_ts_lanstart="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_lanstart=//p')"
+	assert_contains "$_ts_lanstart" 'close-target local' \
+		"a LAN start closes this router's sessions first: [$_ts_lanstart]"
 
 	_ts_calls_stopfail="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_stopfail=//p')"
 	assert_not_contains "$_ts_calls_stopfail" 'close-target' \

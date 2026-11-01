@@ -213,20 +213,21 @@ local function run(script, args)
 	return util.exec_argv(path, args)
 end
 
---- End every Web Console session that was started against the LAN machine.
+--- End every Web Console session that was started against one machine.
 ---
---- A LAN session is a local tmux pane running an ssh client, and the LAN FCC
---- Server is what the agent on the far side talks to (session.sh writes the
---- target beside each pane, so a session stays classified where it started).
---- Once that server stops, those panes are terminals wired to nothing; they
---- are closed here, and session.sh removes their scrollback with them, so the
---- console page does not list, or repaint, an agent that can no longer work.
+--- An agent session talks to the FCC Server of the machine it was started
+--- against (session.sh writes the target beside each pane, so a session stays
+--- classified where it started: a LAN session is a local pane running an ssh
+--- client, a local one runs the agent CLI on this router). Once that server
+--- stops, the panes are terminals wired to nothing; they are closed here, and
+--- session.sh removes their scrollback with them, so the console page does not
+--- list, or repaint, an agent that can no longer work.
 ---
 --- Only a confirmed stop calls this. A stop that failed may have left a server
 --- still serving those agents, and killing them would throw away work the user
 --- could keep.
-local function close_lan_sessions()
-	local out = run("session", { "close-target", "lan" })
+local function close_target_sessions(target)
+	local out = run("session", { "close-target", target })
 	local d = util.json_decode(util.trim(out or ""))
 	if type(d) == "table" then return tonumber(d.closed) or 0 end
 	return 0
@@ -626,7 +627,7 @@ local function stop_remote_server()
 		-- The LAN server is gone, so the agents started against it are too.
 		-- Doing it here covers every path that stops it: leaving the LAN,
 		-- and a local start or restart that stops the other side first.
-		close_lan_sessions()
+		close_target_sessions("lan")
 		return true
 	end
 	return false
@@ -654,6 +655,12 @@ function act_server()
 	end
 
 	local out, code = util.exec_argv("/etc/init.d/fcc", { op })
+	-- The local page's Stop ends the server the sessions on this router talk
+	-- to, so their panes have nothing left to work with and go with it. A
+	-- restart or reload brings the server back and leaves them running.
+	if op == "stop" and code == 0 then
+		close_target_sessions("local")
+	end
 	json_out('{"ok":' .. (code == 0 and "true" or "false") ..
 		',"op":' .. util.json_encode(op) ..
 		',"remote_stopped":' .. (remote_stopped and "true" or "false") ..
@@ -791,6 +798,12 @@ function act_remote_mode()
 	if mode == "lan" then
 		local _, code = util.exec_argv("/etc/init.d/fcc", { "stop" })
 		local_stopped = (code == 0)
+		-- The local server is down for the same reason the remote one is when
+		-- leaving the LAN: the agents this router serves cannot work without
+		-- it. Only a stop that went through takes them with it.
+		if local_stopped then
+			close_target_sessions("local")
+		end
 	end
 	run("remote", { "tunnel-stop" })
 
@@ -865,7 +878,12 @@ function act_remote_control()
 	-- there stops this router's server first. A stop has nothing on this side
 	-- to take down and is relayed as it is.
 	if op ~= "stop" then
-		util.exec_argv("/etc/init.d/fcc", { "stop" })
+		-- Starting the LAN server makes the LAN the working side, and this
+		-- router's server goes first. Its sessions cannot work without it.
+		local _, code = util.exec_argv("/etc/init.d/fcc", { "stop" })
+		if code == 0 then
+			close_target_sessions("local")
+		end
 	end
 	local out, err = script_json("remote", { "control", op })
 	if not out then return fail(err) end
@@ -875,7 +893,7 @@ function act_remote_control()
 	if op == "stop" then
 		local d = util.json_decode(out)
 		if type(d) == "table" and d.ok == true then
-			close_lan_sessions()
+			close_target_sessions("lan")
 		end
 	end
 	json_out(out)
