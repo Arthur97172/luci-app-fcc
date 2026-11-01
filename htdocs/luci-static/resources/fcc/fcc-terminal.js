@@ -235,8 +235,30 @@
 	function loadSessions() {
 		return FCC.api('sessions', {}, { method: 'GET' }).then(function (list) {
 			state.sessions = Array.isArray(list) ? list : [];
+			reconcileActive();
 			renderTabs();
 		}).catch(function () { state.sessions = []; renderTabs(); });
+	}
+
+	/**
+	 * Forget a session that ended somewhere other than this tab.
+	 *
+	 * The session list is the authority. A session can be closed from the
+	 * standalone window, or ended by the Configuration tab when it stops the
+	 * LAN FCC Server — every LAN session goes at once there. The terminal kept
+	 * its screen, which would otherwise sit on the page as the history of an
+	 * agent that no longer exists and that the tabs no longer list.
+	 */
+	function reconcileActive() {
+		if (!state.active) { return; }
+		if (state.sessions.some(function (s) { return s.name === state.active; })) { return; }
+		state.active = null;
+		stopPolling();
+		clearBanner();
+		if (state.term) {
+			state.term.reset();
+			state.term.write('\r\n[ session closed ]\r\n');
+		}
 	}
 
 	function renderTabs() {
@@ -507,12 +529,19 @@
 					pollLoop();
 				} else {
 					state.polling = false;
-					// Section 74: the exit code decides which ending this was.
-					// Zero finished cleanly; anything else — including a code
-					// tmux could not report — is shown as an unexpected exit.
-					showBanner(r.exit_code === 0 ? 'exited' : 'crashed',
-						{ code: r.exit_code, agent: agentOf(name) });
-					loadSessions();
+					/* Section 74: the exit code decides which ending this was.
+					 * Zero finished cleanly; anything else — including a code
+					 * tmux could not report — is shown as an unexpected exit.
+					 * The session may instead have been closed elsewhere (the
+					 * Configuration tab stopping the LAN FCC Server ends every
+					 * LAN session), so the list is asked first: when it no
+					 * longer holds this session, reconcileActive() has already
+					 * cleared the terminal, and no ending belongs on screen. */
+					loadSessions().then(function () {
+						if (state.active !== name) { return; }
+						showBanner(r.exit_code === 0 ? 'exited' : 'crashed',
+							{ code: r.exit_code, agent: agentOf(name) });
+					});
 				}
 			})
 			.catch(function (err) {

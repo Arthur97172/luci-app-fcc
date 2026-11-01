@@ -871,12 +871,26 @@ test_the_switch_keeps_exactly_one_server() {
 
 	_ts_dir="$(mktemp -d)"
 	mkdir -p "$_ts_dir/libexec"
+	# A marker file makes the far side answer a stop it did not perform, which
+	# is what the "sessions survive a failed stop" case needs.
 	cat > "$_ts_dir/libexec/remote.sh" <<'SH'
 #!/bin/sh
+if [ -n "${FCC_TEST_REMOTE_FAIL:-}" ] && [ -f "$FCC_TEST_REMOTE_FAIL" ]; then
+	printf '%s\n' '{"ok":false,"op":"stop","output":"denied","exit":3}'
+	exit 0
+fi
 case "${1:-}" in
 	running) printf '%s\n' '{"ok":true,"checked":true,"running":true,"output":"active"}' ;;
 	*) printf '%s\n' '{"ok":true,"op":"stop","output":"","exit":0}' ;;
 esac
+SH
+	# close-target is the call that ends the sessions a stopped LAN server
+	# served. Recording the arguments lets the test tell which actions make
+	# it, and which must not.
+	cat > "$_ts_dir/libexec/session.sh" <<'SH'
+#!/bin/sh
+[ -n "${FCC_TEST_SESSION_CALLS:-}" ] && printf '%s\n' "$*" >> "$FCC_TEST_SESSION_CALLS"
+printf '%s\n' '{"closed":1}'
 SH
 	cat > "$_ts_dir/libexec/status.sh" <<'SH'
 #!/bin/sh
@@ -894,8 +908,9 @@ SH
 #!/bin/sh
 printf '{"ok":true,"note":"a\rb"}\n'
 SH
-	chmod +x "$_ts_dir/libexec/remote.sh" "$_ts_dir/libexec/status.sh" \
-		"$_ts_dir/libexec/update.sh" "$_ts_dir/libexec/doctor.sh"
+	chmod +x "$_ts_dir/libexec/remote.sh" "$_ts_dir/libexec/session.sh" \
+		"$_ts_dir/libexec/status.sh" "$_ts_dir/libexec/update.sh" \
+		"$_ts_dir/libexec/doctor.sh"
 
 	_ts_p="$(mktemp)"
 	cat > "$_ts_p" <<'LUA'
@@ -957,26 +972,71 @@ end
 local ctrl = require "luci.controller.fcc"
 local function body() return table.concat(written) end
 
--- Leaving the LAN stops the remote server.
+-- Which session.sh calls each action makes. The log is cleared before an
+-- action and read after it, on one line, so an assertion names the action.
+local call_log = os.getenv("FCC_TEST_SESSION_CALLS")
+local function reset_calls()
+	if call_log then local f = io.open(call_log, "w"); if f then f:close() end end
+end
+local function calls()
+	if not call_log then return "" end
+	local f = io.open(call_log, "r")
+	if not f then return "" end
+	local s = f:read("*a") or ""; f:close()
+	return (s:gsub("%s+$", ""):gsub("\n", ";"))
+end
+
+-- Leaving the LAN stops the remote server, and the sessions started against
+-- it go with it.
 form = { mode = "local" }
 written = {}; commits = 0
+reset_calls()
 ctrl.act_remote_mode()
 print("local=" .. body())
 print("target=" .. tostring(store.control_target) .. " commits=" .. commits)
+print("calls_local=" .. calls())
 
 -- Entering the LAN commits the target; the local stop is /etc/init.d/fcc.
+-- Nothing on the far side stops, so no session closes.
 form = { mode = "lan" }
 written = {}; commits = 0
+reset_calls()
 ctrl.act_remote_mode()
 print("lan=" .. body())
+print("calls_lan=" .. calls())
 
--- A local start makes this router the target whatever was stored.
+-- A local start makes this router the target whatever was stored. It stops
+-- the LAN server first, so the LAN sessions close with it.
 store.control_target = "lan"
 form = { op = "start" }
 written = {}; commits = 0
+reset_calls()
 ctrl.act_server()
 print("server=" .. body())
 print("after=" .. tostring(store.control_target))
+print("calls_start=" .. calls())
+
+-- The LAN page's Stop closes the sessions a confirmed stop just orphaned.
+form = { op = "stop" }
+written = {}
+reset_calls()
+ctrl.act_remote_control()
+print("stop=" .. body())
+print("calls_stop=" .. calls())
+
+-- A stop the far side did not confirm leaves them open: their server may
+-- still be running, and killing them would throw the work away.
+local fail_marker = os.getenv("FCC_TEST_REMOTE_FAIL")
+if fail_marker then
+	local mf = assert(io.open(fail_marker, "w")); mf:write("1"); mf:close()
+end
+form = { op = "stop" }
+written = {}
+reset_calls()
+ctrl.act_remote_control()
+print("stopfail=" .. body())
+print("calls_stopfail=" .. calls())
+if fail_marker then os.remove(fail_marker) end
 
 -- A script that answers with HTML is reported instead of relayed.
 form = {}
@@ -1022,11 +1082,14 @@ LUA
 
 	_ts_out="$(FCC_TEST_ROOT="$ROOT" \
 		FCC_LIBEXEC="$_ts_dir/libexec" \
+		FCC_TEST_SESSION_CALLS="$_ts_dir/session-calls" \
+		FCC_TEST_REMOTE_FAIL="$_ts_dir/remote-fail" \
 		FCC_AGENTS_CONF="$ROOT/root/usr/share/luci-app-fcc/agents.conf" \
 		FCC_VERSION_FILE="$ROOT/VERSION" \
 		PATH="/usr/bin:/bin" "$LUA" "$_ts_p" 2>&1)"
 	rm -f "$_ts_p"
-	rm -f "$_ts_dir/libexec/remote.sh" "$_ts_dir/libexec/status.sh"
+	rm -f "$_ts_dir/libexec/remote.sh" "$_ts_dir/libexec/session.sh" \
+		"$_ts_dir/libexec/status.sh"
 	rmdir "$_ts_dir/libexec" "$_ts_dir" 2>/dev/null
 
 	_ts_local="$(printf '%s\n' "$_ts_out" | sed -n 's/^local=//p')"
@@ -1037,17 +1100,40 @@ LUA
 	assert_contains "$_ts_out" "target=local commits=1" \
 		"the target is written once"
 
+	_ts_calls="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_local=//p')"
+	assert_contains "$_ts_calls" 'close-target lan' \
+		"leaving the LAN closes the sessions started against it: [$_ts_calls]"
+
 	_ts_lan="$(printf '%s\n' "$_ts_out" | sed -n 's/^lan=//p')"
 	assert_contains "$_ts_lan" '"mode":"lan"' \
 		"entering the LAN commits the LAN target: [$_ts_lan]"
 	assert_contains "$_ts_lan" '"local_stopped"' \
 		"and reports what happened to this router's server"
 
+	_ts_calls_lan="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_lan=//p')"
+	assert_not_contains "$_ts_calls_lan" 'close-target' \
+		"entering the LAN closes no session: [$_ts_calls_lan]"
+
 	_ts_srv="$(printf '%s\n' "$_ts_out" | sed -n 's/^server=//p')"
 	assert_contains "$_ts_srv" '"remote_stopped":true' \
 		"a local start stops the LAN server first: [$_ts_srv]"
 	assert_contains "$_ts_out" "after=local" \
 		"and makes this router the control target"
+
+	_ts_calls_start="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_start=//p')"
+	assert_contains "$_ts_calls_start" 'close-target lan' \
+		"a local start takes the LAN sessions down too: [$_ts_calls_start]"
+
+	_ts_stop="$(printf '%s\n' "$_ts_out" | sed -n 's/^stop=//p')"
+	assert_contains "$_ts_stop" '"ok":true' \
+		"the LAN stop is relayed unchanged: [$_ts_stop]"
+	_ts_calls_stop="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_stop=//p')"
+	assert_contains "$_ts_calls_stop" 'close-target lan' \
+		"the LAN page's Stop closes the sessions: [$_ts_calls_stop]"
+
+	_ts_calls_stopfail="$(printf '%s\n' "$_ts_out" | sed -n 's/^calls_stopfail=//p')"
+	assert_not_contains "$_ts_calls_stopfail" 'close-target' \
+		"a stop the far side did not confirm leaves them open: [$_ts_calls_stopfail]"
 
 	_ts_bad="$(printf '%s\n' "$_ts_out" | sed -n 's/^bad=//p')"
 	assert_contains "$_ts_bad" '"error"' \

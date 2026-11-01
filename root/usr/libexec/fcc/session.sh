@@ -27,6 +27,7 @@
 #   session.sh capture <name>
 #   session.sh close  <name>
 #   session.sh close-all
+#   session.sh close-target <local|lan>
 #   session.sh close-later <name> [grace-seconds]
 #   session.sh reap
 #   session.sh cleanup
@@ -380,8 +381,15 @@ cmd_output() {
 	maybe_trim "$_ou_name"
 
 	_ou_f="$(out_file "$_ou_name")"; _ou_b="$(base_file "$_ou_name")"
-	[ -r "$_ou_f" ] || : > "$_ou_f"
-	[ -r "$_ou_b" ] || printf '0' > "$_ou_b"
+	# Only a session tmux still knows may create these. Writing them for a name
+	# that is gone would resurrect the scrollback file cmd_close_target() has
+	# just removed, and a poll that was already in flight when the session was
+	# closed would leave history behind for a session that no longer exists.
+	# The answer is still given, with alive=false, so the caller learns it ended.
+	if session_exists "$_ou_name"; then
+		[ -r "$_ou_f" ] || : > "$_ou_f"
+		[ -r "$_ou_b" ] || printf '0' > "$_ou_b"
+	fi
 
 	# How often the wait looks for new bytes, in tenths of a second. The
 	# browser learns that the pane wrote something only when this call
@@ -399,8 +407,14 @@ cmd_output() {
 		_ou_base="$(cat "$_ou_b" 2>/dev/null || echo 0)"
 		case "$_ou_base" in ''|*[!0-9]*) _ou_base=0 ;; esac
 		# The leading spaces wc pads with are stripped in the shell rather
-		# than by a second fork per tick.
-		_ou_sz="$(wc -c < "$_ou_f" 2>/dev/null)"
+		# than by a second fork per tick. A file that is not there is not an
+		# error to report — the session was closed while this poll ran, and
+		# the loop below ends on the dead pane.
+		if [ -r "$_ou_f" ]; then
+			_ou_sz="$(wc -c < "$_ou_f" 2>/dev/null)"
+		else
+			_ou_sz=0
+		fi
 		_ou_sz="${_ou_sz##* }"
 		case "$_ou_sz" in ''|*[!0-9]*) _ou_sz=0 ;; esac
 		_ou_abs=$(( _ou_base + _ou_sz ))
@@ -560,6 +574,47 @@ cmd_close_all() {
 	printf '{"closed": %s}\n' "$_ca_n"
 }
 
+# End the console's sessions that were started against one machine.
+#
+# The target is written once at create time (target_file), so a session stays
+# classified where it started even after the Configuration tab switches sides.
+# A LAN session is a local pane running an ssh client, and the LAN FCC Server is
+# what the agent on the far side talks to: once that server stops, the pane is a
+# terminal wired to nothing, and its scrollback reads as a live session that no
+# longer works. The controller closes those sessions at that moment, and
+# removing their files with the pane is what leaves no history behind for the
+# console page to list again after a reload.
+cmd_close_target() {
+	require_tmux || return 1
+	_ct_want="${1:-}"
+	case "$_ct_want" in
+		local|lan) : ;;
+		*) fcc_die "invalid target"; return 2 ;;
+	esac
+	_ct_n=0
+	for _ct_s in $(tmux list-sessions -F '#{session_name}' 2>/dev/null); do
+		fcc_valid_session "$_ct_s" || continue
+		_ct_t="$(cat "$(target_file "$_ct_s")" 2>/dev/null || true)"
+		# A session made before the sidecar existed has no file, and every one
+		# of those was local: local is the only answer that cannot be wrong
+		# about an unknown session. Same fallback as cmd_list().
+		case "$_ct_t" in lan) : ;; *) _ct_t=local ;; esac
+		[ "$_ct_t" = "$_ct_want" ] || continue
+		if tmux kill-session -t "$_ct_s" 2>/dev/null; then
+			_ct_n=$(( _ct_n + 1 ))
+		elif session_exists "$_ct_s"; then
+			# The kill was refused and the pane is still there: dropping its
+			# history now would leave a live session with nothing to show.
+			continue
+		fi
+		rm -f "$(out_file "$_ct_s")" "$(base_file "$_ct_s")" \
+			"$(target_file "$_ct_s")" \
+			"$(closing_file "$_ct_s")" "$(gen_file "$_ct_s")"
+	done
+	fcc_log "fcc-terminal.log" "session closed: $_ct_want ($_ct_n)"
+	printf '{"closed": %s}\n' "$_ct_n"
+}
+
 # Arm a close for `grace` seconds from now.
 #
 # This is what the standalone browser window asks for when it goes away. The
@@ -652,8 +707,9 @@ case "${1:-}" in
 	capture) shift; cmd_capture "$@" ;;
 	close)   shift; cmd_close "$@" ;;
 	close-all)   cmd_close_all ;;
+	close-target) shift; cmd_close_target "$@" ;;
 	close-later) shift; cmd_close_later "$@" ;;
 	reap)    cmd_reap ;;
 	cleanup) cmd_cleanup ;;
-	*) echo "usage: session.sh {list|create|output|input|resize|capture|close|close-all|close-later|reap|cleanup}" >&2; exit 2 ;;
+	*) echo "usage: session.sh {list|create|output|input|resize|capture|close|close-all|close-target|close-later|reap|cleanup}" >&2; exit 2 ;;
 esac

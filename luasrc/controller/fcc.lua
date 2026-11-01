@@ -167,22 +167,35 @@ local function looks_like_json(text)
 	return true
 end
 
+--- Run a backend script and return its stdout, provided it is a JSON document.
+---
+--- The answer is verbatim when it is parseable, so a handler that has to read
+--- one field can still forward exactly what the script wrote. Returns nil plus
+--- the sentence to show when the script is missing or answers with something
+--- else — the page can only call such a body malformed, so the script that
+--- produced it is named instead.
+local function script_json(script, args)
+	local path = paths.script(script)
+	if not path or not util.file_exists(path) then
+		return nil, "backend script not found: " .. tostring(script)
+	end
+	local out = util.exec_argv(path, args)
+	if out == "" then out = "{}" end
+	if not looks_like_json(out) then
+		return nil, "the backend script " .. tostring(script) .. ".sh answered with something that is not JSON: "
+			.. util.trim(out):sub(1, 300)
+	end
+	return out
+end
+
 --- Run a backend script and relay its stdout verbatim.
 ---
 --- Verbatim, but never unparsable: a script that answers with something other
 --- than JSON is reported as such, with the beginning of what it said, instead
 --- of being forwarded to a page that can only call it malformed.
 local function relay(script, args)
-	local path = paths.script(script)
-	if not path or not util.file_exists(path) then
-		return fail("backend script not found: " .. tostring(script))
-	end
-	local out = util.exec_argv(path, args)
-	if out == "" then out = "{}" end
-	if not looks_like_json(out) then
-		return fail("the backend script " .. tostring(script) .. ".sh answered with something that is not JSON: "
-			.. util.trim(out):sub(1, 300))
-	end
+	local out, err = script_json(script, args)
+	if not out then return fail(err) end
 	json_out(out)
 end
 
@@ -198,6 +211,25 @@ local function run(script, args)
 	local path = paths.script(script)
 	if not path or not util.file_exists(path) then return "", 127 end
 	return util.exec_argv(path, args)
+end
+
+--- End every Web Console session that was started against the LAN machine.
+---
+--- A LAN session is a local tmux pane running an ssh client, and the LAN FCC
+--- Server is what the agent on the far side talks to (session.sh writes the
+--- target beside each pane, so a session stays classified where it started).
+--- Once that server stops, those panes are terminals wired to nothing; they
+--- are closed here, and session.sh removes their scrollback with them, so the
+--- console page does not list, or repaint, an agent that can no longer work.
+---
+--- Only a confirmed stop calls this. A stop that failed may have left a server
+--- still serving those agents, and killing them would throw away work the user
+--- could keep.
+local function close_lan_sessions()
+	local out = run("session", { "close-target", "lan" })
+	local d = util.json_decode(util.trim(out or ""))
+	if type(d) == "table" then return tonumber(d.closed) or 0 end
+	return 0
 end
 
 --- The one source of a UCI cursor for every handler on this page.
@@ -590,7 +622,14 @@ local SERVER_OPS = {
 local function stop_remote_server()
 	local out = run("remote", { "control", "stop" })
 	local d = util.json_decode(util.trim(out or ""))
-	return type(d) == "table" and d.ok == true
+	if type(d) == "table" and d.ok == true then
+		-- The LAN server is gone, so the agents started against it are too.
+		-- Doing it here covers every path that stops it: leaving the LAN,
+		-- and a local start or restart that stops the other side first.
+		close_lan_sessions()
+		return true
+	end
+	return false
 end
 
 --- Run one lifecycle verb on this router's FCC server.
@@ -828,7 +867,18 @@ function act_remote_control()
 	if op ~= "stop" then
 		util.exec_argv("/etc/init.d/fcc", { "stop" })
 	end
-	relay("remote", { "control", op })
+	local out, err = script_json("remote", { "control", op })
+	if not out then return fail(err) end
+	-- The LAN page's Stop is the other half of the one-server rule. A stop the
+	-- remote machine confirmed takes the LAN agent sessions with it; the
+	-- document is forwarded unchanged, since the page reads its own fields.
+	if op == "stop" then
+		local d = util.json_decode(out)
+		if type(d) == "table" and d.ok == true then
+			close_lan_sessions()
+		end
+	end
+	json_out(out)
 end
 
 --- Ask the LAN machine whether its FCC server is running.

@@ -2012,6 +2012,54 @@ test_closing_all_sessions_removes_every_sidecar() {
 	done
 }
 
+test_closing_one_target_leaves_the_other_sessions_alone() {
+	setup_sandbox
+	if ! command -v tmux >/dev/null 2>&1; then
+		skip "tmux is not installed — there would be no sessions to close"
+		return 0
+	fi
+	# Stopping the LAN FCC Server ends the sessions started against it and
+	# leaves this router's own sessions alone. Their scrollback goes with the
+	# pane: a history the console page would paint again is exactly what the
+	# close is there to remove.
+	mkdir -p "$SANDBOX/opt/fcc/sessions"
+	for _ct_n in 311 312 313; do
+		tmux new-session -d -s "fcc-claude-$_ct_n" 'cat' 2>/dev/null
+		: > "$SANDBOX/opt/fcc/sessions/fcc-claude-$_ct_n.out"
+		printf '0' > "$SANDBOX/opt/fcc/sessions/fcc-claude-$_ct_n.base"
+	done
+	printf 'lan'   > "$SANDBOX/opt/fcc/sessions/fcc-claude-311.target"
+	printf 'local' > "$SANDBOX/opt/fcc/sessions/fcc-claude-312.target"
+	# 313 has no sidecar: a session made before the sidecar existed is local.
+
+	_ct_out="$(sh_script session.sh close-target lan)"
+	assert_contains "$_ct_out" '"closed": 1' "only the LAN session is counted"
+	assert_no "the LAN session is gone" tmux has-session -t fcc-claude-311
+	assert_ok "this router's session survives" tmux has-session -t fcc-claude-312
+	assert_ok "and so does one without a sidecar" tmux has-session -t fcc-claude-313
+	assert_no "the LAN session's scrollback is removed" \
+		test -f "$SANDBOX/opt/fcc/sessions/fcc-claude-311.out"
+	assert_no "and so is its target sidecar" \
+		test -f "$SANDBOX/opt/fcc/sessions/fcc-claude-311.target"
+	assert_ok "the local session keeps its history" \
+		test -f "$SANDBOX/opt/fcc/sessions/fcc-claude-312.out"
+
+	tmux kill-session -t fcc-claude-312 2>/dev/null
+	tmux kill-session -t fcc-claude-313 2>/dev/null
+}
+
+test_a_poll_does_not_recreate_the_history_of_a_closed_session() {
+	setup_sandbox
+	mkdir -p "$SANDBOX/opt/fcc/sessions"
+	# cmd_output still answers for a name tmux does not know — the console
+	# learns that way that the session ended — but it must not write the
+	# scrollback file while doing so. Otherwise a poll already in flight when
+	# close-target runs leaves history behind for a session that is gone.
+	sh_script session.sh output fcc-claude-905 0 0 >/dev/null
+	assert_no "no scrollback file is created for a session that is gone" \
+		test -f "$SANDBOX/opt/fcc/sessions/fcc-claude-905.out"
+}
+
 test_a_session_without_a_sidecar_is_reported_as_this_router() {
 	setup_sandbox
 	if ! command -v tmux >/dev/null 2>&1; then
