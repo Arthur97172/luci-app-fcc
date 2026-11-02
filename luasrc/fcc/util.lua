@@ -26,27 +26,59 @@ function shell_quote(s)
 	return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
+--- Start a command with an explicit argv list, without waiting for it.
+--
+-- The words are quoted here, so a caller that starts two commands and then
+-- collects both never builds a shell string of its own.  This is what lets the
+-- console's transport run its two ubus checks at the same time instead of one
+-- after the other: both fork at once, and each answer is read when it is
+-- needed.  Every word is still quoted by exec_argv/exec_start.
+--
+-- The exit status is not something io.popen() will tell us.  Lua 5.1's
+-- close() returns a single boolean ("the command exited successfully") and
+-- nothing else — measured on this host and on the router with `sh -c 'exit 3'`,
+-- both reporting true.  So the shell reports its own status into the stream
+-- after a newline, and exec_wait() cuts that record off.  printf is a shell
+-- builtin in ash and dash, so this costs no extra fork; and the record is
+-- removed before the caller sees the output, so stdout still arrives
+-- byte-for-byte.  Without it every code came back 0, and the console's
+-- session_alive() and its send-keys 409 could never see a failure.
+local STATUS_MARK = "__fcc_exit__:"
+
+-- @param cmd   absolute path of the executable
+-- @param args  table (array) of arguments, or nil
+-- @return a handle for exec_wait(), or nil when the shell could not be started
+function exec_start(cmd, args)
+	local parts = { shell_quote(cmd) }
+	for _, a in ipairs(args or {}) do
+		parts[#parts + 1] = shell_quote(a)
+	end
+	return io.popen(table.concat(parts, " ") ..
+		" 2>/dev/null; printf '\\n" .. STATUS_MARK .. "%s\\n' \"$?\"")
+end
+
+--- Collect a command started by exec_start().
+-- @return stdout, exit-code
+function exec_wait(fh)
+	if not fh then return "", 127 end
+	local out = fh:read("*a") or ""
+	fh:close()
+	-- Greedy from the left, so a payload that happens to contain the marker
+	-- still loses only the record the shell appended last.
+	local head, status = out:match("^(.*)\n" .. STATUS_MARK .. "(%d+)\n$")
+	if head then
+		return head, tonumber(status) or 1
+	end
+	if out == "" then return "", 1 end
+	return out, 0
+end
+
 --- Run a command with an explicit argv list.
 -- @param cmd   absolute path of the executable
 -- @param args  table (array) of arguments, or nil
 -- @return stdout, exit-code
 function exec_argv(cmd, args)
-	local parts = { shell_quote(cmd) }
-	for _, a in ipairs(args or {}) do
-		parts[#parts + 1] = shell_quote(a)
-	end
-	local fh = io.popen(table.concat(parts, " ") .. " 2>/dev/null")
-	if not fh then return "", 127 end
-	local out = fh:read("*a") or ""
-	local ok, _, code = fh:close()
-	-- io.popen:close() returns true/nil plus "exit"/"signal" and the code.
-	if ok == true then
-		code = 0
-	elseif ok == nil then
-		code = 1
-	end
-	if type(code) ~= "number" then code = 1 end
-	return out, code
+	return exec_wait(exec_start(cmd, args))
 end
 
 --- Run a command and return only its trimmed first line.

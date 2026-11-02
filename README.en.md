@@ -461,17 +461,21 @@ keystroke is a POST and must also state the host it came from in `Origin`, or
 `/cgi-bin/luci`, so both console pages publish the same id once more as
 `fcc_term`, scoped to the CGI's exact path and still `HttpOnly; SameSite=strict`
 — that copy is what the browser offers the endpoint. It talks to `tmux` and the
-session's output file directly, and waits in 30 ms steps. Measured in a browser
-on a real router, key-to-echo is 78–116 ms against 343–366 ms through LuCI. The
+session's output file directly and waits in 10 ms steps — one `stat` plus one
+small read, measured at 0.05 ms, under half a percent of a core while a poll is
+in flight. Its two ubus session checks run at the same time, and the tmux pane
+query overlaps the wait, so a keystroke that has reached the server has its echo
+within 10 ms. Measured in a browser on a real router, key-to-echo is 54–73 ms
+(76–103 ms in r4, when the step was 30 ms) against 343–366 ms through LuCI. The
 LuCI `session_output` / `session_input` actions remain exactly as they were: if
 the CGI is absent or failing, the page falls back to them for the rest of its
-life, which is the r3 behaviour, where the server looks at the output file every
-0.2 seconds.
+life, which is the r3 behaviour, except that the server now looks at the output
+file every 0.1 seconds instead of every 0.2.
 
 That fallback is what the old tick note was about: BusyBox's `sleep` takes whole
 seconds, so the fast tick borrows coreutils' `timeout`, and a machine without it
 falls back to one second. The console no longer depends on it — with the CGI
-present the echo is paced by the 30 ms step, and the long poll is still capped at
+present the echo is paced by the 10 ms step, and the long poll is still capped at
 25 seconds server-side.
 
 **Open in browser** on the toolbar puts the current session in a window of its

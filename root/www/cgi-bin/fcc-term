@@ -71,11 +71,16 @@ local TMUX = os.getenv("FCC_TMUX") or which("tmux")
 local AGENTS_CONF = os.getenv("FCC_AGENTS_CONF") or paths.AGENTS_CONF
 local SESSIONS_ENV = os.getenv("FCC_SESSIONS_DIR")
 
--- How often the long-poll looks for new bytes.  session.sh ticks at 0.2 s
--- because a shell cannot sleep for less; Lua can, and 30 ms is what made the
--- echo feel immediate.  A tick is one stat() system call when nothing arrives.
-local TICK_NS = 30000000
-local TICK_MS = 30
+-- How often the long-poll looks for new bytes.  session.sh ticks at 0.1 s
+-- because a shell cannot sleep for less without borrowing coreutils timeout;
+-- Lua can sleep exactly.  A tick is one stat() and one small read, measured at
+-- 0.05 ms on the router, so 10 ms spends half a percent of one core while a
+-- poll is in flight — and the console keeps exactly one in flight.  What it
+-- buys is the wait a keystroke's echo can sit on after the input request has
+-- already returned: at most 10 ms, a third of what the 30 ms step allowed.
+local TICK_NS = 10000000
+local TICK_MS = 10
+local TICKS_PER_SECOND = 1000 / TICK_MS
 local WAIT_MAX = 25          -- same server-side cap as session.sh
 local INPUT_MAX = 8192       -- hex characters: 4 KiB of keys/paste per request
 local POLL_CAP = 262144      -- bytes in one polling answer; the rest follows
@@ -187,13 +192,19 @@ end
 -- access-group map LuCI uses.  A session whose map names no access groups is
 -- left to the caller of this app (the dispatcher's own behaviour); one that
 -- does name groups must hold root or the group this package ships.
+-- The two questions are independent, so they are asked at the same time: one
+-- ubus client each, started together and collected in order.  Sequentially
+-- they cost about 11 ms on the router, which is a fifth of a keystroke's
+-- round trip; overlapped they cost the slower one, about 6 ms.
 local function authenticated()
 	local sid = session_cookie()
 	if not sid or sid:match("[^0-9A-Fa-f]") then return false end
 	local arg = '{"ubus_rpc_session":"' .. sid .. '"}'
-	local got = util.exec_argv(UBUS, { "call", "session", "get", arg })
+	local get_h = util.exec_start(UBUS, { "call", "session", "get", arg })
+	local acl_h = util.exec_start(UBUS, { "call", "session", "access", arg })
+	local got = util.exec_wait(get_h)
+	local acl = util.exec_wait(acl_h)
 	if not got:find('"token"', 1, true) then return false end
-	local acl = util.exec_argv(UBUS, { "call", "session", "access", arg })
 	if acl:find('"access-group"', 1, true)
 		and not (acl:find('"root"', 1, true) or acl:find('"luci%-app%-fcc"')) then
 		return false
@@ -321,6 +332,21 @@ local function action_output()
 		end
 	end
 
+	-- One tmux call answers everything the page needs about the pane: its grid
+	-- (for reclaiming it from the other window), whether it is dead, and the
+	-- dead pane's exit status for section 74's ending.  It is started before
+	-- the wait rather than after it: a tmux client costs about 10 ms on this
+	-- router, and a poll that has found its bytes should not spend them before
+	-- answering.  A wait that ended because the pane died re-asks, so that
+	-- answer still describes the pane as it is now rather than as it was when
+	-- the poll began.
+	local pinfo_args = {
+		"display-message", "-p", "-t", name,
+		"#{pane_width}x#{pane_height}x#{pane_dead}x#{pane_dead_status}"
+	}
+	local pane_h = util.exec_start(TMUX, pinfo_args)
+	local died_in_wait = false
+
 	-- Wait for bytes past `off`.  The first pass always asks tmux, then once a
 	-- second is enough: the pane dying is the only event that ends the wait
 	-- early, and it cannot happen more often than that.
@@ -333,7 +359,10 @@ local function action_output()
 		size = st and st.size or 0
 		if base + size > off then break end
 		if tick >= ticks then break end
-		if tick % 33 == 0 and not session_alive(name) then break end
+		if tick % TICKS_PER_SECOND == 0 and not session_alive(name) then
+			died_in_wait = true
+			break
+		end
 		nixio.nanosleep(0, TICK_NS)
 		tick = tick + 1
 	end
@@ -365,13 +394,8 @@ local function action_output()
 		abs = off + #data
 	end
 
-	-- One tmux call answers everything the page needs about the pane: its grid
-	-- (for reclaiming it from the other window), whether it is dead, and the
-	-- dead pane's exit status for section 74's ending.
-	local pinfo = util.exec_argv(TMUX, {
-		"display-message", "-p", "-t", name,
-		"#{pane_width}x#{pane_height}x#{pane_dead}x#{pane_dead_status}"
-	})
+	local pinfo = util.exec_wait(pane_h)
+	if died_in_wait then pinfo = util.exec_argv(TMUX, pinfo_args) end
 	local cols, rows, dead, code = pinfo:match("(%d+)x(%d+)x(%d+)x(%d*)")
 	local alive = (dead == "0")
 	local exit_code = nil

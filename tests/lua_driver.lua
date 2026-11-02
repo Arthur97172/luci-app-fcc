@@ -124,6 +124,39 @@ eq("shell_quote/injection",  util.shell_quote("; rm -rf /"), "'; rm -rf /'")
 eq("shell_quote/dollar",     util.shell_quote("$(id)"), "'$(id)'")
 
 -- ---------------------------------------------------------------------------
+-- exec_start / exec_wait
+-- ---------------------------------------------------------------------------
+-- exec_argv is these two in a row; the pair exists so a caller can fork two
+-- commands and collect them afterwards. The console's transport does that
+-- with its two ubus checks, so both properties are worth pinning: the words
+-- are still quoted, and two handles can be open at once.
+do
+	local h = util.exec_start("/bin/sh", { "-c", "printf hello" })
+	check("exec_start/returns_handle", h ~= nil)
+	local out, code = util.exec_wait(h)
+	eq("exec_wait/stdout", out, "hello")
+	eq("exec_wait/status", code, 0)
+
+	local bad = util.exec_start("/bin/sh", { "-c", "exit 3" })
+	local _, bcode = util.exec_wait(bad)
+	eq("exec_wait/propagates_status", bcode, 3)
+
+	-- The argument travels as one quoted word: a semicolon inside it must not
+	-- end the command.
+	local q = util.exec_start("/bin/sh", { "-c", 'printf %s "$1"', "sh", "a;b" })
+	local qout = util.exec_wait(q)
+	eq("exec_start/quotes_every_word", qout, "a;b")
+
+	-- Two clients in flight at once, collected in the order wanted.
+	local one = util.exec_start("/bin/sh", { "-c", "printf one" })
+	local two = util.exec_start("/bin/sh", { "-c", "printf two" })
+	local o2 = util.exec_wait(two)
+	local o1 = util.exec_wait(one)
+	eq("exec_start/two_in_flight/first", o1, "one")
+	eq("exec_start/two_in_flight/second", o2, "two")
+end
+
+-- ---------------------------------------------------------------------------
 -- valid_agent
 -- ---------------------------------------------------------------------------
 check("valid_agent/accepts_lowercase", util.valid_agent("claude") == "claude")

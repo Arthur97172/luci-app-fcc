@@ -725,17 +725,17 @@ test_console_output_wait_ticks_faster_than_a_second() {
 	# The browser repaints what the pane wrote only when the long-poll
 	# returns, so the wait's tick is the console's echo latency. It used to be
 	# a whole second — a typed character showed up to a second late — and is
-	# now a fifth of a second where coreutils' timeout provides it. A router
+	# now a tenth of a second where coreutils' timeout provides it. A router
 	# without that keeps the one-second tick rather than spinning.
 	_sess="$ROOT/root/usr/libexec/fcc/session.sh"
 	_out="$(sed -n '/^cmd_output()/,/^}/p' "$_sess")"
 
-	assert_contains "$_out" 'timeout 0.2 true' \
+	assert_contains "$_out" 'timeout 0.1 true' \
 		"the wait probes for a fractional timer"
 	assert_contains "$_out" '_ou_tick=10' \
 		"and falls back to the one-second tick without one"
-	assert_contains "$_out" 'timeout 0.2 sleep 1' \
-		"the fast tick is a fifth of a second"
+	assert_contains "$_out" 'timeout 0.1 sleep 1' \
+		"the fast tick is a tenth of a second"
 	assert_contains "$_out" 'sleep 1' \
 		"the fallback tick is still a whole second"
 	assert_contains "$_out" '_ou_waited % 10' \

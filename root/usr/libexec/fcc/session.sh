@@ -397,11 +397,13 @@ cmd_output() {
 	# after the key was pressed — the console felt slow to take input while
 	# nothing on the machine was actually busy. BusyBox's sleep takes whole
 	# seconds, but coreutils' timeout takes fractions; where one is there the
-	# wait looks five times a second, and where it is not the one-second tick
-	# stays. The price is one fork per tick while a console is open, which
-	# the router can afford and a one-second echo it cannot.
-	_ou_tick=2
-	timeout 0.2 true >/dev/null 2>&1 || _ou_tick=10
+	# wait looks ten times a second, and where it is not the one-second tick
+	# stays. The price is a few forks per tick while a console is open, which
+	# the router can afford and a one-second echo it cannot. (The console's
+	# own transport, /cgi-bin/fcc-term, does not use this loop at all: it
+	# waits in 10 ms steps and this path is only its fallback.)
+	_ou_tick=1
+	timeout 0.1 true >/dev/null 2>&1 || _ou_tick=10
 	_ou_waited=0
 	while :; do
 		_ou_base="$(cat "$_ou_b" 2>/dev/null || echo 0)"
@@ -431,7 +433,7 @@ cmd_output() {
 		if [ "$_ou_tick" -eq 10 ]; then
 			sleep 1
 		else
-			timeout 0.2 sleep 1 2>/dev/null
+			timeout 0.1 sleep 1 2>/dev/null
 		fi
 		_ou_waited=$(( _ou_waited + _ou_tick ))
 	done

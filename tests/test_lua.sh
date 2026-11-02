@@ -1320,8 +1320,12 @@ util.json_decode = function(s)
 		         status = { server = { running = true },
 		                    agents = { claude = { name = "Claude Code", installed = true } } } }
 	end
-	if s:find('"reason":"no-host-key"', 1, true) then
-		return { ok = false, reason = "no-host-key", error = "the remote host key has not been trusted" }
+	-- A refusal document: only its ok/reason pair is what the controller
+	-- branches on, and every refusal reason the tests use goes through here.
+	if s:find('"ok":false', 1, true) then
+		return { ok = false,
+		         reason = s:match('"reason":"([^"]+)"'),
+		         error = s:match('"error":"([^"]*)"') }
 	end
 	return nil
 end
