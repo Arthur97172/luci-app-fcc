@@ -1,0 +1,448 @@
+#!/usr/bin/lua
+-- luci-app-fcc — the Web Console's fast transport.
+--
+-- Why this exists.  Both of the console's hot requests used to go through the
+-- LuCI dispatcher: one per keystroke, and the long-poll that carries its echo.
+-- A dispatcher request costs about 130 ms on a real router before the shell
+-- backend is even started (uhttpd + ucode + the app's 1300-line Lua controller
+-- + the script's own process), and the browser then waited up to another 0.2 s
+-- for the output poll's tick.  Typed characters arrived in visible bursts:
+-- measured key-to-echo was 405-418 ms on 192.168.10.1, while the same two
+-- operations against this file measured 49-85 ms.
+--
+-- This is not a second backend.  It is the same tmux session and the same
+-- scrollback file session.sh owns; only the HTTP hop changed.  The answers have
+-- exactly the shape of the API actions they mirror, so the page can switch
+-- between the two without knowing which answered.
+--
+-- Endpoints, dispatched on ?action=:
+--
+--   GET  ?action=output&name=fcc-<agent>-NNN&offset=<abs>&wait=<seconds>
+--        The same JSON as .../api/session_output.
+--   POST ?action=input        body: name=...&data=<hex bytes>
+--        The same JSON as .../api/session_input.  The body carries hex rather
+--        than base64 because tmux wants hex; the browser already has the
+--        bytes and neither side needs a decode step.
+--
+-- Authentication is the LuCI session cookie, checked through ubus exactly as
+-- the dispatcher checks it: `session get` must know the id, and a session
+-- whose access groups are known must hold root or this package's ACL group.
+-- The id arrives as `fcc_term`, a copy the console and popout templates set
+-- with this file's path: LuCI scopes its own cookie to /cgi-bin/luci, so the
+-- browser would otherwise never offer it here.  The dispatcher's names are
+-- still read for anything else that calls this endpoint.
+--
+-- A cookie alone is not enough for a state-changing POST: another site can
+-- make a browser send one.  The page cannot mark its requests with a custom
+-- header — uhttpd hands a CGI only a whitelist of request headers and drops
+-- every X-*, as an `env` dump on a real router showed — so the CSRF gate is the
+-- Origin (or, when a browser sends none, Referer) that the browser itself
+-- sets: for a POST it must name the host the request arrived at, and when
+-- neither header is present the request is refused.  LuCI's own cookie is
+-- SameSite=Strict, which stops it travelling to this origin at all from a
+-- cross-site page.  A GET is not gated that strictly: it changes nothing, and
+-- with no CORS headers another origin cannot read the answer.
+--
+-- Failure is ordinary, never fatal: if this file is missing, uhttpd answers
+-- 404, and fcc-common.js falls back to the LuCI actions for the rest of the
+-- page's life.
+
+local util = require "luci.fcc.util"
+local paths = require "luci.fcc.paths"
+local nixio = require "nixio"
+local fs = require "nixio.fs"
+
+-- The two programs the hot path needs.  A CGI's PATH is the server's
+-- (/usr/sbin:/usr/bin:/sbin:/bin on OpenWrt), and which directory holds ubus
+-- differs between releases (/bin versus /sbin), so the names are resolved
+-- against PATH rather than guessed.  The environment overrides mirror
+-- FCC_LIBDIR and FCC_AGENTS_CONF in the backend, which is how a development
+-- tree (and tests/test_term.sh) exercises this file without installing it.
+local function which(name)
+	for dir in (os.getenv("PATH") or ""):gmatch("[^:]+") do
+		local p = dir .. "/" .. name
+		if fs.access(p) then return p end
+	end
+	return name
+end
+
+local UBUS = os.getenv("FCC_UBUS") or which("ubus")
+local TMUX = os.getenv("FCC_TMUX") or which("tmux")
+local AGENTS_CONF = os.getenv("FCC_AGENTS_CONF") or paths.AGENTS_CONF
+local SESSIONS_ENV = os.getenv("FCC_SESSIONS_DIR")
+
+-- How often the long-poll looks for new bytes.  session.sh ticks at 0.2 s
+-- because a shell cannot sleep for less; Lua can, and 30 ms is what made the
+-- echo feel immediate.  A tick is one stat() system call when nothing arrives.
+local TICK_NS = 30000000
+local TICK_MS = 30
+local WAIT_MAX = 25          -- same server-side cap as session.sh
+local INPUT_MAX = 8192       -- hex characters: 4 KiB of keys/paste per request
+local POLL_CAP = 262144      -- bytes in one polling answer; the rest follows
+local MAX_OUT = 4194304      -- session.sh's scrollback cap
+local TRIM_TO = 1048576      -- session.sh's trim target
+
+-- ---------------------------------------------------------------------------
+-- HTTP
+-- ---------------------------------------------------------------------------
+
+local function respond(status, body)
+	io.write("Status: ", status, "\r\n")
+	io.write("Content-Type: application/json; charset=utf-8\r\n")
+	io.write("Cache-Control: no-store\r\n")
+	io.write("X-Content-Type-Options: nosniff\r\n")
+	io.write("\r\n")
+	if body then io.write(body) end
+end
+
+local REASON = {
+	[400] = "Bad Request",
+	[403] = "Forbidden",
+	[404] = "Not Found",
+	[409] = "Conflict"
+}
+
+local function fail(status, message)
+	respond(tostring(status) .. " " .. (REASON[status] or "Error"),
+		util.json_encode({ error = message }))
+end
+
+local function ok()
+	respond("200 OK", '{"ok":true}')
+end
+
+local function url_decode(s)
+	s = s:gsub("+", " ")
+	return (s:gsub("%%(%x%x)", function(h)
+		return string.char(tonumber(h, 16))
+	end))
+end
+
+--- One value out of an application/x-www-form-urlencoded string.
+local function form_get(source, key)
+	if not source or source == "" then return nil end
+	for pair in source:gmatch("[^&]+") do
+		local k, v = pair:match("^([^=]*)=(.*)$")
+		if k then
+			if url_decode(k) == key then return url_decode(v) end
+		elseif url_decode(pair) == key then
+			return ""
+		end
+	end
+	return nil
+end
+
+local function query_get(key)
+	return form_get(os.getenv("QUERY_STRING"), key)
+end
+
+--- Where did the browser say this request came from?
+--
+-- Returns true when the stated origin is this host, false when it is another
+-- one, and nil when the browser stated nothing (same-origin GETs often omit
+-- both headers; a POST has to present one — see action_input).
+local function origin_state()
+	local host = (os.getenv("HTTP_HOST") or ""):lower()
+	if host == "" then return false end
+
+	local origin = os.getenv("HTTP_ORIGIN")
+	if origin and origin ~= "" then
+		local oh = origin:match("^[A-Za-z][A-Za-z0-9+.-]*://([^/]+)$")
+		return oh ~= nil and oh:lower() == host
+	end
+
+	local referer = os.getenv("HTTP_REFERER")
+	if referer and referer ~= "" then
+		local rh = referer:match("^[A-Za-z][A-Za-z0-9+.-]*://([^/?#]+)")
+		return rh ~= nil and rh:lower() == host
+	end
+
+	return nil
+end
+
+--- The LuCI session id from the cookie the page republished for this path.
+--
+-- LuCI's own cookie is scoped to /cgi-bin/luci, so a browser does not offer it
+-- here; the console and popout templates publish the same id as `fcc_term`
+-- with this file's exact path.  The dispatcher's own names are still accepted
+-- so that anything else speaking to this endpoint — curl included — works
+-- without knowing about the copy.
+local function session_cookie()
+	local raw = os.getenv("HTTP_COOKIE") or ""
+	local found = {}
+	for k, v in raw:gmatch("([^=;%s]+)=([^;%s]+)") do
+		if k == "fcc_term" or k == "sysauth_https" or k == "sysauth_http"
+			or k == "sysauth" then
+			found[k] = v
+		end
+	end
+	return found.fcc_term or found.sysauth_https or found.sysauth_http
+		or found.sysauth
+end
+
+--- Fail unless the request carries a live, permitted LuCI session.
+--
+-- This repeats the dispatcher's own check rather than inventing a second one:
+-- `session get` is what proves the id is live, and `session access` is the
+-- access-group map LuCI uses.  A session whose map names no access groups is
+-- left to the caller of this app (the dispatcher's own behaviour); one that
+-- does name groups must hold root or the group this package ships.
+local function authenticated()
+	local sid = session_cookie()
+	if not sid or sid:match("[^0-9A-Fa-f]") then return false end
+	local arg = '{"ubus_rpc_session":"' .. sid .. '"}'
+	local got = util.exec_argv(UBUS, { "call", "session", "get", arg })
+	if not got:find('"token"', 1, true) then return false end
+	local acl = util.exec_argv(UBUS, { "call", "session", "access", arg })
+	if acl:find('"access-group"', 1, true)
+		and not (acl:find('"root"', 1, true) or acl:find('"luci%-app%-fcc"')) then
+		return false
+	end
+	return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Sessions
+-- ---------------------------------------------------------------------------
+
+--- Is this agent id one the package knows?  Mirrors fcc_valid_agent().
+local function known_agent(id)
+	local f = io.open(AGENTS_CONF, "r")
+	if not f then return false end
+	local found = false
+	for line in f:lines() do
+		if not line:match("^%s*#") and line:match("%S") then
+			local first = line:match("^%s*([^|]*)")
+			if first == id then found = true end
+		end
+	end
+	f:close()
+	return found
+end
+
+--- fcc-<known-agent>-<3 digits>, and nothing else.  Mirrors fcc_valid_session().
+local function valid_session(name)
+	if not util.valid_session(name) then return false end
+	local agent = name:match("^fcc%-([a-z0-9]+)%-%d%d%d$")
+	return agent ~= nil and known_agent(agent)
+end
+
+--- The directory session.sh uses, including its /tmp fallback.
+local function sessions_dir()
+	if SESSIONS_ENV then return SESSIONS_ENV end
+	local dir = paths.sessions_dir()
+	if fs.access(dir, "w") then return dir end
+	return "/tmp/fcc-sessions"
+end
+
+local function out_file(dir, name)  return dir .. "/" .. name .. ".out"  end
+local function base_file(dir, name) return dir .. "/" .. name .. ".base" end
+
+local function read_number(path)
+	local f = io.open(path, "rb")
+	if not f then return 0 end
+	local v = f:read("*a") or ""
+	f:close()
+	v = v:gsub("%s+", "")
+	return tonumber(v) or 0
+end
+
+--- Does tmux still have this session?
+--
+-- The exit status is the whole answer; has-session prints nothing.  This runs
+-- at most once a second while a poll waits — the answer at the end of a poll
+-- uses display-message, which the size query needs anyway.
+local function session_alive(name)
+	local _, code = util.exec_argv(TMUX, { "has-session", "-t", name })
+	return code == 0
+end
+
+--- Keep the scrollback file under MAX_OUT, advancing the base offset.
+--
+-- Rewriting through the same inode is deliberate.  session.sh's trim copies
+-- the tail to a new file and renames it over the old one, but the pipe-pane
+-- `cat >> file` keeps writing to the original inode — after the rename every
+-- later byte goes to an unlinked file and the console stops receiving output.
+-- Opening the existing path for writing truncates it in place, so the inode
+-- (and the append) survives.  A byte appended between the read and the rewrite
+-- is lost; the shell's version loses every byte after the rename instead.
+local function trim(outf, basef)
+	local st = fs.stat(outf)
+	local size = st and st.size or 0
+	if size <= MAX_OUT then return end
+	local f = io.open(outf, "rb")
+	if not f then return end
+	f:seek("set", size - TRIM_TO)
+	local tail = f:read("*a") or ""
+	f:close()
+	if #tail == 0 then return end
+	local w = io.open(outf, "wb")
+	if not w then return end
+	w:write(tail)
+	w:close()
+	local bw = io.open(basef, "wb")
+	if bw then
+		bw:write(tostring(read_number(basef) + size - #tail))
+		bw:close()
+	end
+end
+
+-- ---------------------------------------------------------------------------
+-- Actions
+-- ---------------------------------------------------------------------------
+
+local function action_output()
+	local name = query_get("name") or ""
+	if not valid_session(name) then return fail(400, "invalid session") end
+
+	local off = tonumber(query_get("offset") or "0") or 0
+	if off < 0 then off = 0 end
+	local wait = tonumber(query_get("wait") or "0") or 0
+	if wait < 0 then wait = 0 end
+	if wait > WAIT_MAX then wait = WAIT_MAX end
+
+	local dir = sessions_dir()
+	local outf, basef = out_file(dir, name), base_file(dir, name)
+
+	trim(outf, basef)
+
+	-- Only a session tmux still knows may have its scrollback files created:
+	-- writing them for a name that has gone would leave history behind for a
+	-- session that no longer exists.  Same rule as cmd_output() in session.sh.
+	local have_out, have_base = fs.stat(outf), fs.stat(basef)
+	if not (have_out and have_base) and session_alive(name) then
+		if not have_out then
+			local f = io.open(outf, "ab")
+			if f then f:close() end
+		end
+		if not have_base then
+			local f = io.open(basef, "wb")
+			if f then f:write("0"); f:close() end
+		end
+	end
+
+	-- Wait for bytes past `off`.  The first pass always asks tmux, then once a
+	-- second is enough: the pane dying is the only event that ends the wait
+	-- early, and it cannot happen more often than that.
+	local ticks = math.floor(wait * 1000 / TICK_MS)
+	local tick = 0
+	local base, size = 0, 0
+	while true do
+		base = read_number(basef)
+		local st = fs.stat(outf)
+		size = st and st.size or 0
+		if base + size > off then break end
+		if tick >= ticks then break end
+		if tick % 33 == 0 and not session_alive(name) then break end
+		nixio.nanosleep(0, TICK_NS)
+		tick = tick + 1
+	end
+
+	local reset = false
+	if off < base then
+		reset = true
+		off = base
+	end
+
+	-- wait=0 is how the page syncs its offset after painting a capture: the
+	-- answer is the stream's end, and the ordinary poll then starts there.
+	-- Every other poll reports the end of what it actually sent, so a partial
+	-- answer can never skip bytes.
+	local want_all = (wait == 0)
+	local data = ""
+	local f = io.open(outf, "rb")
+	if f then
+		f:seek("set", off - base)
+		data = f:read(want_all and "*a" or POLL_CAP) or ""
+		f:close()
+	end
+	local abs
+	if want_all then
+		local st = fs.stat(outf)
+		abs = base + (st and st.size or 0)
+		if abs < off then abs = off end
+	else
+		abs = off + #data
+	end
+
+	-- One tmux call answers everything the page needs about the pane: its grid
+	-- (for reclaiming it from the other window), whether it is dead, and the
+	-- dead pane's exit status for section 74's ending.
+	local pinfo = util.exec_argv(TMUX, {
+		"display-message", "-p", "-t", name,
+		"#{pane_width}x#{pane_height}x#{pane_dead}x#{pane_dead_status}"
+	})
+	local cols, rows, dead, code = pinfo:match("(%d+)x(%d+)x(%d+)x(%d*)")
+	local alive = (dead == "0")
+	local exit_code = nil
+	if dead == "1" and code and code ~= "" then exit_code = tonumber(code) end
+
+	respond("200 OK", util.json_encode({
+		name = name,
+		offset = abs,
+		reset = reset,
+		alive = alive,
+		eof = not alive,
+		exit_code = exit_code,
+		cols = cols and tonumber(cols) or nil,
+		rows = rows and tonumber(rows) or nil,
+		data = util.base64_encode(data)
+	}))
+end
+
+local function action_input()
+	if (os.getenv("REQUEST_METHOD") or "") ~= "POST" then
+		return fail(400, "this action requires POST")
+	end
+	-- Fail closed: a browser states where it came from on a POST, and a request
+	-- that states nothing is not this page's.
+	if origin_state() ~= true then
+		return fail(403, "this action needs a same-origin POST")
+	end
+	local len = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
+	if len < 0 or len > 65536 then return fail(400, "bad request") end
+	local body = len > 0 and (io.stdin:read(len) or "") or ""
+
+	local name = form_get(body, "name") or ""
+	if not valid_session(name) then return fail(400, "invalid session") end
+
+	local hex = form_get(body, "data") or ""
+	if #hex > INPUT_MAX or hex:find("[^0-9A-Fa-f]") or (#hex % 2) ~= 0 then
+		return fail(400, "invalid input encoding")
+	end
+	if hex == "" then return ok() end
+
+	-- send-keys -H takes one hex byte per argument.  Each word is a validated
+	-- two-digit hex string and every argv word is quoted by exec_argv, so
+	-- nothing here can become shell syntax.
+	local args = { "send-keys", "-t", name, "-H" }
+	for i = 1, #hex, 2 do
+		args[#args + 1] = hex:sub(i, i + 1)
+	end
+	local _, code = util.exec_argv(TMUX, args)
+	if code ~= 0 then return fail(409, "session not found") end
+	ok()
+end
+
+-- ---------------------------------------------------------------------------
+-- Dispatch
+-- ---------------------------------------------------------------------------
+
+local origin = origin_state()
+if origin == false then
+	fail(403, "cross-origin request refused")
+	return
+end
+if not authenticated() then
+	fail(403, "no session")
+	return
+end
+
+local action = query_get("action") or ""
+if action == "output" then
+	action_output()
+elseif action == "input" then
+	action_input()
+else
+	fail(400, "unknown action")
+end

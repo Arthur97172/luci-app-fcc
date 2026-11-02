@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.1.2))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -159,6 +159,12 @@ define Package/luci-app-fcc/install
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-info.js $(1)/www/luci-static/resources/fcc/fcc-info.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc-popout.js $(1)/www/luci-static/resources/fcc/fcc-popout.js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/fcc/fcc.css $(1)/www/luci-static/resources/fcc/fcc.css
+
+	# The Web Console's fast transport. fcc-common.js prefers it for keystrokes
+	# and pane output and falls back to the LuCI actions when it is not served
+	# (uhttpd has /cgi-bin enabled wherever LuCI's own dispatcher runs).
+	$(INSTALL_DIR) $(1)/www/cgi-bin
+	$(INSTALL_BIN) ./root/www/cgi-bin/fcc-term $(1)/www/cgi-bin/fcc-term
 
 	# No .lmo here. The Simplified Chinese catalogue is built into
 	# luci-i18n-fcc-zh-cn, below, so this package carries English only — English

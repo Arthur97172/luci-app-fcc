@@ -314,13 +314,23 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 **传输是 HTTP 字节流，不是 WebSocket**：WebSocket 需要常驻的 Node.js 或 Python 服务器，
 而本包不得引入语言运行时、也不得在 FCC 服务器之外运行常驻守护进程；`uhttpd` 本身也没有
 WebSocket 支持。所以后端以**绝对偏移量**暴露输出，浏览器长轮询，重连精确地从断点继续；
-回滚缓冲从头部裁剪时基准偏移量同步前进，裁剪前后一个绝对偏移量的含义不变。按键以 base64
-上传，后端解码后以十六进制交给 `tmux send-keys -H`——交给 tmux 的从不是攻击者可控的文本。
+回滚缓冲从头部裁剪时基准偏移量同步前进，裁剪前后一个绝对偏移量的含义不变。按键以字节上传，
+后端以十六进制交给 `tmux send-keys -H`——交给 tmux 的从不是攻击者可控的文本。
 
-代价是输入回声要走一次长轮询往返：服务端每 0.2 秒看一次会话的输出文件，轮询间隔上限定为
-25 秒。BusyBox 的 `sleep` 只认整秒，所以快节拍借的是 coreutils 的 `timeout`；没有它的机器
-退回一秒一跳（旧行为），控制台依旧可用，只是敲键回声会慢到一秒。对交互式编程 Agent 基本
-无感，对全屏 TUI 重绘则有感。
+控制台的**热路径**走一个专用 CGI（`/cgi-bin/fcc-term`）：敲一个键是一次请求，承载回声的
+长轮询也是一次请求。经 LuCI 调度器时，一次请求光调度就要约 130 ms（uhttpd、ucode、1300 行
+的控制器、后端进程），再叠上输出轮询的等待，实测敲键回声 405–418 ms。这个 CGI 用同一个
+LuCI 会话 Cookie 认证（经 ubus 核对会话与访问组；按键是 POST，浏览器必须用 `Origin`——
+浏览器不发 `Origin` 时用 `Referer`——指明请求来自本机）。LuCI 把自己的 Cookie 限定在
+`/cgi-bin/luci`，所以两个控制台页面把同一个会话 id 再发布一份 `fcc_term`，路径限定到这个
+CGI 本身，仍是 `HttpOnly; SameSite=strict`；浏览器拿到的就是这一份。
+直接与 `tmux` 和会话输出文件对话，等待节拍降到 30 ms，长轮询上限仍是 25 秒。
+真实浏览器实测敲键回声 78–116 ms，同一台路由器走 LuCI 是 343–366 ms。
+LuCI 的 `session_output` / `session_input` 动作原样保留：CGI 不存在或不工作时，页面在本次
+加载内自动退回它们，行为与 r3 一致——服务端仍每 0.2 秒看一次输出文件。
+
+旧路径的节拍限制是 BusyBox 的 `sleep` 只认整秒，所以快节拍借的是 coreutils 的 `timeout`；
+没有它的机器退回一秒一跳。控制台现在不依赖它：CGI 存在时回声由 30 ms 的节拍决定。
 
 会话也可以离开 LuCI：工具栏的 **在浏览器中打开** 把当前会话放进独立窗口，**关闭窗口就会
 结束该会话**（刷新不会，重连会取消延迟关闭）；**结束全部会话** 只结束 `fcc-*` 命名空间；
@@ -425,6 +435,7 @@ sh scripts/gen-po.sh --check  # 模板过期则失败
 | `packaging` | 安装清单与源码树、依赖、i18n 接线 |
 | `i18n` | 模板 ↔ 目录一致性、po2lmo 的丢弃规则、LuCI 语言代码 |
 | `security` | 无提交的凭据、无 WAN 绑定、变更类操作仅 POST、ACL 范围、无 WebSocket 服务器 |
+| `term` | 控制台快速通道：Cookie/ACL/CSRF/Origin、会话名文法、输入编码、裁剪的 inode |
 
 `scripts/smoke.sh` 刻意不在 `test.sh` 里：它需要 Docker 和发行版 rootfs，由 CI 作为独立任务
 运行——解开官方 rootfs、在真正的 procd 下启动、用该发行版自己的包管理器（24.10 用 `opkg`，
@@ -451,7 +462,7 @@ JavaScript 和 shell），x86_64 SDK 产出的文件在 ARM、MIPS 和 x86 上�
 ## 已知限制
 
 * **终端没有 WebSocket 传输**——见上文；这是"不引入额外运行时"和"不运行常驻守护进程"两条
-  约束的结果，全屏 TUI 重绘明显比走 socket 慢。
+  约束的结果。热路径已改走专用 CGI，敲键回声降到几十毫秒；全屏 TUI 重绘仍比走 socket 慢。
 * **`hermes` 没有版本探测**：`hermes --version` 不会结束，界面把版本报告为未知，而不是让
   状态刷新卡住。
 * **Agent 版本是探测得来的**：以 5 秒超时从底层 CLI 读取并缓存 60 秒；CLI 改了输出格式的

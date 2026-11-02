@@ -45,28 +45,180 @@
 
 		if (opts.signal) { init.signal = opts.signal; }
 
-		return fetch(url, init).then(function (resp) {
-			return resp.text().then(function (text) {
-				var data = null;
-				try { data = JSON.parse(text); } catch (e) { data = null; }
-				if (!resp.ok) {
-					var msg = (data && data.error) ? data.error : ('HTTP ' + resp.status);
-					var err = new Error(msg);
-					err.status = resp.status;
-					err.body = data;
-					throw err;
-				}
-				if (data === null) {
-					/* Translated like every other sentence a page can show:
-					 * this one reached the screen as English only because it
-					 * was built here and never passed through the catalogue. */
-					var perr = new Error(window.FCC._('Malformed response from the router'));
-					perr.status = resp.status;
-					throw perr;
-				}
-				return data;
-			});
+		return fetch(url, init).then(readJSON);
+	}
+
+	/**
+	 * Parse a JSON answer and reject with .status/.body when it is not OK.
+	 *
+	 * Shared by the LuCI API client and the console's fast transport so the two
+	 * fail in exactly the same shape.
+	 */
+	function readJSON(resp) {
+		return resp.text().then(function (text) {
+			var data = null;
+			try { data = JSON.parse(text); } catch (e) { data = null; }
+			if (!resp.ok) {
+				var msg = (data && data.error) ? data.error : ('HTTP ' + resp.status);
+				var err = new Error(msg);
+				err.status = resp.status;
+				err.body = data;
+				throw err;
+			}
+			if (data === null) {
+				/* Translated like every other sentence a page can show:
+				 * this one reached the screen as English only because it
+				 * was built here and never passed through the catalogue. */
+				var perr = new Error(window.FCC._('Malformed response from the router'));
+				perr.status = resp.status;
+				throw perr;
+			}
+			return data;
 		});
+	}
+
+	/* ------------------------------------------------- fast terminal transport */
+
+	/*
+	 * The console's two hot requests — one per keystroke, and the long-poll that
+	 * carries its echo — used to go through the LuCI dispatcher. That costs a
+	 * full CGI request each time: on a real router it was ~130 ms before the
+	 * shell backend had even started, and typed characters then waited up to
+	 * another 0.2 s for the output poll's tick. Both operations are served by
+	 * /cgi-bin/fcc-term, which authenticates from the same session cookie and
+	 * talks to tmux and the scrollback file directly; its answers have the same
+	 * shape as the LuCI actions, so the call sites do not care which one spoke.
+	 *
+	 * The endpoint is optional. A router that does not serve it answers 404,
+	 * and the page falls back to the LuCI actions for the rest of its life —
+	 * the transport that existed before it. `fast.off` is that decision, made
+	 * once, and the fallback runs inside the same promise chain so callers see
+	 * one answer either way.
+	 */
+	var fast = { url: null, off: false };
+
+	function fastURL() {
+		if (fast.url === null) {
+			fast.url = (typeof window.FCC_TERM === 'string') ? window.FCC_TERM : '';
+		}
+		return fast.url;
+	}
+
+	function fastUsable() { return !fast.off && !!fastURL(); }
+
+	/** Did this failure mean the fast endpoint cannot serve this page? */
+	function fastBroken(err) {
+		if (!err || err.name === 'AbortError') { return false; }
+		/* A working endpoint answers its own 400/409. No HTTP answer at all, a
+		 * 404 from a uhttpd with no such CGI, a 5xx from a broken one, or a 403
+		 * (the session guard, or an Origin this endpoint will not accept) all
+		 * mean the LuCI route has to take over. */
+		return !err.status || err.status === 403 || err.status === 404 ||
+			err.status === 405 || err.status >= 500;
+	}
+
+	function fastCall(action, params, opts) {
+		opts = opts || {};
+		var method = (opts.method || 'GET').toUpperCase();
+		var qs = new URLSearchParams();
+		Object.keys(params || {}).forEach(function (k) {
+			var v = params[k];
+			if (v !== undefined && v !== null) { qs.append(k, String(v)); }
+		});
+
+		var url = fastURL() + '?action=' + encodeURIComponent(action);
+		var init = {
+			method: method,
+			credentials: 'same-origin',
+			/* No custom CSRF header: uhttpd gives a CGI only a whitelist of the
+			 * request's headers and drops every X-*, so the endpoint gates a POST
+			 * on the Origin/Referer the browser itself sets. */
+			headers: { 'Accept': 'application/json' }
+		};
+		if (method === 'GET') {
+			var s = qs.toString();
+			if (s) { url += '&' + s; }
+		} else {
+			init.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+			init.body = qs.toString();
+		}
+		if (opts.signal) { init.signal = opts.signal; }
+
+		return fetch(url, init).then(readJSON).catch(function (err) {
+			if (fastBroken(err)) { fast.off = true; }
+			throw err;
+		});
+	}
+
+	/** session_output, over whichever transport is available. */
+	function termPoll(params, opts) {
+		opts = opts || {};
+		if (!fastUsable()) {
+			return api('session_output', params, opts);
+		}
+		return fastCall('output', params, { method: 'GET', signal: opts.signal })
+			.catch(function (err) {
+				if (err && err.name === 'AbortError') { throw err; }
+				if (!fastUsable()) {
+					return api('session_output', params, opts);
+				}
+				throw err;
+			});
+	}
+
+	/**
+	 * session_input, over whichever transport is available.
+	 *
+	 * The fast endpoint takes hex because tmux does; the LuCI action takes
+	 * base64. Only the encoding the chosen transport needs is built.
+	 */
+	function termSendHex(name, hex) {
+		if (!fastUsable()) {
+			return api('session_input', { name: name, data: hexToB64(hex) }, { method: 'POST' });
+		}
+		return fastCall('input', { name: name, data: hex }, { method: 'POST' })
+			.catch(function (err) {
+				if (err && err.name === 'AbortError') { throw err; }
+				if (!fastUsable()) {
+					return api('session_input', { name: name, data: hexToB64(hex) }, { method: 'POST' });
+				}
+				throw err;
+			});
+	}
+
+	/**
+	 * Send keystrokes in order, in as few requests as the stream allows.
+	 *
+	 * onData() fires once per keystroke and once for a whole paste. Sending
+	 * each one as it arrives was one request per key; sending the next only
+	 * when the previous answer is back keeps the order without waiting on a
+	 * timer, and folds everything typed during a round trip into one request.
+	 * The first key still goes at once, so the transport's latency is the
+	 * only latency added.
+	 *
+	 * On failure the buffer is dropped rather than replayed: the session may
+	 * have ended, and re-sending would type the same bytes twice.
+	 */
+	function keyQueue(sendHex) {
+		var buf = '';
+		var busy = false;
+		function pump() {
+			if (busy || !buf) { return; }
+			var take = buf.slice(0, 8192);   // one request's worth of hex
+			buf = buf.slice(take.length);
+			busy = true;
+			sendHex(take).then(function () {
+				busy = false;
+				pump();
+			}, function () {
+				busy = false;
+				buf = '';
+			});
+		}
+		return {
+			push: function (hex) { buf += hex; pump(); },
+			reset: function () { buf = ''; }
+		};
 	}
 
 	/* ------------------------------------------------------------ formatting */
@@ -230,6 +382,25 @@
 		return btoa(bin);
 	}
 
+	/** String -> lowercase hex of its UTF-8 bytes, for tmux send-keys -H. */
+	function strToHex(str) {
+		var bytes = new TextEncoder().encode(str);
+		var out = '';
+		for (var i = 0; i < bytes.length; i++) {
+			out += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+		}
+		return out;
+	}
+
+	/** Hex -> base64, for the LuCI fallback of the same keystrokes. */
+	function hexToB64(hex) {
+		var bin = '';
+		for (var i = 0; i < hex.length; i += 2) {
+			bin += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+		}
+		return btoa(bin);
+	}
+
 	/**
 	 * Translation. LuCI's client-side catalogue is not available to a plain
 	 * script on every release, so this uses the page's own translator when it
@@ -257,6 +428,10 @@
 		b64ToBytes: b64ToBytes,
 		captureBytes: captureBytes,
 		captureCursor: captureCursor,
-		strToB64: strToB64
+		strToB64: strToB64,
+		strToHex: strToHex,
+		termPoll: termPoll,
+		termSendHex: termSendHex,
+		keyQueue: keyQueue
 	};
 })();

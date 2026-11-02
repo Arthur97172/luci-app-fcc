@@ -6,6 +6,37 @@
  to it. See htdocs/.../fcc-terminal.js for the transport.
 -%>
 
+<%#
+ The console's fast transport (/cgi-bin/fcc-term) sits beside the LuCI entry
+ point rather than under it, so its address drops the /luci/... tail from the
+ API URL. Empty — a LuCI mounted at /luci itself — means "no fast endpoint",
+ and the page keeps the API actions it always used.
+
+ The transport needs the session cookie, and LuCI scopes its own to
+ /cgi-bin/luci (the dispatcher sets it with path=build_url()), so a browser
+ never sends it to /cgi-bin/fcc-term. A second copy of the same id, scoped to
+ the transport's exact path, is published here for that reason: HttpOnly keeps
+ it from scripts, SameSite=strict keeps it from travelling cross-site, and it
+ carries nothing the LuCI cookie does not already carry.
+
+ This runs before the header partial on purpose. LuCI writes the response
+ headers on the first byte of output, so a Set-Cookie set after the markup has
+ started would be dropped on the floor.
+-%>
+<%
+	local _prefix = url("admin/services/fcc/api"):match("^(.-)/luci/")
+	local _term = (_prefix and _prefix ~= "") and (_prefix .. "/fcc-term") or ""
+	if _term ~= "" then
+		local _http = require "luci.http"
+		local _sid = _http.getcookie("sysauth_https") or _http.getcookie("sysauth_http")
+		if _sid and _sid:match("^%x+$") then
+			_http.header("Set-Cookie", "fcc_term=" .. _sid .. "; path=" .. _term ..
+				"; HttpOnly; SameSite=strict" ..
+				((_http.getenv("HTTPS") == "on") and "; secure" or ""))
+		end
+	end
+%>
+
 <% local v = require("luci.fcc.paths").asset_version() %>
 <%+header%>
 
@@ -14,6 +45,7 @@
 
 <script>
 	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
+	var FCC_TERM = '<%=_term%>';
 	var FCC_POPOUT = '<%=url("admin/services/fcc/popout")%>';
 	<%# FCC's own admin UI, through this package's reverse proxy. The console
 	    links to its Integrations page from the Antigravity CLI refusal, and

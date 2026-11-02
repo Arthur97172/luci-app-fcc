@@ -325,6 +325,9 @@ test_terminal_long_polls() {
 	_ts_sh="$(cat "$ROOT/root/usr/libexec/fcc/session.sh")"
 	assert_contains "$_ts_sh" '[ "$_ou_wait" -le 25 ] || _ou_wait=25' \
 		"the backend caps the long-poll wait"
+	# The fast CGI is the other place a wait can be granted; the same cap.
+	assert_contains "$(cat "$ROOT/root/www/cgi-bin/fcc-term")" "WAIT_MAX = 25" \
+		"the fast transport caps the long-poll wait at the same 25 s"
 }
 
 test_no_persistent_daemon() {
@@ -355,12 +358,55 @@ test_no_shell_interpolation_of_user_input() {
 	# Section 30: nothing user-supplied is concatenated into a shell command.
 	# In Lua that means every argv word goes through shell_quote().
 	_ts_bad=""
-	for _ts_f in "$ROOT"/luasrc/fcc/*.lua "$CTRL"; do
+	for _ts_f in "$ROOT"/luasrc/fcc/*.lua "$CTRL" "$ROOT/root/www/cgi-bin/fcc-term"; do
 		grep -nE 'os\.execute' "$_ts_f" >/dev/null 2>&1 && _ts_bad="$_ts_bad $(basename "$_ts_f"):os.execute"
 	done
 	assert_eq "" "$(printf '%s' "$_ts_bad" | sed 's/^ //')" "no os.execute anywhere"
 	assert_contains "$(cat "$ROOT/luasrc/fcc/util.lua")" "local parts = { shell_quote(cmd) }" \
 		"exec_argv quotes every word it passes"
+}
+
+test_fast_transport_guards() {
+	# root/www/cgi-bin/fcc-term answers outside LuCI's dispatcher, so none of
+	# the dispatcher's protections apply to it unless it repeats them itself.
+	# Each assertion below is one of those protections.
+	_ts_cgi="$ROOT/root/www/cgi-bin/fcc-term"
+	assert_file "$_ts_cgi"
+	_ts_src="$(cat "$_ts_cgi")"
+
+	assert_contains "$_ts_src" 'HTTP_ORIGIN' \
+		"it checks the Origin the browser states"
+	assert_contains "$_ts_src" 'HTTP_REFERER' \
+		"and falls back to the Referer when a browser sends no Origin"
+	assert_contains "$_ts_src" '"session", "get"' \
+		"it proves the cookie against ubus, as the dispatcher does"
+	assert_contains "$_ts_src" '"luci%-app%-fcc"' \
+		"and requires this package's access group"
+	assert_contains "$_ts_src" 'util.valid_session' \
+		"it validates the session name"
+	assert_contains "$_ts_src" '"this action requires POST"' \
+		"typing is refused over GET"
+	assert_contains "$_ts_src" 'origin_state() ~= true' \
+		"and a POST with no stated origin fails closed"
+	assert_contains "$_ts_src" 'hex:find("[^0-9A-Fa-f]")' \
+		"keystrokes are hex, and nothing else"
+
+	# The session id reaches this endpoint as a copy of LuCI's cookie, because
+	# LuCI scopes its own to /cgi-bin/luci. The copy has to be as strict as the
+	# original, and it has to be the only path it travels.
+	assert_contains "$_ts_src" 'found.fcc_term or found.sysauth_https' \
+		"it reads the republished session cookie"
+	assert_contains "$_ts_src" 'sid:match("[^0-9A-Fa-f]")' \
+		"and refuses a session id that is not plain hex"
+	for _ts_v in "$ROOT/luasrc/view/fcc/console.htm" "$ROOT/luasrc/view/fcc/popout.htm"; do
+		_ts_vs="$(cat "$_ts_v")"
+		assert_contains "$_ts_vs" 'HttpOnly; SameSite=strict' \
+			"$(basename "$_ts_v") republishes the cookie HttpOnly and SameSite=strict"
+		assert_contains "$_ts_vs" '"Set-Cookie", "fcc_term="' \
+			"$(basename "$_ts_v") scopes the copy as fcc_term"
+		assert_contains "$_ts_vs" 'path=" .. _term' \
+			"and limits it to the fast endpoint's own path"
+	done
 }
 
 tests_main

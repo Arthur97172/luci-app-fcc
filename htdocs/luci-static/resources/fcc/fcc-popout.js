@@ -2,7 +2,10 @@
  * luci-app-fcc — one console session in a browser window of its own.
  *
  * The transport is the console's: pane output is a byte stream with an absolute
- * offset, polled; keystrokes go back as base64. What differs is the ending.
+ * offset, polled; keystrokes go back as a hex byte stream. Both hot requests go
+ * through the console's fast CGI when the router serves it (FCC.termPoll,
+ * FCC.termSendHex) and fall back to the LuCI actions when it does not. What
+ * differs from the console tab is the ending.
  *
  * This window owns the session. Closing it ends the session; reloading it does
  * not. That distinction cannot be made in the browser — `pagehide` fires for
@@ -39,6 +42,12 @@
 	var polling = false;
 	var pollAbort = null;
 
+	/* Keystrokes leave in order, one request in flight. The console page and
+	 * this window share the transport (FCC.keyQueue) so both feel the same. */
+	var keys = FCC.keyQueue(function (hex) {
+		return FCC.termSendHex(session, hex);
+	});
+
 	/* ------------------------------------------------------------ status line */
 
 	function note(text) {
@@ -67,10 +76,7 @@
 
 		term.onData(function (data) {
 			if (!polling) { return; }        // the session has ended
-			FCC.api('session_input', {
-				name: session,
-				data: FCC.strToB64(data)
-			}, { method: 'POST' }).catch(function () { /* the session may have ended */ });
+			keys.push(FCC.strToHex(data));
 		});
 
 		window.addEventListener('resize', fitNow);
@@ -134,8 +140,9 @@
 			term.reset();
 			term.write(FCC.captureBytes(r.data));
 			term.write(FCC.captureCursor(r));
-			return FCC.api('session_output', { name: session, offset: 0, wait: 0 },
-				{ method: 'GET' });
+			/* wait=0 is an offset sync, not a paint: the answer's offset is
+			 * where the live stream resumes. */
+			return FCC.termPoll({ name: session, offset: 0, wait: 0 }, { method: 'GET' });
 		}).then(function (r) {
 			offset = r.offset;
 			notePaneSize(r);
@@ -209,7 +216,7 @@
 
 		pollAbort = ('AbortController' in window) ? new AbortController() : null;
 
-		FCC.api('session_output', {
+		FCC.termPoll({
 			name: session,
 			offset: offset,
 			wait: 20                      // long-poll: hold up to 20s for new bytes
@@ -233,6 +240,7 @@
 					// window exists to show one session, and the console page is
 					// where a new one is started.
 					polling = false;
+					keys.reset();
 					note(r.exit_code === 0
 						? (I18N.ended || FCC._('Session has exited.'))
 						: (I18N.crashed || FCC._('Agent exited unexpectedly.')));
@@ -292,6 +300,7 @@
 
 	window.addEventListener('pagehide', function (ev) {
 		stopPolling();
+		keys.reset();
 		// A bfcache store is not a close: the page may come back exactly as it
 		// was, and pageshow below resumes it.
 		if (ev.persisted) { return; }

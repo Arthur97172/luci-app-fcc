@@ -9,13 +9,20 @@
  *   * the session lives in tmux on the router, so it survives a page reload,
  *     a tab close and a browser restart (s.7/s.8)
  *   * pane output is appended to a file by `tmux pipe-pane`
- *   * this page long-polls .../api/session_output with an ABSOLUTE byte offset
- *     and gets back whatever is new, base64-encoded
- *   * keystrokes go back through .../api/session_input as base64
+ *   * this page long-polls with an ABSOLUTE byte offset and gets back whatever
+ *     is new, base64-encoded
+ *   * keystrokes go back as bytes
  *
  * The offset is absolute, so a dropped request, a slow network or a background
  * tab loses nothing: the next poll simply asks for everything after the last
  * byte actually received.
+ *
+ * Both requests are also the page's hottest: one per keystroke, and the poll
+ * that carries its echo. They go through FCC.termPoll()/FCC.termSendHex(),
+ * which use the package's small CGI (/cgi-bin/fcc-term) when the router serves
+ * it — a plain LuCI request cost ~130 ms before tmux saw a key — and fall back
+ * to .../api/session_output and .../api/session_input on a router that does
+ * not. See the fast transport in fcc-common.js.
  */
 (function () {
 	'use strict';
@@ -46,6 +53,13 @@
 	// The text renderConsoleNotice() last wrote into #fcc-term-status, so it
 	// can take back its own message without erasing anyone else's.
 	var consoleNotice = '';
+
+	/* Keystrokes leave in order, coalesced while a request is in flight. The
+	 * session is read at send time; a tab switch drops what was still queued
+	 * for the old one (attach() resets this). */
+	var keys = FCC.keyQueue(function (hex) {
+		return FCC.termSendHex(state.active, hex);
+	});
 
 	/* --------------------------------------------------------------- the target */
 
@@ -253,6 +267,7 @@
 		if (!state.active) { return; }
 		if (state.sessions.some(function (s) { return s.name === state.active; })) { return; }
 		state.active = null;
+		keys.reset();
 		stopPolling();
 		clearBanner();
 		if (state.term) {
@@ -321,10 +336,7 @@
 		// Keystrokes -> router. xterm gives us a string; send its UTF-8 bytes.
 		state.term.onData(function (data) {
 			if (!state.active) { return; }
-			FCC.api('session_input', {
-				name: state.active,
-				data: FCC.strToB64(data)
-			}, { method: 'POST' }).catch(function () { /* session may have ended */ });
+			keys.push(FCC.strToHex(data));
 		});
 
 		window.addEventListener('resize', fitNow);
@@ -377,6 +389,8 @@
 	}
 
 	function attach(name) {
+		/* Whatever the old pane had not sent yet belongs to the old pane. */
+		keys.reset();
 		state.active = name;
 		clearBanner();
 		renderTabs();
@@ -416,7 +430,9 @@
 			state.term.reset();
 			state.term.write(FCC.captureBytes(r.data));
 			state.term.write(FCC.captureCursor(r));
-			return FCC.api('session_output', { name: name, offset: 0, wait: 0 }, { method: 'GET' });
+			/* wait=0 is an offset sync, not a paint: the answer's offset is
+			 * where the live stream resumes. */
+			return FCC.termPoll({ name: name, offset: 0, wait: 0 }, { method: 'GET' });
 		}).then(function (r) {
 			if (!r || state.active !== name) { return; }
 			state.offset = r.offset;
@@ -503,7 +519,7 @@
 		var name = state.active;
 		state.pollAbort = ('AbortController' in window) ? new AbortController() : null;
 
-		FCC.api('session_output', {
+		FCC.termPoll({
 			name: name,
 			offset: state.offset,
 			wait: 20                 // long-poll: hold up to 20s for new bytes
@@ -615,7 +631,7 @@
 	 * died will never print an address, and the fallback shows why.
 	 */
 	function waitForDshUrl(name, deadline, cb) {
-		FCC.api('session_output', { name: name, offset: 0, wait: 0 }, { method: 'GET' })
+		FCC.termPoll({ name: name, offset: 0, wait: 0 }, { method: 'GET' })
 			.then(function (r) {
 				var url = dshUrlIn(r && r.data);
 				if (url) { cb(url); return; }
@@ -933,6 +949,7 @@
 		FCC.api('session_close', { name: name }, { method: 'POST' }).then(function () {
 			if (state.active === name) {
 				state.active = null;
+				keys.reset();
 				stopPolling();
 				if (state.term) { state.term.reset(); state.term.write('\r\n[ session closed ]\r\n'); }
 			}
@@ -957,6 +974,7 @@
 		}
 		FCC.api('session_close_all', {}, { method: 'POST' }).then(function () {
 			state.active = null;
+			keys.reset();
 			stopPolling();
 			clearBanner();
 			if (state.term) {

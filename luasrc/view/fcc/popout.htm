@@ -19,6 +19,28 @@
  Everything it loads is served from the same package as the console: xterm,
  the fit addon, the shared helpers and the stylesheet.
 -%>
+<%#
+ The console's fast transport (/cgi-bin/fcc-term), derived the same way the
+ console page derives it; empty means the LuCI actions are used.
+
+ The session cookie has to be republished under this transport's own path:
+ LuCI scopes its cookie to /cgi-bin/luci, so the browser does not send it to
+ /cgi-bin/fcc-term. Same id, HttpOnly, SameSite=strict — see console.htm for
+ why this block sits at the top of the template, before any output.
+-%>
+<%
+	local _prefix = url("admin/services/fcc/api"):match("^(.-)/luci/")
+	local _term = (_prefix and _prefix ~= "") and (_prefix .. "/fcc-term") or ""
+	if _term ~= "" then
+		local _http = require "luci.http"
+		local _sid = _http.getcookie("sysauth_https") or _http.getcookie("sysauth_http")
+		if _sid and _sid:match("^%x+$") then
+			_http.header("Set-Cookie", "fcc_term=" .. _sid .. "; path=" .. _term ..
+				"; HttpOnly; SameSite=strict" ..
+				((_http.getenv("HTTPS") == "on") and "; secure" or ""))
+		end
+	end
+%>
 <!DOCTYPE html>
 <html lang="<%= (luci.i18n and luci.i18n.context and luci.i18n.context.lang) or "en" %>">
 <head>
@@ -74,6 +96,7 @@
 <div id="fcc-popout-status" class="fcc-popout-status" hidden></div>
 <script>
 	var FCC_API = '<%=url("admin/services/fcc/api")%>/';
+	var FCC_TERM = '<%=_term%>';
 	var FCC_SESSION = '<%=session%>';
 	// The console's shared translator, FCC._(), falls back to English when
 	// there is no LuCI page around it — and this page deliberately has none.

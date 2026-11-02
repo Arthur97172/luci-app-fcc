@@ -446,17 +446,33 @@ itself — and `uhttpd` has no WebSocket support. So the backend exposes the
 session's output as a byte stream with **absolute offsets**, and the browser
 long-polls it: a reconnect resumes exactly where it stopped. Scrollback is capped
 and trimmed from the front, with the base offset advancing by exactly the number
-of bytes dropped. Keystrokes travel as base64, are decoded to bytes, and are
-re-encoded as hex for `tmux send-keys -H` — the value handed to tmux is never
-attacker-controlled text.
+of bytes dropped. Keystrokes travel as bytes and are re-encoded as hex for
+`tmux send-keys -H` — the value handed to tmux is never attacker-controlled text.
 
-The cost is one long-poll round trip of echo latency: the server looks at the
-session's output file every 0.2 seconds, with the poll interval capped at 25
-seconds server-side. BusyBox's `sleep` takes whole seconds, so the fast tick is
-coreutils' `timeout`; a machine without it falls back to the old one-second
-tick — still usable, but a keypress can take a second to show. For an
-interactive coding agent that is not noticeable; for a full-screen TUI redraw it
-can be.
+The console's **hot path** goes through a dedicated CGI (`/cgi-bin/fcc-term`):
+one request per keystroke, and one for the long poll that carries the echo.
+Through the LuCI dispatcher a single request cost about 130 ms before the shell
+backend had even started (uhttpd, ucode, the 1300-line controller, the backend
+process), and the output poll added its own wait on top: measured key-to-echo was
+405–418 ms on a real router. The CGI authenticates with the same LuCI session
+cookie (checked against ubus for the session and its access group; a typed
+keystroke is a POST and must also state the host it came from in `Origin`, or
+`Referer` when the browser sends no `Origin`). LuCI scopes its own cookie to
+`/cgi-bin/luci`, so both console pages publish the same id once more as
+`fcc_term`, scoped to the CGI's exact path and still `HttpOnly; SameSite=strict`
+— that copy is what the browser offers the endpoint. It talks to `tmux` and the
+session's output file directly, and waits in 30 ms steps. Measured in a browser
+on a real router, key-to-echo is 78–116 ms against 343–366 ms through LuCI. The
+LuCI `session_output` / `session_input` actions remain exactly as they were: if
+the CGI is absent or failing, the page falls back to them for the rest of its
+life, which is the r3 behaviour, where the server looks at the output file every
+0.2 seconds.
+
+That fallback is what the old tick note was about: BusyBox's `sleep` takes whole
+seconds, so the fast tick borrows coreutils' `timeout`, and a machine without it
+falls back to one second. The console no longer depends on it — with the CGI
+present the echo is paced by the 30 ms step, and the long poll is still capped at
+25 seconds server-side.
 
 **Open in browser** on the toolbar puts the current session in a window of its
 own. **Closing that window ends the session**; reloading it does not, because the
@@ -588,6 +604,7 @@ sh scripts/gen-po.sh --check  # fail if the template is stale
 | `packaging` | the install manifest against the tree, dependencies, the i18n wiring |
 | `i18n` | template ↔ catalogue parity, po2lmo's drop rule, LuCI language codes |
 | `security` | no committed credentials, no WAN bind, POST-only mutations, ACL scope, no WebSocket server |
+| `term` | the console's fast transport: cookie/ACL/CSRF/Origin, session grammar, input encoding, trim inode |
 
 `scripts/smoke.sh` is deliberately not part of `test.sh`: it needs Docker and a
 release root filesystem, so CI runs it as its own job. It unpacks the official
@@ -623,8 +640,9 @@ demand over the network, so there is no prebuilt runtime tarball in the release.
 ## Known limitations
 
 * **No WebSocket transport for the console.** A consequence of the
-  no-extra-runtime and no-persistent-daemon constraints; a full-screen TUI redraw
-  is visibly slower than it would be over a socket.
+  no-extra-runtime and no-persistent-daemon constraints. The hot path now goes
+  through a dedicated CGI, so keypress echo is tens of milliseconds; a
+  full-screen TUI redraw is still slower than it would be over a socket.
 * **`hermes` has no version probe.** `hermes --version` does not terminate, so
   the UI reports the version as unknown rather than hanging the status refresh.
 * **Agent versions are probed, not guaranteed.** A version is read from the

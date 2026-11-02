@@ -170,7 +170,7 @@ if [ -z "$lua_bin" ]; then
 	note "no Lua interpreter available — syntax not checked"
 else
 	luabad=""
-	for f in luasrc/controller/fcc.lua luasrc/fcc/*.lua; do
+	for f in luasrc/controller/fcc.lua luasrc/fcc/*.lua root/www/cgi-bin/fcc-term; do
 		[ -f "$f" ] || continue
 		case "$lua_bin" in
 			luac*) luac -p "$f" 2>/dev/null || luabad="$luabad $f" ;;
@@ -216,7 +216,7 @@ done
 
 modebad=""
 for f in root/etc/init.d/fcc root/usr/bin/fcc-env root/usr/libexec/fcc/*.sh \
-         root/etc/uci-defaults/99-fcc; do
+         root/etc/uci-defaults/99-fcc root/www/cgi-bin/fcc-term; do
 	[ -e "$f" ] || continue
 	[ -x "$f" ] || modebad="$modebad $f"
 done
