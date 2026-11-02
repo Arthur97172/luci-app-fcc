@@ -340,6 +340,11 @@ LuCI，会话就绑 192.168.10.157；用 `http://192.168.12.1` 打开，就绑 1
 `--public-url http://<地址>:<端口>/ --trusted-host <地址>:<端口>`。Windows 目标不改启动参数，
 仍是上游默认行为。
 
+那台机器的 dsh 若是 0.2.1 之前的版本，还不认识这两个选项（直接用会报
+`error: unknown option '--public-url'`，窗格随即退出）。面板会先用 `dsh web --help` 问一声；
+答案里没有这两个选项，就退回 `--host … --no-open` 的普通形式并不开转发——界面照常启动，
+只是下面说的跨站 cookie 问题需要手动粘贴一次地址。
+
 绕这一圈的缘由：URL 里的 token 会换成 `SameSite=Strict` 的 cookie，从面板发起的跳转若落到
 另一个站点，浏览器不会带上这个 cookie，窗口就停在 dsh 的
 "dsh web authentication required"。把界面挪到浏览器自己的地址上，两边同站，跳转才带得上。

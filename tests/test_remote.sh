@@ -96,6 +96,24 @@ printf 'ARG %s\n' "$@" >> "$SSH_LOG"
 # state probe's fixture can claim it.
 for last in "$@"; do :; done
 case "${last:-}" in
+	# The DeepSeek Harness option probe. Before a tunnel is opened the far
+	# side's own dsh is asked what `web` accepts, because an older release
+	# answers the pane's first unknown word with "error: unknown option
+	# '--public-url'" and exits. The default answer is a current dsh, which
+	# knows both options; SSH_DSH_HELP_OUT stands in for an older one, and an
+	# empty fixture is a dsh that has neither.
+	*"web --help"*)
+		if [ -n "${SSH_DSH_HELP_OUT+x}" ]; then
+			printf '%s\n' "$SSH_DSH_HELP_OUT"
+		else
+			printf '%s\n' \
+				'Usage: dsh web [options]' \
+				'  --host <address>' \
+				'  --no-open' \
+				'  --public-url <url>' \
+				'  --trusted-host <authority>'
+		fi
+		exit 0 ;;
 	# The sshd drop-in a Linux start, stop or restart carries is its own
 	# connection, and it is the only command that names the configuration file.
 	# Without a fixture it answers nothing, which reads as "no word came back".
@@ -2375,6 +2393,71 @@ agent dsh installed' \
 		run_remote session-command dsh)" || true
 	assert_not_contains "$out" '--host' "Windows keeps the bare launcher"
 	assert_not_contains "$out" ' -L ' "and opens no forward"
+	drop_sandbox
+}
+
+test_an_old_harness_keeps_the_plain_form_instead_of_a_dead_pane() {
+	# Reported: a LAN session died on its first word with
+	#   error: unknown option '--public-url'
+	# because the far side's dsh predates the option the tunnel form passes.
+	# The local form never passes it, which is why the same harness worked from
+	# a local target. The far side is asked what it accepts, and a "no" keeps
+	# the command the panel used before the tunnel: the harness starts, prints
+	# its LAN address and serves it. A session that works beats a tunnel that
+	# kills it.
+	fresh
+	ready_lan
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		SSH_DSH_HELP_OUT='Usage: dsh web [options]
+  --host <address>
+  --no-open' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20 --no-open' \
+		"an old harness is started with the words it understands"
+	assert_not_contains "$out" '--public-url' "and is not told about the tunnel"
+	assert_not_contains "$out" '--trusted-host' "not even the half it can use"
+	assert_not_contains "$out" ' -L ' \
+		"no forward is opened for a tunnel it would refuse"
+
+	# The question is asked of the CLI itself, not of the launcher, through the
+	# same PATH the pane exports — the option parser that would reject the flag
+	# is dsh's.
+	assert_contains "$(ssh_command 2)" 'dsh web --help' \
+		"the far side's dsh is asked what web accepts"
+	assert_contains "$(ssh_command 2)" 'export PATH' \
+		"through the same PATH the pane will use"
+
+	# One option without the other is not enough: the harness would advertise
+	# an address whose Host header it still refuses.
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		SSH_DSH_HELP_OUT='Usage: dsh web [options]
+  --public-url <url>' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20 --no-open' \
+		"a harness that knows only half the pair keeps the plain form"
+	assert_not_contains "$out" '--public-url' "and is told neither option"
+	assert_not_contains "$out" ' -L ' "and no forward is opened"
+
+	# An OpenWrt machine is asked through fcc-env, the way its pane starts the
+	# harness.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	out="$(FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		SSH_DSH_HELP_OUT='Usage: dsh web [options]' \
+		run_remote session-command dsh)" || true
+	assert_contains "$(ssh_command 1)" '/usr/bin/fcc-env dsh web --help' \
+		"an OpenWrt machine is asked through fcc-env"
+	assert_contains "$out" '/usr/bin/fcc-env fcc-dsh web --host 192.168.5.20 --no-open' \
+		"and runs the plain form when the answer has no options"
+	assert_not_contains "$out" ' -L ' "with no forward"
 	drop_sandbox
 }
 

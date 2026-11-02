@@ -2059,6 +2059,11 @@ fcc_remote_pane_args() {
 	# LAN-address form is kept, which is what a user on the far side's own
 	# network would need.
 	#
+	# The caller passes a bind/port only after fcc_remote_dsh_flags_supported()
+	# has read them out of the far side's own help: a dsh from before those
+	# options existed exits on the first unknown word, and the pane is left dead
+	# with nothing but `error: unknown option '--public-url'` on screen.
+	#
 	# Windows keeps the bare launcher: dsh's Windows story is unproven here, and
 	# the PowerShell script takes no arguments.
 	case "${1:-}" in
@@ -2072,6 +2077,49 @@ fcc_remote_pane_args() {
 		fi
 		;;
 	esac
+}
+
+fcc_remote_dsh_help_cmd() {
+	# The remote command that prints the harness CLI's own help, found the way
+	# the pane finds it: a bare Linux or macOS machine gets the same PATH the
+	# pane exports, and an OpenWrt machine goes through fcc-env. The client name
+	# is the registry's probe field (agents.conf), not a word typed here.
+	#
+	# `dsh web --help` and not `fcc-dsh web --help`: the option parser that
+	# would reject the flags is dsh's, and the launcher is free to do setup
+	# before it hands the words over. Every dsh release prints its options and
+	# exits; nothing is started.
+	case "$(fcc_remote_platform)" in
+		openwrt)
+			printf '%s' "/usr/bin/fcc-env $(fcc_agent_probe dsh) web --help" ;;
+		*)
+			printf 'PATH="%s:$PATH"; export PATH; %s web --help' \
+				"$FCC_REMOTE_BARE_PATH" "$(fcc_agent_probe dsh)" ;;
+	esac
+}
+
+fcc_remote_dsh_flags_supported() {
+	# Success when the far side's dsh knows both --public-url and --trusted-host,
+	# failure otherwise.
+	#
+	# Both are required. The tunnel makes the browser open the address it reached
+	# this router on, and the two options are what let the harness serve that
+	# address: --public-url is the URL it prints and --trusted-host the authority
+	# it accepts. A dsh that knows only one starts and then refuses the browser,
+	# which is worse than the plain form.
+	#
+	# An unreadable answer — an old dsh that rejects `--help`, an unreachable
+	# machine — is the same as "no": the plain form still opens a working
+	# session, and the alternative is a pane that dies on its first word.
+	_dh_help="$(fcc_remote_ssh "$(fcc_remote_dsh_help_cmd)" 2>/dev/null)" || true
+	case "$_dh_help" in
+		*--public-url*) : ;;
+		*) return 1 ;;
+	esac
+	case "$_dh_help" in
+		*--trusted-host*) return 0 ;;
+	esac
+	return 1
 }
 
 fcc_remote_session_command() {
@@ -2092,24 +2140,6 @@ fcc_remote_session_command() {
 		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
 
 	_sc_launcher="$(fcc_agent_command "$_sc_agent")"
-	# The local end of the harness tunnel, when there is one to open. The address
-	# is the one this browser reached the router on — session.sh resolved it with
-	# fcc_pane_bind_host() from FCC_PANE_HOST, which the controller filled from
-	# SERVER_ADDR or from location.hostname — and the port is chosen here, where
-	# netstat can be asked. Empty for every other agent: they are terminals, and
-	# a terminal needs no listening socket on this side.
-	#
-	# Windows is skipped for the same reason fcc_remote_pane_args skips it.
-	_sc_bind=""
-	_sc_port=""
-	if [ "$_sc_agent" = dsh ] && [ "$(fcc_remote_platform)" != windows ]; then
-		_sc_bind="$(fcc_pane_bind_host "${FCC_PANE_HOST:-}" 2>/dev/null || true)"
-		[ -n "$_sc_bind" ] && _sc_port="$(fcc_remote_dsh_port 2>/dev/null || true)"
-		[ -n "$_sc_port" ] || _sc_bind=""
-	fi
-	# The few words only a pane needs; see fcc_remote_pane_args. Empty for every
-	# agent but DeepSeek Harness.
-	_sc_args="$(fcc_remote_pane_args "$_sc_agent" "$_sc_bind" "$_sc_port")"
 	# What the far side runs. OpenWrt carries this package, so its runtime
 	# environment is applied there by fcc-env. A Linux, macOS or Windows machine
 	# carries only the upstream install: the launcher is resolved from the same
@@ -2119,17 +2149,8 @@ fcc_remote_session_command() {
 	# %USERPROFILE% there.
 	_sc_probe=""
 	case "$(fcc_remote_platform)" in
-		linux|macos)
-			_sc_probe="$(fcc_remote_bare_probe_cmd)"
-			_sc_remote="$(fcc_shquote "export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher$_sc_args")" ;;
-		windows)
-			_sc_probe="$(fcc_remote_win_probe_cmd)"
-			# cmd.exe parses the one double-quoted argument and hands the script
-			# to PowerShell untouched; fcc_shquote keeps the whole thing one word
-			# on this side, so ssh sends it as one command.
-			_sc_remote="$(fcc_shquote "$(fcc_remote_win_cmd "$(fcc_remote_win_session_script "$_sc_launcher")")")" ;;
-		*)
-			_sc_remote="/usr/bin/fcc-env $_sc_launcher$_sc_args" ;;
+		linux|macos) _sc_probe="$(fcc_remote_bare_probe_cmd)" ;;
+		windows) _sc_probe="$(fcc_remote_win_probe_cmd)" ;;
 	esac
 	if [ -n "$_sc_probe" ]; then
 		# Asked before the pane starts: a session whose launcher is gone would
@@ -2152,6 +2173,46 @@ fcc_remote_session_command() {
 				return 1 ;;
 		esac
 	fi
+
+	# The local end of the harness tunnel, when there is one to open. The address
+	# is the one this browser reached the router on — session.sh resolved it with
+	# fcc_pane_bind_host() from FCC_PANE_HOST, which the controller filled from
+	# SERVER_ADDR or from location.hostname — and the port is chosen here, where
+	# netstat can be asked. Empty for every other agent: they are terminals, and
+	# a terminal needs no listening socket on this side.
+	#
+	# Windows is skipped for the same reason fcc_remote_pane_args skips it.
+	_sc_bind=""
+	_sc_port=""
+	if [ "$_sc_agent" = dsh ] && [ "$(fcc_remote_platform)" != windows ]; then
+		_sc_bind="$(fcc_pane_bind_host "${FCC_PANE_HOST:-}" 2>/dev/null || true)"
+		[ -n "$_sc_bind" ] && _sc_port="$(fcc_remote_dsh_port 2>/dev/null || true)"
+		[ -n "$_sc_port" ] || _sc_bind=""
+		# A tunnel is useful only when the harness can be told about both ends of
+		# it, and an older dsh exits on the first word it does not know. Asked
+		# after the agent probe, so a machine that cannot be reached is paid for
+		# once; the plain LAN form below is what is left when it says no.
+		if [ -n "$_sc_bind" ] && ! fcc_remote_dsh_flags_supported; then
+			_sc_bind=""
+			_sc_port=""
+		fi
+	fi
+	# The few words only a pane needs; see fcc_remote_pane_args. Empty for every
+	# agent but DeepSeek Harness.
+	_sc_args="$(fcc_remote_pane_args "$_sc_agent" "$_sc_bind" "$_sc_port")"
+
+	# Assembled last: the harness words depend on the far side's answer above.
+	case "$(fcc_remote_platform)" in
+		linux|macos)
+			_sc_remote="$(fcc_shquote "export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher$_sc_args")" ;;
+		windows)
+			# cmd.exe parses the one double-quoted argument and hands the script
+			# to PowerShell untouched; fcc_shquote keeps the whole thing one word
+			# on this side, so ssh sends it as one command.
+			_sc_remote="$(fcc_shquote "$(fcc_remote_win_cmd "$(fcc_remote_win_session_script "$_sc_launcher")")")" ;;
+		*)
+			_sc_remote="/usr/bin/fcc-env $_sc_launcher$_sc_args" ;;
+	esac
 
 	# -tt: the pane already has a pty, and forcing the allocation makes ssh hand
 	#     one to the far side too — an agent draws a full-screen interface and

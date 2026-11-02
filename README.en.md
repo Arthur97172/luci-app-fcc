@@ -485,6 +485,12 @@ dsh is told `--public-url http://<address>:<port>/ --trusted-host
 <address>:<port>`. Windows targets keep the bare launcher and upstream's
 default.
 
+A dsh older than 0.2.1 does not know those two options (given them it answers
+`error: unknown option '--public-url'` and the pane exits). The panel asks `dsh
+web --help` first; when the answer lacks them it keeps the plain `--host …
+--no-open` form and opens no forward — the UI still starts, and the cross-site
+cookie problem below has to be worked around by pasting the address.
+
 The reason for the detour: the token in the URL is exchanged for a
 `SameSite=Strict` cookie, and a navigation started from the panel to a different
 site does not carry it, so the window stops at dsh's "dsh web authentication
