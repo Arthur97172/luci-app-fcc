@@ -2037,32 +2037,43 @@ fcc_remote_dsh_port() {
 }
 
 fcc_remote_pane_args() {
-	# fcc_remote_pane_args <agent> [bind] [port] -> extra words for the
-	# launcher, or nothing.
+	# fcc_remote_pane_args <agent> [bind] [port] [public] [trusted] -> extra
+	# words for the launcher, or nothing.
 	#
 	# DeepSeek Harness is the one agent without a terminal interface: `fcc-dsh`
 	# boots `dsh web`, which serves a browser UI on the loopback of whatever
 	# machine the pane runs on. A pane that inherits that default can only print
 	# a URL no browser outside that machine can open — the user looking at this
-	# panel included. Handing it the LAN address makes the printed URL work from
-	# that browser; --no-open keeps the pane from seizing the far side's own
-	# desktop browser as well. The address is a validated private IPv4 literal
-	# (fcc_remote_valid_host), so it is one safe word.
+	# panel included. --no-open keeps the pane from seizing the far side's own
+	# desktop browser as well.
 	#
-	# The bind/port pair is different and belongs to this router: it is the local
-	# end of the ssh -L that carries this browser's traffic to the harness (see
-	# fcc_remote_session_command). With a tunnel in place, the URL the browser
-	# opens is that local address, so dsh has to be told to advertise it
-	# (--public-url) and to accept its Host header (--trusted-host) — dsh trusts
-	# loopback, its own bind literal and nothing else, and the tunnel's address
-	# is neither. Without one — a router with no usable address — the plain
-	# LAN-address form is kept, which is what a user on the far side's own
-	# network would need.
+	# The bind/port pair belongs to this router: it is the local end of the
+	# ssh -L that carries this browser's traffic to the harness (see
+	# fcc_remote_session_command). With a tunnel in place the harness listens on
+	# the far side's loopback, where an ssh -L can reach it, and the browser
+	# opens the tunnel's local address. Loopback is the binding every dsh
+	# accepts: releases from before --public-url allow only 127.0.0.1 and
+	# 0.0.0.0, and their CLI refuses the wildcard, so a LAN-address bind is a
+	# dead pane there — and with the tunnel a LAN bind would add nothing. dsh
+	# trusts loopback, its own bind literal and nothing else, so it has to
+	# accept the tunnel's address as a Host header (--trusted-host) for its HTTP
+	# client to use it.
 	#
-	# The caller passes a bind/port only after fcc_remote_dsh_flags_supported()
-	# has read them out of the far side's own help: a dsh from before those
-	# options existed exits on the first unknown word, and the pane is left dead
-	# with nothing but `error: unknown option '--public-url'` on screen.
+	# What it prints is the second half. A dsh new enough for --public-url is
+	# told the tunnel's address and prints exactly that. An older one has its own
+	# loopback URL, which no browser outside the far machine can open; the pane
+	# prints an FCC_DSH_TUNNEL line first and the console swaps the address it
+	# reads for that one (fcc-terminal.js). The bind address itself is never
+	# handed to a tunnelled dsh: releases before --public-url accept only
+	# 127.0.0.1 and 0.0.0.0 in that option, and refuse the wildcard.
+	#
+	# Without a tunnel — a router with no usable address — the plain LAN-address
+	# form is kept, which is what a user on the far side's own network needs.
+	#
+	# The caller passes public/trusted only after reading the far side's own
+	# help: a dsh from before those options existed exits on the first unknown
+	# word, and the pane is left dead with nothing but `error: unknown option
+	# '--public-url'` on screen.
 	#
 	# Windows keeps the bare launcher: dsh's Windows story is unproven here, and
 	# the PowerShell script takes no arguments.
@@ -2070,8 +2081,14 @@ fcc_remote_pane_args() {
 	dsh)
 		[ "$(fcc_remote_platform)" = windows ] && return 0
 		if [ -n "${2:-}" ] && [ -n "${3:-}" ]; then
-			printf ' web --host %s --no-open --public-url http://%s:%s/ --trusted-host %s:%s' \
-				"$(fcc_remote_host)" "$2" "$3" "$2" "$3"
+			if [ -n "${4:-}" ]; then
+				printf ' web --host 127.0.0.1 --no-open --public-url http://%s:%s/ --trusted-host %s:%s' \
+					"$2" "$3" "$2" "$3"
+			elif [ -n "${5:-}" ]; then
+				printf ' web --host 127.0.0.1 --no-open --trusted-host %s:%s' "$2" "$3"
+			else
+				printf ' web --host 127.0.0.1 --no-open'
+			fi
 		else
 			printf ' web --host %s --no-open' "$(fcc_remote_host)"
 		fi
@@ -2098,26 +2115,26 @@ fcc_remote_dsh_help_cmd() {
 	esac
 }
 
-fcc_remote_dsh_flags_supported() {
-	# Success when the far side's dsh knows both --public-url and --trusted-host,
-	# failure otherwise.
+fcc_remote_dsh_help() {
+	# The far side's `dsh web --help`, or nothing when it cannot be read.
 	#
-	# Both are required. The tunnel makes the browser open the address it reached
-	# this router on, and the two options are what let the harness serve that
-	# address: --public-url is the URL it prints and --trusted-host the authority
-	# it accepts. A dsh that knows only one starts and then refuses the browser,
-	# which is worse than the plain form.
+	# An old dsh that rejects `--help`, or an unreachable machine, answers with
+	# nothing, and that is the same as "knows none of these options": the caller
+	# keeps the form such a harness can run.
+	fcc_remote_ssh "$(fcc_remote_dsh_help_cmd)" 2>/dev/null || true
+}
+
+fcc_remote_dsh_has() {
+	# fcc_remote_dsh_has <option> <help-text> -> success when listed.
 	#
-	# An unreadable answer — an old dsh that rejects `--help`, an unreachable
-	# machine — is the same as "no": the plain form still opens a working
-	# session, and the alternative is a pane that dies on its first word.
-	_dh_help="$(fcc_remote_ssh "$(fcc_remote_dsh_help_cmd)" 2>/dev/null)" || true
-	case "$_dh_help" in
-		*--public-url*) : ;;
-		*) return 1 ;;
-	esac
-	case "$_dh_help" in
-		*--trusted-host*) return 0 ;;
+	# Matching the help rather than a version number: the options arrived at
+	# different times, distributions lag, and the CLI is the thing that would
+	# reject an unknown word. Both --public-url and --trusted-host are needed
+	# only together; a harness that knows one and not the other is handled
+	# without it (see fcc_remote_pane_args).
+	[ -n "${1:-}" ] || return 1
+	case "${2:-}" in
+		*"$1"*) return 0 ;;
 	esac
 	return 1
 }
@@ -2181,37 +2198,64 @@ fcc_remote_session_command() {
 	# netstat can be asked. Empty for every other agent: they are terminals, and
 	# a terminal needs no listening socket on this side.
 	#
+	# The far side's help decides which form the harness is started with. It is
+	# asked only when there is a tunnel to describe, and after the agent probe
+	# above, so an unreachable machine is paid for once.
+	#
 	# Windows is skipped for the same reason fcc_remote_pane_args skips it.
 	_sc_bind=""
 	_sc_port=""
+	_sc_dsh_public=""
+	_sc_dsh_trusted=""
 	if [ "$_sc_agent" = dsh ] && [ "$(fcc_remote_platform)" != windows ]; then
 		_sc_bind="$(fcc_pane_bind_host "${FCC_PANE_HOST:-}" 2>/dev/null || true)"
 		[ -n "$_sc_bind" ] && _sc_port="$(fcc_remote_dsh_port 2>/dev/null || true)"
 		[ -n "$_sc_port" ] || _sc_bind=""
-		# A tunnel is useful only when the harness can be told about both ends of
-		# it, and an older dsh exits on the first word it does not know. Asked
-		# after the agent probe, so a machine that cannot be reached is paid for
-		# once; the plain LAN form below is what is left when it says no.
-		if [ -n "$_sc_bind" ] && ! fcc_remote_dsh_flags_supported; then
-			_sc_bind=""
-			_sc_port=""
+		if [ -n "$_sc_bind" ]; then
+			_sc_dsh_help="$(fcc_remote_dsh_help)"
+			fcc_remote_dsh_has --trusted-host "$_sc_dsh_help" && _sc_dsh_trusted=1
+			# Both options or neither: the tunnel's address is what the harness
+			# prints and what its HTTP client trusts, and telling it only half of
+			# that leaves a pane that starts and refuses the browser anyway.
+			if [ -n "$_sc_dsh_trusted" ] \
+				&& fcc_remote_dsh_has --public-url "$_sc_dsh_help"; then
+				_sc_dsh_public=1
+			fi
 		fi
 	fi
 	# The few words only a pane needs; see fcc_remote_pane_args. Empty for every
 	# agent but DeepSeek Harness.
-	_sc_args="$(fcc_remote_pane_args "$_sc_agent" "$_sc_bind" "$_sc_port")"
+	_sc_args="$(fcc_remote_pane_args "$_sc_agent" "$_sc_bind" "$_sc_port" \
+		"$_sc_dsh_public" "$_sc_dsh_trusted")"
+
+	# A harness with no --public-url prints its own loopback address, which names
+	# the far machine to the browser that opens it. The line below is printed
+	# first, before the harness starts, and the console swaps the address dsh
+	# prints for it (fcc-terminal.js); the tunnel is the same either way. dsh
+	# itself is not told the tunnel's address — the option does not exist there.
+	_sc_pre=""
+	if [ -n "$_sc_bind" ] && [ -z "$_sc_dsh_public" ]; then
+		_sc_pre="printf '%s\n' 'FCC_DSH_TUNNEL=http://$_sc_bind:$_sc_port/'; "
+	fi
 
 	# Assembled last: the harness words depend on the far side's answer above.
 	case "$(fcc_remote_platform)" in
 		linux|macos)
-			_sc_remote="$(fcc_shquote "export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher$_sc_args")" ;;
+			_sc_remote="$(fcc_shquote "${_sc_pre}export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher$_sc_args")" ;;
 		windows)
 			# cmd.exe parses the one double-quoted argument and hands the script
 			# to PowerShell untouched; fcc_shquote keeps the whole thing one word
 			# on this side, so ssh sends it as one command.
 			_sc_remote="$(fcc_shquote "$(fcc_remote_win_cmd "$(fcc_remote_win_session_script "$_sc_launcher")")")" ;;
 		*)
-			_sc_remote="/usr/bin/fcc-env $_sc_launcher$_sc_args" ;;
+			# The marker line brings shell syntax with it (quotes and `;`), so
+			# the command is quoted as a whole. Without it the words stay plain:
+			# they are the ones fcc-env and the launcher expect.
+			if [ -n "$_sc_pre" ]; then
+				_sc_remote="$(fcc_shquote "${_sc_pre}/usr/bin/fcc-env $_sc_launcher$_sc_args")"
+			else
+				_sc_remote="/usr/bin/fcc-env $_sc_launcher$_sc_args"
+			fi ;;
 	esac
 
 	# -tt: the pane already has a pty, and forcing the allocation makes ssh hand
@@ -2232,11 +2276,11 @@ fcc_remote_session_command() {
 	#     into the address bar worked (a typed navigation carries no initiator).
 	#     Forwarding a port on the browser's own address makes the two one site,
 	#     so the 303 that follows the token URL keeps its cookie. The harness
-	#     itself stays where it was — bound to the far machine's LAN address —
-	#     and no firewall or sshd on that machine is touched.
+	#     listens on the far machine's loopback — where every dsh accepts a bind
+	#     — and no firewall or sshd on that machine is touched.
 	_sc_opts="$FCC_REMOTE_SSH_OPTS -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR"
 	if [ -n "$_sc_bind" ]; then
-		_sc_opts="$_sc_opts -L $_sc_bind:$_sc_port:$(fcc_remote_host):3080"
+		_sc_opts="$_sc_opts -L $_sc_bind:$_sc_port:127.0.0.1:3080"
 	fi
 	printf '%s %s -tt -i %s -p %s -l %s %s %s\n' \
 		"$(fcc_shquote "$_sc_ssh")" "$_sc_opts" \

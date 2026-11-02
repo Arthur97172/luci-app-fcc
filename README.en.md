@@ -477,19 +477,22 @@ LuCI at `http://192.168.10.157` binds 192.168.10.157, opening it at
 `http://192.168.12.1` binds 192.168.12.1, and when neither is available the
 upstream default stands.
 
-Local mode then prints `http://<that address>:3080/?token=…`. LAN mode prints a
-forwarded port on this machine instead (the first free one in 13080–13099):
-ssh `-L <address>:<port>:<that machine>:3080` brings the browser to that
-machine's 3080 — the harness still binds only that machine's LAN address — and
-dsh is told `--public-url http://<address>:<port>/ --trusted-host
-<address>:<port>`. Windows targets keep the bare launcher and upstream's
-default.
-
-A dsh older than 0.2.1 does not know those two options (given them it answers
-`error: unknown option '--public-url'` and the pane exits). The panel asks `dsh
-web --help` first; when the answer lacks them it keeps the plain `--host …
---no-open` form and opens no forward — the UI still starts, and the cross-site
-cookie problem below has to be worked around by pasting the address.
+Local mode then prints `http://<that address>:3080/?token=…`. In LAN mode the
+harness listens only on that machine's loopback — the bind every dsh accepts —
+and the browser opens a forwarded port on this machine instead (the first free
+one in 13080–13099): ssh `-L <address>:<port>:127.0.0.1:3080` brings the browser
+to that machine's 3080. A dsh at 0.2.1-alpha.1 or later knows
+`--public-url`/`--trusted-host` and is told `--public-url
+http://<address>:<port>/ --trusted-host <address>:<port>`, so it prints that
+address itself. An older one knows neither (given them it answers `error:
+unknown option '--public-url'` and the pane exits), and its `--host` accepts
+only 127.0.0.1 / 0.0.0.0 while the CLI refuses the wildcard, so a LAN address
+cannot be bound either. The panel asks `dsh web --help` first: without
+`--public-url` it keeps the same forward, adds only the `--trusted-host` the far
+side does know, and prints a `FCC_DSH_TUNNEL=http://<address>:<port>/` line
+before starting the harness — the console swaps the loopback address dsh prints
+for it, so Open in Browser still reaches the UI. Windows targets keep the bare
+launcher and upstream's default.
 
 The reason for the detour: the token in the URL is exchanged for a
 `SameSite=Strict` cookie, and a navigation started from the panel to a different

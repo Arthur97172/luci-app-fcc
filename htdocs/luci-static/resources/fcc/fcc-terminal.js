@@ -580,12 +580,30 @@
 	 */
 	var DSH_URL = /https?:\/\/[^\s"'<>\x1b]+[?&]token=[A-Za-z0-9_-]+/g;
 
+	/**
+	 * The tunnel address the pane printed before starting the harness.
+	 *
+	 * A dsh with --public-url advertises the browser's address itself. One from
+	 * before that option exists prints its own loopback address, which names
+	 * the far machine to a browser that is not on it. remote.sh prints this line
+	 * first in that case, and the URL below is rewritten to use it — the token
+	 * is the same either way, and the tunnel carries it to the same harness.
+	 */
+	var DSH_TUNNEL = /FCC_DSH_TUNNEL=(https?:\/\/[^\s"'<>\x1b]+)/;
+
 	function dshUrlIn(data) {
 		var text;
 		try { text = new TextDecoder('utf-8').decode(FCC.b64ToBytes(data)); }
 		catch (e) { return ''; }
 		var found = text.match(DSH_URL);
-		return found ? found[found.length - 1] : '';
+		if (!found) { return ''; }
+		var url = found[found.length - 1];
+		var tunnel = text.match(DSH_TUNNEL);
+		if (tunnel) {
+			var origin = tunnel[1].replace(/\/+$/, '');
+			url = url.replace(/^https?:\/\/[^/]+/, origin);
+		}
+		return url;
 	}
 
 	/**

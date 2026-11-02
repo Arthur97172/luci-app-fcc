@@ -2276,9 +2276,12 @@ test_a_harness_session_is_tunnelled_to_the_browser_address() {
 	# always are. A forward on the address the browser reached *this* router on
 	# makes the two one site, so the redirect keeps its cookie.
 	#
-	# What the harness is told is unchanged where it matters: it still listens
-	# on the far machine's LAN address. Only what it advertises, and which
-	# authority it accepts, follow the tunnel.
+	# What the harness is told follows the tunnel: it listens on the far
+	# machine's loopback, where an ssh -L can reach it from the far side, and
+	# advertises and accepts the address the browser reached this router on.
+	# The loopback bind is also what every dsh accepts: releases from before
+	# --public-url allow only 127.0.0.1 and 0.0.0.0, and the CLI refuses the
+	# wildcard.
 	fresh
 	ready_lan
 	out="$(SSH_PROBE_OUT='server running
@@ -2286,14 +2289,16 @@ agent dsh installed' \
 		FCC_PANE_HOST=192.168.10.157 \
 		FCC_TEST_IPV4S='127.0.0.1 192.168.10.157 192.168.12.1' \
 		run_remote session-command dsh)" || true
-	assert_contains "$out" '-L 192.168.10.157:13080:192.168.5.20:3080' \
+	assert_contains "$out" '-L 192.168.10.157:13080:127.0.0.1:3080' \
 		"the pane forwards a port on the browser's address to the harness"
-	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20' \
-		"the harness still listens on the far machine's own address"
+	assert_contains "$out" 'fcc-dsh web --host 127.0.0.1 --no-open' \
+		"the harness listens on the far machine's loopback"
 	assert_contains "$out" '--public-url http://192.168.10.157:13080/' \
 		"and advertises the address the browser can open"
 	assert_contains "$out" '--trusted-host 192.168.10.157:13080' \
 		"which is neither loopback nor its bind address, so it must be trusted"
+	assert_not_contains "$out" 'FCC_DSH_TUNNEL=' \
+		"a harness that prints the tunnel address itself needs no marker"
 	assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" \
 		"the whole command is still one line"
 
@@ -2304,7 +2309,7 @@ agent dsh installed' \
 		FCC_TEST_IPV4S='192.168.10.157' \
 		FCC_TEST_BUSY_PORTS='13080 13081' \
 		run_remote session-command dsh)" || true
-	assert_contains "$out" '-L 192.168.10.157:13082:192.168.5.20:3080' \
+	assert_contains "$out" '-L 192.168.10.157:13082:127.0.0.1:3080' \
 		"a taken port is skipped"
 
 	# A candidate this router does not own never reaches the launcher: it would
@@ -2315,7 +2320,7 @@ agent dsh installed' \
 		FCC_TEST_IPV4S='127.0.0.1 192.168.5.10' \
 		FCC_TEST_LAN_IPV4=192.168.12.1 \
 		run_remote session-command dsh)" || true
-	assert_contains "$out" '-L 192.168.12.1:13080:192.168.5.20:3080' \
+	assert_contains "$out" '-L 192.168.12.1:13080:127.0.0.1:3080' \
 		"an address this router does not own falls back to the lan address"
 	assert_not_contains "$out" '10.9.9.9' \
 		"and is not passed on anywhere"
@@ -2328,7 +2333,7 @@ agent dsh installed' \
 		FCC_TEST_IPV4S='127.0.0.1 192.168.5.10' \
 		FCC_TEST_LAN_IPV4=192.168.12.1 \
 		run_remote session-command dsh)" || true
-	assert_contains "$out" '-L 192.168.12.1:13080:192.168.5.20:3080' \
+	assert_contains "$out" '-L 192.168.12.1:13080:127.0.0.1:3080' \
 		"a loopback hint falls back to the lan address"
 
 	# No address at all — a router whose lan interface is down. The pane is
@@ -2376,9 +2381,9 @@ agent claude installed' \
 		FCC_TEST_IPV4S='192.168.10.157' \
 		run_remote session-command dsh)" || true
 	assert_contains "$out" \
-		'/usr/bin/fcc-env fcc-dsh web --host 192.168.5.20 --no-open --public-url http://192.168.10.157:13080/ --trusted-host 192.168.10.157:13080' \
+		'/usr/bin/fcc-env fcc-dsh web --host 127.0.0.1 --no-open --public-url http://192.168.10.157:13080/ --trusted-host 192.168.10.157:13080' \
 		"fcc-env runs the harness with the same words"
-	assert_contains "$out" '-L 192.168.10.157:13080:192.168.5.20:3080' \
+	assert_contains "$out" '-L 192.168.10.157:13080:127.0.0.1:3080' \
 		"and the same forward"
 
 	# Windows keeps the bare launcher and no forward: dsh's Windows story is
@@ -2396,15 +2401,20 @@ agent dsh installed' \
 	drop_sandbox
 }
 
-test_an_old_harness_keeps_the_plain_form_instead_of_a_dead_pane() {
+test_an_old_harness_is_tunnelled_from_its_own_loopback() {
 	# Reported: a LAN session died on its first word with
 	#   error: unknown option '--public-url'
 	# because the far side's dsh predates the option the tunnel form passes.
 	# The local form never passes it, which is why the same harness worked from
-	# a local target. The far side is asked what it accepts, and a "no" keeps
-	# the command the panel used before the tunnel: the harness starts, prints
-	# its LAN address and serves it. A session that works beats a tunnel that
-	# kills it.
+	# a local target.
+	#
+	# Such a dsh also refuses a LAN-address bind — its host schema accepts only
+	# 127.0.0.1 and 0.0.0.0, and its CLI refuses the wildcard — so the plain
+	# LAN-address form is no better: it starts nothing. What is left is what
+	# every dsh accepts: bind the far machine's loopback, reach it through the
+	# ssh -L, and have the pane print the tunnel's address before it starts.
+	# The console swaps the loopback URL dsh prints for that address, so the
+	# browser button opens a harness it can actually reach.
 	fresh
 	ready_lan
 	out="$(SSH_PROBE_OUT='server running
@@ -2415,12 +2425,14 @@ agent dsh installed' \
 		FCC_PANE_HOST=192.168.10.157 \
 		FCC_TEST_IPV4S='192.168.10.157' \
 		run_remote session-command dsh)" || true
-	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20 --no-open' \
-		"an old harness is started with the words it understands"
+	assert_contains "$out" 'fcc-dsh web --host 127.0.0.1 --no-open' \
+		"an old harness is started on the one address it accepts"
 	assert_not_contains "$out" '--public-url' "and is not told about the tunnel"
-	assert_not_contains "$out" '--trusted-host' "not even the half it can use"
-	assert_not_contains "$out" ' -L ' \
-		"no forward is opened for a tunnel it would refuse"
+	assert_contains "$out" \
+		"FCC_DSH_TUNNEL=http://192.168.10.157:13080/" \
+		"the pane prints the address the browser can open before it starts"
+	assert_contains "$out" '-L 192.168.10.157:13080:127.0.0.1:3080' \
+		"and the forward reaches the loopback the harness is bound to"
 
 	# The question is asked of the CLI itself, not of the launcher, through the
 	# same PATH the pane exports — the option parser that would reject the flag
@@ -2430,8 +2442,24 @@ agent dsh installed' \
 	assert_contains "$(ssh_command 2)" 'export PATH' \
 		"through the same PATH the pane will use"
 
-	# One option without the other is not enough: the harness would advertise
-	# an address whose Host header it still refuses.
+	# --trusted-host on its own is understood and still useful: the tunnel's
+	# Host header is neither loopback nor the bind address, so a harness that
+	# can be told to trust it should be.
+	out="$(SSH_PROBE_OUT='server running
+agent dsh installed' \
+		SSH_DSH_HELP_OUT='Usage: dsh web [options]
+  --host <address>
+  --no-open
+  --trusted-host <authority>' \
+		FCC_PANE_HOST=192.168.10.157 \
+		FCC_TEST_IPV4S='192.168.10.157' \
+		run_remote session-command dsh)" || true
+	assert_contains "$out" 'web --host 127.0.0.1 --no-open --trusted-host 192.168.10.157:13080' \
+		"a harness that knows --trusted-host is told the tunnel's authority"
+
+	# --public-url without --trusted-host is not enough: the harness would
+	# advertise an address whose Host header it still refuses. It is started
+	# without either, through the same forward and the same marker.
 	out="$(SSH_PROBE_OUT='server running
 agent dsh installed' \
 		SSH_DSH_HELP_OUT='Usage: dsh web [options]
@@ -2439,13 +2467,14 @@ agent dsh installed' \
 		FCC_PANE_HOST=192.168.10.157 \
 		FCC_TEST_IPV4S='192.168.10.157' \
 		run_remote session-command dsh)" || true
-	assert_contains "$out" 'fcc-dsh web --host 192.168.5.20 --no-open' \
-		"a harness that knows only half the pair keeps the plain form"
+	assert_contains "$out" 'fcc-dsh web --host 127.0.0.1 --no-open' \
+		"a harness that knows only half the pair keeps the older form"
 	assert_not_contains "$out" '--public-url' "and is told neither option"
-	assert_not_contains "$out" ' -L ' "and no forward is opened"
+	assert_contains "$out" 'FCC_DSH_TUNNEL=' "the marker is still printed"
 
 	# An OpenWrt machine is asked through fcc-env, the way its pane starts the
-	# harness.
+	# harness. The marker's shell syntax travels with the command, so the whole
+	# line is quoted; the remote shell strips the quotes it was given.
 	fresh
 	ready_lan
 	uci_set remote_platform openwrt
@@ -2455,9 +2484,12 @@ agent dsh installed' \
 		run_remote session-command dsh)" || true
 	assert_contains "$(ssh_command 1)" '/usr/bin/fcc-env dsh web --help' \
 		"an OpenWrt machine is asked through fcc-env"
-	assert_contains "$out" '/usr/bin/fcc-env fcc-dsh web --host 192.168.5.20 --no-open' \
-		"and runs the plain form when the answer has no options"
-	assert_not_contains "$out" ' -L ' "with no forward"
+	assert_contains "$out" 'FCC_DSH_TUNNEL=http://192.168.10.157:13080/' \
+		"and is given the marker too"
+	assert_contains "$out" '/usr/bin/fcc-env fcc-dsh web --host 127.0.0.1 --no-open' \
+		"while the harness keeps the form it accepts"
+	assert_contains "$out" '-L 192.168.10.157:13080:127.0.0.1:3080' \
+		"with the forward that reaches it"
 	drop_sandbox
 }
 
