@@ -613,6 +613,12 @@ test_console_names_where_the_agent_runs() {
 	assert_contains "$(sed -n '/function refreshTarget()/,/^	}$/p' "$TERMINAL")" \
 		'renderRuntimeLine();' "and redraws the row when only the directory changed"
 
+	# A LAN target that was never configured is a standing fact Basic
+	# Information already states. The console's status line stays empty for
+	# that one answer; every other failure still speaks there.
+	assert_contains "$_tt_src" "state.console.reason !== 'not-configured'" \
+		"the console leaves the unconfigured notice to Basic Information"
+
 	assert_contains "$(cat "$_tt_css")" '.fcc-term-where' \
 		"the row has its own style"
 }

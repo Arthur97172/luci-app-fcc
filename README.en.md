@@ -242,7 +242,7 @@ a log that has never been written. A machine without `pgrep` skips that check
 rather than passing on a guess.
 
 **Working directory.** Directly under *Username*, outside the *Advanced
-settings* fold, the LAN panel has a **Custom directory** checkbox. Ticked, with an absolute
+settings* fold, the LAN panel has a **Custom** checkbox. Ticked, with an absolute
 path beside it (for example `/home/arthur/claude/`), new sessions the Web
 Console starts on that machine begin there; unticked, they begin in that
 account's login directory. The setting applies to **new sessions only** — an

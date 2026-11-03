@@ -231,19 +231,19 @@
 				     instead, and the .fcc-remote-row wrapper puts the path
 				     beside it. -->
 				<div class="cbi-value">
-					<label class="cbi-value-title" for="fcc-remote-workdir-enable"><%:Agent working directory%></label>
+					<label class="cbi-value-title" for="fcc-remote-workdir-enable"><%:Working directory%></label>
 					<div class="cbi-value-field">
 						<div class="fcc-remote-row">
 							<label class="fcc-remote-workdir-toggle">
 								<input type="checkbox" id="fcc-remote-workdir-enable" class="cbi-input-checkbox">
-								<span><%:Custom directory%></span>
+								<span><%:Custom%></span>
 							</label>
 							<input type="text" id="fcc-remote-workdir" class="cbi-input-text fcc-mono"
 								spellcheck="false" autocomplete="off" disabled
 								placeholder="/path/to/project">
 						</div>
 						<div class="cbi-value-description">
-							<%:An absolute path on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only.%>
+							<%:An absolute path where the agent works on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only.%>
 						</div>
 					</div>
 				</div>

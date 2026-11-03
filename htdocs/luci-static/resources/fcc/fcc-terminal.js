@@ -214,8 +214,13 @@
 		var box = FCC.$('#fcc-term-status');
 		if (!box || !state.console) { return; }
 
+		/* A LAN target that has never been configured is a standing fact about
+		 * another tab rather than a condition this page can act on, and Basic
+		 * Information already states it. Stay quiet about that one; every
+		 * other failure — and the same code when an action is refused — still
+		 * speaks. */
 		var kind = '', text = '';
-		if (state.console.ok === false) {
+		if (state.console.ok === false && state.console.reason !== 'not-configured') {
 			kind = 'fail';
 			text = consoleReason(state.console);
 		} else if (state.target === 'lan' && state.console.running === false) {

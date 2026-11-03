@@ -69,16 +69,13 @@ msgstr ""
 msgid "Agent versions"
 msgstr ""
 
-msgid "Agent working directory"
-msgstr ""
-
 msgid "All agents"
 msgstr ""
 
 msgid "All unsaved terminal state will be lost."
 msgstr ""
 
-msgid "An absolute path on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only."
+msgid "An absolute path where the agent works on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only."
 msgstr ""
 
 msgid "Antigravity CLI could not be connected:"
@@ -177,7 +174,7 @@ msgstr ""
 msgid "Could not read the one-time setup."
 msgstr ""
 
-msgid "Custom directory"
+msgid "Custom"
 msgstr ""
 
 msgid "DeepSeek Harness did not print its address; showing its pane instead."
@@ -829,6 +826,9 @@ msgid "Web Console"
 msgstr ""
 
 msgid "Without an init script of that name the launcher is used instead, as on a Linux machine without a unit."
+msgstr ""
+
+msgid "Working directory"
 msgstr ""
 
 msgid "available"

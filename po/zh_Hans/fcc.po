@@ -92,9 +92,6 @@ msgstr "智能体列表不可用"
 msgid "Agent versions"
 msgstr "智能体版本"
 
-msgid "Agent working directory"
-msgstr "智能体工作目录"
-
 msgid "All agents"
 msgstr "全部智能体"
 
@@ -102,12 +99,12 @@ msgid "All unsaved terminal state will be lost."
 msgstr "所有未保存的终端状态都将丢失。"
 
 msgid ""
-"An absolute path on the LAN machine. When unchecked, new sessions start in "
-"the account's login directory. Existing sessions keep the directory they "
-"started in. Applies to new sessions only."
+"An absolute path where the agent works on the LAN machine. When unchecked, "
+"new sessions start in the account's login directory. Existing sessions keep "
+"the directory they started in. Applies to new sessions only."
 msgstr ""
-"局域网主机上的绝对路径。未勾选时，新会话从该账号的登录目录开始；已存在的会话"
-"保持启动时的目录不变。仅对新会话生效。"
+"智能体在局域网主机上工作的绝对路径。未勾选时，新会话从该账号的登录目录开始；"
+"已存在的会话保持启动时的目录不变。仅对新会话生效。"
 
 msgid "Antigravity CLI could not be connected:"
 msgstr "无法连接 Antigravity CLI："
@@ -231,8 +228,8 @@ msgstr "无法连接到会话："
 msgid "Could not read the one-time setup."
 msgstr "无法读取一次性准备命令。"
 
-msgid "Custom directory"
-msgstr "自定义目录"
+msgid "Custom"
+msgstr "自定义"
 
 msgid "DeepSeek Harness did not print its address; showing its pane instead."
 msgstr "DeepSeek Harness 没有打印出地址，改为显示它的窗格。"
@@ -1078,6 +1075,9 @@ msgid ""
 "Linux machine without a unit."
 msgstr "没有同名的 init 脚本时改用启动器，如同没有 unit 的 Linux 机器。"
 
+msgid "Working directory"
+msgstr "工作目录"
+
 msgid "available"
 msgstr "可用"
 
@@ -1154,6 +1154,12 @@ msgid ""
 msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid "Agent working directory"
+#~ msgstr "智能体工作目录"
+
+#~ msgid "Custom directory"
+#~ msgstr "自定义目录"
 
 #~ msgid "Run new sessions in a custom directory"
 #~ msgstr "新会话在自定义目录中运行"

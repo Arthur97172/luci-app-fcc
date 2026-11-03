@@ -2028,8 +2028,8 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 	# before the feature is turned on.
 	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" 'disabled' \
 		"with the path disabled until the box is ticked"
-	assert_contains "$(cat "$_ts_view")" '<%:Custom directory%>' \
-		"the box is named Custom directory"
+	assert_contains "$(cat "$_ts_view")" '<%:Custom%>' \
+		"the box is named Custom"
 	# New sessions only: an existing pane cannot be moved without ending it,
 	# and the description has to say so rather than let the user find out.
 	assert_contains "$(cat "$_ts_view")" 'Applies to new sessions only.' \
