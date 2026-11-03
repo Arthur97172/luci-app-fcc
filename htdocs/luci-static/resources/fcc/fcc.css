@@ -550,6 +550,20 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 
 .fcc-remote-row input[type="text"] { flex: 0 1 auto; }
 
+/* The working-directory box sits beside its name in the title column, so it
+ * reads as part of "Custom directory" rather than as the first thing in the
+ * field column. That leaves the path input at the field column's left edge,
+ * lined up with the Username box above it. Argon's label > input rule would
+ * give the box a relative offset and bottom-align it, which is written for a
+ * short line-height; center it against the title instead. */
+.fcc-workdir-title > input[type="checkbox"] {
+	position: static;
+	top: auto;
+	right: auto;
+	margin: 0 0 0 .5em;
+	vertical-align: middle;
+}
+
 
 /* The key status line: a dot and one sentence, then the one button that
  * changes it. It is the same line whether the key exists or not, because the

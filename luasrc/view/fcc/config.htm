@@ -229,18 +229,15 @@
 				     behind a fold. The path is stored while the box is clear
 				     and re-ticking it brings the same directory back.
 
-				     The box carries no text of its own: the row's title names
-				     the setting, and the path field beside it shows which
-				     directory is meant. -->
+				     The box sits beside the row's name instead of opening the
+				     field column, and the path keeps that column's left edge
+				     so it lines up with the Username box above. -->
 				<div class="cbi-value">
-					<label class="cbi-value-title" for="fcc-remote-workdir-enable"><%:Custom directory%></label>
+					<label class="cbi-value-title fcc-workdir-title" for="fcc-remote-workdir-enable"><%:Custom directory%><input type="checkbox" id="fcc-remote-workdir-enable" class="cbi-input-checkbox"></label>
 					<div class="cbi-value-field">
-						<div class="fcc-remote-row">
-							<input type="checkbox" id="fcc-remote-workdir-enable" class="cbi-input-checkbox">
-							<input type="text" id="fcc-remote-workdir" class="cbi-input-text fcc-mono"
-								spellcheck="false" autocomplete="off" disabled
-								placeholder="/path/to/project">
-						</div>
+						<input type="text" id="fcc-remote-workdir" class="cbi-input-text fcc-mono"
+							spellcheck="false" autocomplete="off" disabled
+							placeholder="/path/to/project">
 						<div class="cbi-value-description">
 							<%:An absolute path where the agent works on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only.%>
 						</div>

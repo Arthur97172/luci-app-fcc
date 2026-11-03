@@ -2032,6 +2032,12 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 		"with the path disabled until the box is ticked"
 	assert_contains "$(cat "$_ts_view")" '<%:Custom directory%>' \
 		"the row is named Custom directory"
+	# The box belongs beside the name, not at the field column's edge: the path
+	# input then lines up with the Username box above it.
+	assert_contains "$(cat "$_ts_view")" 'class="cbi-value-title fcc-workdir-title"' \
+		"the box sits in the title column beside its name"
+	assert_contains "$(cat "$_ts_view")" '<%:Custom directory%><input type="checkbox" id="fcc-remote-workdir-enable"' \
+		"immediately after that name"
 	# New sessions only: an existing pane cannot be moved without ending it,
 	# and the description has to say so rather than let the user find out.
 	assert_contains "$(cat "$_ts_view")" 'Applies to new sessions only.' \
