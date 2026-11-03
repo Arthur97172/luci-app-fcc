@@ -215,6 +215,11 @@
 					</div>
 				</div>
 
+				<!-- The same little row of air the platform and address rows
+				     use: the directory is a second question about the account,
+				     not part of the username row. -->
+				<div class="fcc-row-gap" role="presentation"></div>
+
 				<!-- The agent's working directory on the far machine. It is a
 				     setting of the sessions the Web Console starts, not of the
 				     connection, so it sits directly under the account it runs
@@ -224,20 +229,14 @@
 				     behind a fold. The path is stored while the box is clear
 				     and re-ticking it brings the same directory back.
 
-				     The box and its name share one row with the path. Argon
-				     sets a checkbox inside a label to vertical-align: bottom,
-				     which with the form's tall line-height drops the box
-				     under its own text; fcc.css makes this row a flex line
-				     instead, and the .fcc-remote-row wrapper puts the path
-				     beside it. -->
+				     The box carries no text of its own: the row's title names
+				     the setting, and the path field beside it shows which
+				     directory is meant. -->
 				<div class="cbi-value">
-					<label class="cbi-value-title" for="fcc-remote-workdir-enable"><%:Working directory%></label>
+					<label class="cbi-value-title" for="fcc-remote-workdir-enable"><%:Custom directory%></label>
 					<div class="cbi-value-field">
 						<div class="fcc-remote-row">
-							<label class="fcc-remote-workdir-toggle">
-								<input type="checkbox" id="fcc-remote-workdir-enable" class="cbi-input-checkbox">
-								<span><%:Custom%></span>
-							</label>
+							<input type="checkbox" id="fcc-remote-workdir-enable" class="cbi-input-checkbox">
 							<input type="text" id="fcc-remote-workdir" class="cbi-input-text fcc-mono"
 								spellcheck="false" autocomplete="off" disabled
 								placeholder="/path/to/project">

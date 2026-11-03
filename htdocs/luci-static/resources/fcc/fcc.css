@@ -27,6 +27,16 @@
 
 .fcc-toolbar .spacer { flex: 1 1 auto; }
 
+/* Argon lays .cbi-map out as a flex column with a 16px row gap, so an empty
+ * #fcc-term-status still reserves a gap on either side. The console's status
+ * line is empty most of the time, and the no-session sentence then sat 46px
+ * under the agent label it describes — the toolbar's margin plus two empty
+ * row gaps. Take the empty line out of the flow, and let the page's own row
+ * gap separate the toolbar from what follows instead of a second margin. */
+#fcc-term-status:empty { display: none; }
+
+.fcc-page > .fcc-toolbar { margin-bottom: 0; }
+
 /* The runtime toolbar's agent dropdown. The label is a word sitting between two
  * controls rather than a form field's title, so it takes the dim colour the
  * notes under the toolbar use — otherwise it reads as a third button. */
@@ -539,27 +549,6 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 }
 
 .fcc-remote-row input[type="text"] { flex: 0 1 auto; }
-
-/* The working-directory box and its name read as one line. Themes style a
- * checkbox inside a label for forms whose line-height is short — Argon gives
- * it vertical-align: bottom and a relative top offset — and this field's
- * line-height is 2.4, so the box landed under its own text. A flex line
- * ignores both, and centers the box against the name whatever the theme
- * does. */
-.fcc-remote-workdir-toggle {
-	display: inline-flex;
-	align-items: center;
-	gap: .4em;
-	line-height: 1.6;
-}
-
-.fcc-remote-workdir-toggle > input[type="checkbox"] {
-	position: static;
-	top: auto;
-	right: auto;
-	margin: 0;
-	flex: 0 0 auto;
-}
 
 
 /* The key status line: a dot and one sentence, then the one button that

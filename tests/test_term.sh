@@ -619,6 +619,12 @@ test_console_names_where_the_agent_runs() {
 	assert_contains "$_tt_src" "state.console.reason !== 'not-configured'" \
 		"the console leaves the unconfigured notice to Basic Information"
 
+	# Argon's .cbi-map is a flex column with a 16px row gap. An empty status
+	# line still reserves a gap on each side, so the no-session sentence sat
+	# two empty rows below the toolbar; the console takes it out of the flow.
+	assert_contains "$(cat "$_tt_css")" '#fcc-term-status:empty' \
+		"an empty status line does not reserve a row gap"
+
 	assert_contains "$(cat "$_tt_css")" '.fcc-term-where' \
 		"the row has its own style"
 }

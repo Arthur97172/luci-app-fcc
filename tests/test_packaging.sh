@@ -1726,20 +1726,22 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 	# One row of air where two rows answer different questions. The spacer is
 	# its own element: the margins between .cbi-value rows belong to the theme,
 	# so growing them here would move every form on every page. It sits between
-	# the platform and the address, and between each pair of advanced fields;
-	# exactly those four, so a stray copy cannot drift into a panel where the
-	# two rows above it do belong together.
+	# the platform and the address, under the username and above the directory
+	# setting, and between each pair of advanced fields; exactly those five, so
+	# a stray copy cannot drift into a panel where the two rows above it do
+	# belong together.
 	_ts_gap='<div class="fcc-row-gap" role="presentation"></div>'
 	assert_contains "$(sed -n '/id="fcc-remote-platform"/,/id="fcc-remote-host"/p' "$_ts_view")" \
 		"$_ts_gap" "a row of air separates the platform from the address"
-	for _ts_pair in "fcc-remote-ssh-port:fcc-remote-admin-port" \
+	for _ts_pair in "fcc-remote-user:fcc-remote-workdir-enable" \
+		"fcc-remote-ssh-port:fcc-remote-admin-port" \
 		"fcc-remote-admin-port:fcc-remote-service" \
 		"fcc-remote-service:fcc-remote-fingerprint"; do
 		assert_contains \
 			"$(sed -n "/id=\"${_ts_pair%%:*}\"/,/id=\"${_ts_pair#*:}\"/p" "$_ts_view")" \
 			"$_ts_gap" "a row of air between the ${_ts_pair#*:} row and the one above it"
 	done
-	assert_eq 4 "$(grep -cF "$_ts_gap" "$_ts_view")" \
+	assert_eq 5 "$(grep -cF "$_ts_gap" "$_ts_view")" \
 		"and nowhere else in the page"
 	assert_contains "$(cat "$_ts_css")" '.fcc-row-gap { height: .3em; }' \
 		"which is a beat between rows, not a section break"
@@ -2028,8 +2030,8 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 	# before the feature is turned on.
 	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" 'disabled' \
 		"with the path disabled until the box is ticked"
-	assert_contains "$(cat "$_ts_view")" '<%:Custom%>' \
-		"the box is named Custom"
+	assert_contains "$(cat "$_ts_view")" '<%:Custom directory%>' \
+		"the row is named Custom directory"
 	# New sessions only: an existing pane cannot be moved without ending it,
 	# and the description has to say so rather than let the user find out.
 	assert_contains "$(cat "$_ts_view")" 'Applies to new sessions only.' \
@@ -2046,6 +2048,8 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 	_ts_key_line="$(grep -n 'id="fcc-remote-key-state"' "$_ts_view" | head -1 | cut -d: -f1)"
 	assert_eq 1 "$((_ts_user_line < _ts_wd_line))" \
 		"the directory row follows the username"
+	assert_contains "$(sed -n "${_ts_user_line},${_ts_wd_line}p" "$_ts_view")" 'fcc-row-gap' \
+		"with the same row gap the platform and address rows use"
 	assert_eq 1 "$((_ts_wd_line < _ts_open_line))" \
 		"and comes before the advanced fold"
 	assert_eq 1 "$((_ts_open_line < _ts_close_line))" \

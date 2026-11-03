@@ -174,7 +174,7 @@ msgstr ""
 msgid "Could not read the one-time setup."
 msgstr ""
 
-msgid "Custom"
+msgid "Custom directory"
 msgstr ""
 
 msgid "DeepSeek Harness did not print its address; showing its pane instead."
@@ -826,9 +826,6 @@ msgid "Web Console"
 msgstr ""
 
 msgid "Without an init script of that name the launcher is used instead, as on a Linux machine without a unit."
-msgstr ""
-
-msgid "Working directory"
 msgstr ""
 
 msgid "available"
