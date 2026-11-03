@@ -2028,8 +2028,8 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 	# before the feature is turned on.
 	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" 'disabled' \
 		"with the path disabled until the box is ticked"
-	assert_contains "$(cat "$_ts_view")" '<%:Run new sessions in a custom directory%>' \
-		"the box says what ticking it does"
+	assert_contains "$(cat "$_ts_view")" '<%:Custom directory%>' \
+		"the box is named Custom directory"
 	# New sessions only: an existing pane cannot be moved without ending it,
 	# and the description has to say so rather than let the user find out.
 	assert_contains "$(cat "$_ts_view")" 'Applies to new sessions only.' \
@@ -2037,17 +2037,21 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 
 	# It belongs to neither the connection settings nor the key, and hiding it
 	# in Advanced would put the one question about where the agent runs behind
-	# a fold opened to fix a port.
+	# a fold opened to fix a port. It sits directly under Username, where the
+	# account the path runs as has just been named.
 	_ts_wd_line="$(grep -n 'id="fcc-remote-workdir-enable"' "$_ts_view" | head -1 | cut -d: -f1)"
-	_ts_ready_line="$(grep -n '<details class="fcc-advanced"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_user_line="$(grep -n 'id="fcc-remote-user"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_open_line="$(grep -n '<details class="fcc-advanced"' "$_ts_view" | head -1 | cut -d: -f1)"
 	_ts_close_line="$(grep -n '</details>' "$_ts_view" | head -1 | cut -d: -f1)"
 	_ts_key_line="$(grep -n 'id="fcc-remote-key-state"' "$_ts_view" | head -1 | cut -d: -f1)"
-	assert_eq 1 "$((_ts_ready_line < _ts_close_line))" \
-		"the advanced block closes before the directory row"
-	assert_eq 1 "$((_ts_close_line < _ts_wd_line))" \
-		"so the row is outside the fold"
-	assert_eq 1 "$((_ts_wd_line < _ts_key_line))" \
-		"and ahead of the key it does not need"
+	assert_eq 1 "$((_ts_user_line < _ts_wd_line))" \
+		"the directory row follows the username"
+	assert_eq 1 "$((_ts_wd_line < _ts_open_line))" \
+		"and comes before the advanced fold"
+	assert_eq 1 "$((_ts_open_line < _ts_close_line))" \
+		"the advanced block closes after it opens"
+	assert_eq 1 "$((_ts_close_line < _ts_key_line))" \
+		"and the folder key comes after the fold"
 
 	# What the page sends and what it does with the answer.
 	assert_contains "$(cat "$_ts_js")" "workdir_enabled:" \

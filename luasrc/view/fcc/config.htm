@@ -215,6 +215,39 @@
 					</div>
 				</div>
 
+				<!-- The agent's working directory on the far machine. It is a
+				     setting of the sessions the Web Console starts, not of the
+				     connection, so it sits directly under the account it runs
+				     as, where the reader already is, and before the key:
+				     nothing here needs the key, and hiding it inside Advanced
+				     would keep the one setting about where the agent runs
+				     behind a fold. The path is stored while the box is clear
+				     and re-ticking it brings the same directory back.
+
+				     The box and its name share one row with the path. Argon
+				     sets a checkbox inside a label to vertical-align: bottom,
+				     which with the form's tall line-height drops the box
+				     under its own text; fcc.css makes this row a flex line
+				     instead, and the .fcc-remote-row wrapper puts the path
+				     beside it. -->
+				<div class="cbi-value">
+					<label class="cbi-value-title" for="fcc-remote-workdir-enable"><%:Agent working directory%></label>
+					<div class="cbi-value-field">
+						<div class="fcc-remote-row">
+							<label class="fcc-remote-workdir-toggle">
+								<input type="checkbox" id="fcc-remote-workdir-enable" class="cbi-input-checkbox">
+								<span><%:Custom directory%></span>
+							</label>
+							<input type="text" id="fcc-remote-workdir" class="cbi-input-text fcc-mono"
+								spellcheck="false" autocomplete="off" disabled
+								placeholder="/path/to/project">
+						</div>
+						<div class="cbi-value-description">
+							<%:An absolute path on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only.%>
+						</div>
+					</div>
+				</div>
+
 				<details class="fcc-advanced" id="fcc-remote-advanced">
 					<summary><%:Advanced settings%></summary>
 
@@ -268,29 +301,6 @@
 						</div>
 					</div>
 				</details>
-
-				<!-- The agent's working directory on the far machine. It is a
-				     setting of the sessions the Web Console starts, not of the
-				     connection, so it sits after the connection settings and
-				     before the key: nothing here needs the key, and hiding it
-				     inside Advanced would keep the one setting about where the
-				     agent runs behind a fold. The path is stored while the box
-				     is clear and re-ticking it brings the same directory back. -->
-				<div class="cbi-value">
-					<label class="cbi-value-title" for="fcc-remote-workdir-enable"><%:Agent working directory%></label>
-					<div class="cbi-value-field">
-						<label class="fcc-remote-workdir-toggle">
-							<input type="checkbox" id="fcc-remote-workdir-enable" class="cbi-input-checkbox">
-							<span><%:Run new sessions in a custom directory%></span>
-						</label>
-						<input type="text" id="fcc-remote-workdir" class="cbi-input-text fcc-mono"
-							spellcheck="false" autocomplete="off" disabled
-							placeholder="/path/to/project">
-						<div class="cbi-value-description">
-							<%:An absolute path on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only.%>
-						</div>
-					</div>
-				</div>
 
 				<!-- Opening the Admin page is an SSH tunnel, so that machine's
 				     sshd has to allow local forwarding. The buttons arrange the

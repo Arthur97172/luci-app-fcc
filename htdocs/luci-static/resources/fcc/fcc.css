@@ -540,6 +540,28 @@ pre.fcc-log .lvl-warn { color: #ffcc80; }
 
 .fcc-remote-row input[type="text"] { flex: 0 1 auto; }
 
+/* The working-directory box and its name read as one line. Themes style a
+ * checkbox inside a label for forms whose line-height is short — Argon gives
+ * it vertical-align: bottom and a relative top offset — and this field's
+ * line-height is 2.4, so the box landed under its own text. A flex line
+ * ignores both, and centers the box against the name whatever the theme
+ * does. */
+.fcc-remote-workdir-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: .4em;
+	line-height: 1.6;
+}
+
+.fcc-remote-workdir-toggle > input[type="checkbox"] {
+	position: static;
+	top: auto;
+	right: auto;
+	margin: 0;
+	flex: 0 0 auto;
+}
+
+
 /* The key status line: a dot and one sentence, then the one button that
  * changes it. It is the same line whether the key exists or not, because the
  * question "is there a key?" is asked at a glance either way. */

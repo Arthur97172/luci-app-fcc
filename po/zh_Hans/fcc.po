@@ -231,6 +231,9 @@ msgstr "无法连接到会话："
 msgid "Could not read the one-time setup."
 msgstr "无法读取一次性准备命令。"
 
+msgid "Custom directory"
+msgstr "自定义目录"
+
 msgid "DeepSeek Harness did not print its address; showing its pane instead."
 msgstr "DeepSeek Harness 没有打印出地址，改为显示它的窗格。"
 
@@ -519,9 +522,6 @@ msgstr "重试"
 
 msgid "Run checks"
 msgstr "运行检查"
-
-msgid "Run new sessions in a custom directory"
-msgstr "新会话在自定义目录中运行"
 
 msgid "Running"
 msgstr "运行中"
@@ -1154,6 +1154,9 @@ msgid ""
 msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid "Run new sessions in a custom directory"
+#~ msgstr "新会话在自定义目录中运行"
 
 #~ msgid "Agents"
 #~ msgstr "智能体"

@@ -177,6 +177,9 @@ msgstr ""
 msgid "Could not read the one-time setup."
 msgstr ""
 
+msgid "Custom directory"
+msgstr ""
+
 msgid "DeepSeek Harness did not print its address; showing its pane instead."
 msgstr ""
 
@@ -412,9 +415,6 @@ msgid "Retry"
 msgstr ""
 
 msgid "Run checks"
-msgstr ""
-
-msgid "Run new sessions in a custom directory"
 msgstr ""
 
 msgid "Running"
