@@ -89,11 +89,11 @@ msgstr "智能体意外退出。"
 msgid "Agent list unavailable"
 msgstr "智能体列表不可用"
 
+msgid "Agent versions"
+msgstr "智能体版本"
+
 msgid "Agent working directory"
 msgstr "智能体工作目录"
-
-msgid "Agents"
-msgstr "智能体"
 
 msgid "All agents"
 msgstr "全部智能体"
@@ -108,13 +108,6 @@ msgid ""
 msgstr ""
 "局域网主机上的绝对路径。未勾选时，新会话从该账号的登录目录开始；已存在的会话"
 "保持启动时的目录不变。仅对新会话生效。"
-
-msgid ""
-"An interactive terminal running a coding agent. Sessions keep running after "
-"you close this page, and reattaching to one restores its screen."
-msgstr ""
-"运行智能体的交互式终端。关闭本页面后会话仍会继续运行，重新连接即可恢复会话记"
-"录。"
 
 msgid "Antigravity CLI could not be connected:"
 msgstr "无法连接 Antigravity CLI："
@@ -213,7 +206,7 @@ msgstr "命令预览"
 msgid "Component"
 msgstr "组件"
 
-msgid "Configuration"
+msgid "Configuration Management"
 msgstr "配置管理"
 
 msgid "Connect now?"
@@ -296,6 +289,9 @@ msgstr "应为"
 msgid "FCC"
 msgstr "FCC智能体"
 
+msgid "FCC Agent"
+msgstr "FCC智能体"
+
 msgid "FCC Runtime"
 msgstr "FCC 运行时"
 
@@ -374,6 +370,9 @@ msgstr "加载"
 msgid "Loading…"
 msgstr "正在加载…"
 
+msgid "Local settings"
+msgstr "本机配置"
+
 msgid "Local system"
 msgstr "本机系统"
 
@@ -421,9 +420,6 @@ msgstr "未安装"
 
 msgid "Now"
 msgstr "当前"
-
-msgid "On the LAN side the agent itself runs on the other machine, over SSH."
-msgstr "局域网模式下，智能体本身通过 SSH 在另一台机器上运行。"
 
 msgid "One-time authorization"
 msgstr "一次性授权"
@@ -564,16 +560,6 @@ msgstr "会话已退出。"
 
 msgid "Session is still running."
 msgstr "会话仍在运行。"
-
-msgid ""
-"Sessions are hosted by tmux on the router, so they survive a page reload or "
-"a browser restart. Closing a session from its tab ends the agent process."
-msgstr ""
-"会话由路由器上的 tmux 托管，因此页面重新加载或浏览器重启后仍会保留。从标签页"
-"关闭会话将结束该智能体进程。"
-
-msgid "Settings"
-msgstr "设置"
 
 msgid "Settings saved."
 msgstr "设置已保存。"
@@ -983,8 +969,8 @@ msgid ""
 "The working directory set for the LAN machine is not a valid absolute path. "
 "Correct it in Configuration → FCC Server."
 msgstr ""
-"为局域网主机设置的工作目录不是有效的绝对路径。请在“配置管理 → FCC Server”中"
-"修正。"
+"为局域网主机设置的工作目录不是有效的绝对路径。请在“配置管理 → FCC Server”中修"
+"正。"
 
 msgid ""
 "The working directory was cleared because it is not a valid absolute path."
@@ -1169,6 +1155,31 @@ msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
 
+#~ msgid "Agents"
+#~ msgstr "智能体"
+
+#~ msgid ""
+#~ "An interactive terminal running a coding agent. Sessions keep running "
+#~ "after you close this page, and reattaching to one restores its screen."
+#~ msgstr ""
+#~ "运行智能体的交互式终端。关闭本页面后会话仍会继续运行，重新连接即可恢复会话"
+#~ "记录。"
+
+#~ msgid ""
+#~ "On the LAN side the agent itself runs on the other machine, over SSH."
+#~ msgstr "局域网模式下，智能体本身通过 SSH 在另一台机器上运行。"
+
+#~ msgid ""
+#~ "Sessions are hosted by tmux on the router, so they survive a page reload "
+#~ "or a browser restart. Closing a session from its tab ends the agent "
+#~ "process."
+#~ msgstr ""
+#~ "会话由路由器上的 tmux 托管，因此页面重新加载或浏览器重启后仍会保留。从标签"
+#~ "页关闭会话将结束该智能体进程。"
+
+#~ msgid "Settings"
+#~ msgstr "设置"
+
 #~ msgid "The LAN FCC Server is not running."
 #~ msgstr "局域网的 FCC Server 未运行。"
 
@@ -1188,9 +1199,6 @@ msgstr ""
 
 #~ msgid "Clear install record"
 #~ msgstr "清除安装记录"
-
-#~ msgid "Re-detect versions"
-#~ msgstr "重新检测版本"
 
 #~ msgid ""
 #~ "Update the FCC runtime now? The server is stopped during the update and "

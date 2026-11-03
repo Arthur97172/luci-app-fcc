@@ -609,8 +609,12 @@ test_the_console_follows_the_configured_side() {
 		"whose static text is the default, this router"
 	assert_not_contains "$(cat "$_view")" 'running a coding agent on this router' \
 		"the page description no longer claims the agent runs here"
-	assert_contains "$(cat "$_view")" '<%:On the LAN side the agent itself runs on the other machine, over SSH.%>' \
-		"and it says where the agent runs in LAN mode"
+	# The static LAN note went with the hints: the where line names the machine,
+	# the account and the directory for the mode actually in effect.
+	assert_not_contains "$(cat "$_view")" 'On the LAN side the agent itself' \
+		"and the static LAN note is gone"
+	assert_contains "$(cat "$_view")" 'id="fcc-term-where"' \
+		"its job is done by the runtime line"
 
 	assert_contains "$(cat "$_js")" "FCC.api('console'" \
 		"the page asks for the console state rather than only an agent list"
@@ -2423,27 +2427,42 @@ test_the_server_cards_follow_the_agents_mode() {
 }
 
 # ---------------------------------------------------------------------------
-# The Install tab sits between the console and the settings
+# The tab bar is ordered console, settings, monitor, install
 #
 # 1.1.0 split the runtime lifecycle and the diagnostics report out of the
-# Configuration page. The tab they went to is the second one, because installing
-# the runtime is what a new device does before it has settings to change; the
-# order numbers are what LuCI sorts the tab bar by, so they are the thing worth
-# pinning.
+# Configuration page; installing the runtime is the rare, long-running action,
+# so it moved to the end and the everyday pages — settings, then the monitor an
+# operator consults while the server runs — come before it. The order numbers
+# are what LuCI sorts the tab bar by, so they are the thing worth pinning.
+#
+# The names pin the two renames: the package's menu entry is "FCC Agent" in
+# English (the Chinese catalogue keeps its own "FCC智能体"), and the settings
+# tab is "Configuration Management" so it does not read as merely this router's
+# settings, which are now the section called "Local settings".
 # ---------------------------------------------------------------------------
 
-test_the_install_tab_sits_between_console_and_configuration() {
+test_the_tab_bar_orders_console_settings_monitor_install() {
 	_ts_ctrl="$ROOT/luasrc/controller/fcc.lua"
 
 	assert_contains "$(cat "$_ts_ctrl")" \
-		'"fcc", "install"}, template("fcc/install"), _("Install"), 15' \
-		"the install tab is registered between the console and the settings"
+		'_("FCC Agent"), 60' "the menu entry is named FCC Agent"
 	assert_contains "$(cat "$_ts_ctrl")" \
 		'"fcc", "console"}, template("fcc/console"), _("Web Console"), 10' \
-		"the console is still first"
+		"the console is first"
 	assert_contains "$(cat "$_ts_ctrl")" \
-		'"fcc", "config"}, template("fcc/config"), _("Configuration"), 20' \
-		"and the settings are third"
+		'"fcc", "config"}, template("fcc/config"), _("Configuration Management"), 20' \
+		"the settings are second"
+	assert_contains "$(cat "$_ts_ctrl")" \
+		'"fcc", "info"}, template("fcc/info"), _("Basic Information"), 30' \
+		"the monitor is third"
+	assert_contains "$(cat "$_ts_ctrl")" \
+		'"fcc", "install"}, template("fcc/install"), _("Install"), 40' \
+		"and the install tab is last"
+
+	assert_contains "$(cat "$ROOT/luasrc/view/fcc/config.htm")" \
+		'<%:Local settings%>' "the settings section names this router"
+	assert_contains "$(cat "$ROOT/luasrc/view/fcc/info.htm")" \
+		'<%:Agent versions%>' "and the agent section names what it shows"
 
 	# The view it names is in the tree and ships.
 	assert_ok "the Install page template exists" test -f "$ROOT/luasrc/view/fcc/install.htm"

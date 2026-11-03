@@ -570,19 +570,25 @@ test_console_names_where_the_agent_runs() {
 	_tt_src="$(cat "$TERMINAL")"
 	_tt_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
 
-	# The row exists before the first answer and sits between the hint and the
-	# toolbar, so a console with nothing to say does not shift the pane down.
+	# The row exists before the first answer and is the page's first element,
+	# so a console with nothing to say does not shift the pane down.
 	assert_contains "$(cat "$_tt_view")" 'id="fcc-term-where"' \
 		"the console has the where row"
 	assert_contains "$(sed -n '/id="fcc-term-where"/p' "$_tt_view")" 'hidden' \
 		"hidden until there is an answer"
-	_tt_descr_at="$(grep -n 'cbi-map-descr' "$_tt_view" | head -1 | cut -d: -f1)"
 	_tt_where_at="$(grep -n 'id="fcc-term-where"' "$_tt_view" | cut -d: -f1)"
-	_tt_status_at="$(grep -n 'id="fcc-term-status"' "$_tt_view" | cut -d: -f1)"
-	assert_eq 1 "$((_tt_descr_at < _tt_where_at))" \
-		"the row follows the top hint"
-	assert_eq 1 "$((_tt_where_at < _tt_status_at))" \
-		"and stands above the status line it is not"
+	_tt_toolbar_at="$(grep -n 'class="fcc-toolbar"' "$_tt_view" | head -1 | cut -d: -f1)"
+	assert_eq 1 "$((_tt_where_at < _tt_toolbar_at))" \
+		"the row stands above the toolbar"
+
+	# The page's two hint paragraphs were removed on request: the tab bar and
+	# the toolbar name the page, and neither paragraph left a blank slot.
+	assert_not_contains "$(cat "$_tt_view")" 'cbi-map-descr' \
+		"the console carries no top hint"
+	assert_not_contains "$(cat "$_tt_view")" 'Sessions are hosted by tmux' \
+		"and no bottom note"
+	assert_not_contains "$(cat "$_tt_view")" 'survive a page reload' \
+		"nor any fragment of one"
 
 	# What the script draws, per mode.
 	assert_contains "$_tt_src" 'function renderRuntimeLine()' \

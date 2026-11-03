@@ -2,14 +2,14 @@
 --
 -- Four pages, one JSON API:
 --
---   Web Console      /admin/services/fcc/console   interactive terminal
---   Install          /admin/services/fcc/install   runtime lifecycle + diagnostics
---   Configuration    /admin/services/fcc/config    settings + server control
---   Basic Info       /admin/services/fcc/info      runtime monitor
+--   Web Console              /admin/services/fcc/console   interactive terminal
+--   Configuration Management /admin/services/fcc/config    settings + server control
+--   Basic Info               /admin/services/fcc/info      runtime monitor
+--   Install                  /admin/services/fcc/install   runtime lifecycle + diagnostics
 --
--- Install sits between the console and the settings: it is what a new device
--- does first, and it acts on storage rather than on the server Configuration
--- controls.
+-- The tab bar follows the order above: the console first, then the settings and
+-- the monitor an operator consults while the server runs, and Install last,
+-- because it is the rare, long-running action rather than the everyday page.
 --
 -- Every API action follows the same shape: validate every parameter with
 -- luci.fcc.util, run one backend script with an explicit argv, and relay the
@@ -37,11 +37,11 @@ function index()
 	--
 	-- firstchild() forwards the menu entry to whichever child the signed-in user
 	-- may actually reach, so the parent node needs no template of its own.
-	entry({"admin", "services", "fcc"}, firstchild(), _("FCC"), 60)
+	entry({"admin", "services", "fcc"}, firstchild(), _("FCC Agent"), 60)
 	entry({"admin", "services", "fcc", "console"}, template("fcc/console"), _("Web Console"), 10)
-	entry({"admin", "services", "fcc", "install"}, template("fcc/install"), _("Install"), 15)
-	entry({"admin", "services", "fcc", "config"}, template("fcc/config"), _("Configuration"), 20)
+	entry({"admin", "services", "fcc", "config"}, template("fcc/config"), _("Configuration Management"), 20)
 	entry({"admin", "services", "fcc", "info"}, template("fcc/info"), _("Basic Information"), 30)
+	entry({"admin", "services", "fcc", "install"}, template("fcc/install"), _("Install"), 40)
 
 	-- One console session in a browser window of its own, opened from the Web
 	-- Console's toolbar. It is a page, not an API action, and it is routed by

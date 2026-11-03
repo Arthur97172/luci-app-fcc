@@ -10,9 +10,9 @@ Four pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | An interactive session for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, Aider and Antigravity CLI — one tmux session per agent, in the browser (DeepSeek Harness has a browser UI of its own; see below). |
-| **Install** | The agent picker, install/uninstall/complete uninstall, updates, and the diagnostics report (the runtime panel refreshes every two seconds and pauses while the tab is hidden). |
-| **Configuration** | Server settings (address, port, log level), install and backup paths, start/stop/restart, the FCC Admin link, and control of the FCC server on one other machine over SSH. |
+| **Configuration Management** | Local settings (address, port, log level), install and backup paths, start/stop/restart, the FCC Admin link, and control of the FCC server on one other machine over SSH. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
+| **Install** | The agent picker, install/uninstall/complete uninstall, updates, and the diagnostics report (the runtime panel refreshes every two seconds and pauses while the tab is hidden). |
 
 `luci-app-fcc` is a **control layer only**. It ships Lua, JavaScript and POSIX
 shell. It does **not** contain Python, Node.js, `uv`, the FCC runtime or any
@@ -153,7 +153,7 @@ untouched either way.
 
 ## LAN control
 
-The **FCC Server** section of the *Configuration* page carries a
+The **FCC Server** section of the *Configuration Management* page carries a
 `[This router] [LAN]` switch. On `[LAN]` the same four buttons — **Start**,
 **Stop**, **Restart** and **Open FCC Admin** — drive the FCC server on one other
 machine: Windows, Linux, macOS or OpenWrt, one at a time.
@@ -253,7 +253,7 @@ will not start. The path is used only for the session's own `cd`, never
 concatenated into a command, so a path containing spaces is passed as it is.
 Under the Web Console's top hint a line now names where the agent runs:
 `[This router]` shows this router's runtime directory (it follows the install
-path in *Configuration*), and `[LAN]` shows that machine's `user@address` and
+path in *Configuration Management*), and `[LAN]` shows that machine's `user@address` and
 the session's working directory (or "login directory (default)" when none is
 set).
 
@@ -275,13 +275,13 @@ described first and the name is the fallback. While the server is running those
 six lines are re-read every 30 seconds; once it is not running, or the page
 leaves LAN mode, the refresh stops.
 
-The **Agents** section of *Basic Information* follows the same switch:
+The **Agent versions** section of *Basic Information* follows the same switch:
 `[This router]` reads this machine, `[LAN]` reads the other one, with all six
 columns (agent, version, state, PID, uptime, memory (RSS)), and a line above the
 table says which machine the numbers describe. In LAN mode the table is read in
 full when the page opens, when the mode changes, or when **Version status** is
 pressed; after that it is re-read every 30 seconds for state, PID, uptime and
-memory — the same clock Configuration's LAN panel uses. Those re-reads do not
+memory — the same clock Configuration Management's LAN panel uses. Those re-reads do not
 probe versions: the version column keeps the last full read's answer, and only
 **Version status** re-detects over there, so a machine without this package is
 not made to start every agent's CLI twice a minute. A failure writes its reason
@@ -551,7 +551,7 @@ start on its own: upstream's launcher first asks whether FCC has connected it,
 and exits 1 when the answer is no, printing `Connect it on the Integrations
 page first:` followed by the server's loopback address — nothing a browser on
 another machine can open. What it needs is the Integrations page of FCC's own
-admin UI (*Configuration* → **Open FCC Admin**), connected once. The console
+admin UI (*Configuration Management* → **Open FCC Admin**), connected once. The console
 therefore checks first: pick Antigravity CLI, press **New session**, and when
 the answer is no the panel says why and asks whether to **connect now**. On a
 yes it calls the same FCC admin endpoint the Integrations page's **Connect**

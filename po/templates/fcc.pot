@@ -66,10 +66,10 @@ msgstr ""
 msgid "Agent list unavailable"
 msgstr ""
 
-msgid "Agent working directory"
+msgid "Agent versions"
 msgstr ""
 
-msgid "Agents"
+msgid "Agent working directory"
 msgstr ""
 
 msgid "All agents"
@@ -79,9 +79,6 @@ msgid "All unsaved terminal state will be lost."
 msgstr ""
 
 msgid "An absolute path on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only."
-msgstr ""
-
-msgid "An interactive terminal running a coding agent. Sessions keep running after you close this page, and reattaching to one restores its screen."
 msgstr ""
 
 msgid "Antigravity CLI could not be connected:"
@@ -159,7 +156,7 @@ msgstr ""
 msgid "Component"
 msgstr ""
 
-msgid "Configuration"
+msgid "Configuration Management"
 msgstr ""
 
 msgid "Connect now?"
@@ -220,6 +217,9 @@ msgid "Expected"
 msgstr ""
 
 msgid "FCC"
+msgstr ""
+
+msgid "FCC Agent"
 msgstr ""
 
 msgid "FCC Runtime"
@@ -294,6 +294,9 @@ msgstr ""
 msgid "Loading…"
 msgstr ""
 
+msgid "Local settings"
+msgstr ""
+
 msgid "Local system"
 msgstr ""
 
@@ -340,9 +343,6 @@ msgid "Not installed"
 msgstr ""
 
 msgid "Now"
-msgstr ""
-
-msgid "On the LAN side the agent itself runs on the other machine, over SSH."
 msgstr ""
 
 msgid "One-time authorization"
@@ -451,12 +451,6 @@ msgid "Session has exited."
 msgstr ""
 
 msgid "Session is still running."
-msgstr ""
-
-msgid "Sessions are hosted by tmux on the router, so they survive a page reload or a browser restart. Closing a session from its tab ends the agent process."
-msgstr ""
-
-msgid "Settings"
 msgstr ""
 
 msgid "Settings saved."
