@@ -44,6 +44,7 @@
 		console: null,      // last answer from api/console
 		consoleAt: 0,       // when that answer arrived, for the stale re-read
 		target: null,       // 'local' | 'lan', as last read from UCI
+		runtime: null,      // where that target's agent runs, for #fcc-term-where
 		listTimer: null
 	};
 
@@ -105,6 +106,13 @@
 			return FCC._('The LAN machine could not be reached. Check that it is on and that SSH is enabled.');
 		case 'no-agent-tools':
 			return FCC._('The LAN machine does not run luci-app-fcc, so its agents cannot be listed.');
+		case 'workdir-invalid':
+			return FCC._('The working directory set for the LAN machine is not a valid absolute path. Correct it in Configuration → FCC Server.');
+		/* The setting is fine and the machine was reachable; the directory is
+		 * simply not there any more. Said apart from invalid so the answer
+		 * points at the path rather than at how it was typed. */
+		case 'workdir-missing':
+			return FCC._('The working directory set for the LAN machine does not exist there. Create it on that machine, or correct the path in Configuration → FCC Server.');
 		case 'unreadable':
 			return FCC._('The LAN machine answered with something unexpected.');
 		case 'invalid-agent':
@@ -134,7 +142,15 @@
 			state.console = r || {};
 			state.consoleAt = Date.now();
 			state.target = (r && r.target === 'lan') ? 'lan' : 'local';
+			state.runtime = {
+				fcc_root: (r && r.fcc_root) || '',
+				host: (r && r.host) || '',
+				user: (r && r.user) || '',
+				workdir: (r && r.workdir) || '',
+				workdir_enabled: (r && r.workdir_enabled) === true
+			};
 			renderAgentLabel();
+			renderRuntimeLine();
 			var data = (r && r.agents) || {};
 			state.agents = Object.keys(data).map(function (id) {
 				return { id: id, name: data[id].name, installed: data[id].installed };
@@ -154,6 +170,36 @@
 		label.textContent = state.target === 'lan'
 			? FCC._('Agent [LAN]')
 			: FCC._('Agent [This router]');
+	}
+
+	/* Where the agent will run. The local side names the runtime root its
+	 * launchers live under; the LAN side names the account and the directory a
+	 * new session starts in. A Linux, macOS or Windows machine that carries
+	 * only the upstream install has no runtime directory to name — the agent
+	 * is resolved from that account's PATH — so the account and the working
+	 * directory are the honest answer there. The stored path is shown only
+	 * while it is enabled; otherwise the line says which default applies. */
+	function renderRuntimeLine() {
+		var box = FCC.$('#fcc-term-where');
+		if (!box) { return; }
+		var r = state.runtime || {};
+		var parts = [];
+		if (state.target === 'lan') {
+			var who = (r.user || '') + (r.host ? '@' + r.host : '');
+			var dir = (r.workdir_enabled === true && r.workdir)
+				? r.workdir
+				: FCC._('login directory (default)');
+			parts.push(document.createTextNode(FCC._('LAN machine:') + ' '));
+			if (who) { parts.push(document.createTextNode(who)); }
+			parts.push(document.createTextNode(' · ' + FCC._('working directory:') + ' '));
+			parts.push(FCC.el('code', { text: dir }));
+		} else if (r.fcc_root) {
+			parts.push(document.createTextNode(FCC._('This router · agent runtime:') + ' '));
+			parts.push(FCC.el('code', { text: r.fcc_root }));
+		}
+		box.innerHTML = '';
+		parts.forEach(function (p) { box.appendChild(p); });
+		box.hidden = (parts.length === 0);
 	}
 
 	/**
@@ -207,8 +253,21 @@
 	function refreshTarget() {
 		return FCC.api('console_target', {}, { method: 'GET' }).then(function (r) {
 			var t = (r && r.target === 'lan') ? 'lan' : 'local';
+			/* The working directory is a setting, not a state of the far
+			 * machine: the poll already carries it, so a change made on the
+			 * Configuration tab reaches this line without the SSH round trip
+			 * that a target change costs. */
+			state.runtime = {
+				fcc_root: (r && r.fcc_root) || '',
+				host: (r && r.host) || '',
+				user: (r && r.user) || '',
+				workdir: (r && r.workdir) || '',
+				workdir_enabled: (r && r.workdir_enabled) === true
+			};
 			if (t !== state.target || Date.now() - state.consoleAt > 60000) {
 				loadConsole();
+			} else {
+				renderRuntimeLine();
 			}
 		}).catch(function () { /* try again on the next tick */ });
 	}

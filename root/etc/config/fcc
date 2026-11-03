@@ -38,6 +38,14 @@ config fcc 'main'
 	option remote_platform 'linux'
 	option remote_service 'fcc'
 	option remote_fingerprint ''
+	# Where a new LAN session starts the agent. Disabled means the account's
+	# login directory, which is what every session used before this setting
+	# existed. The path is stored even while disabled so re-ticking the box
+	# restores it; it is an absolute path on the far machine and is validated
+	# again by remote.sh before it is used. Applies to new sessions only — a
+	# tmux pane keeps the directory it was started in.
+	option remote_workdir_enabled '0'
+	option remote_workdir ''
 
 # NOTE: API keys / provider credentials are NEVER stored here.
 # They live in the FCC Admin UI (FCC's own configuration) and are managed by

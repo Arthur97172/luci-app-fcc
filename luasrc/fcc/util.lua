@@ -663,6 +663,45 @@ function valid_remote_platform(p)
 	return p
 end
 
+--- A working directory for a LAN session, in the form its platform accepts.
+--
+-- This is not the install path rule: the directory belongs to the far machine's
+-- account, so nothing here is a system directory this router should refuse. The
+-- value is interpolated into the remote command, and the rule is that it must
+-- survive being quoted as one word on either platform. The quote characters are
+-- refused on both: POSIX could escape one, PowerShell's single-quoted literal
+-- could double it, but then the two validators would have to disagree and the
+-- command would carry a value whose meaning depends on the platform. Control
+-- characters are refused because the remote command is one line.
+--
+-- `~` is refused rather than expanded: inside the single quotes both platforms
+-- use, it would reach the directory literally, and a path that looks like a
+-- home-directory shorthand but is not one is worse than an error. remote.sh
+-- implements the same rule again before it builds the command.
+function valid_remote_workdir(p, platform)
+	if type(p) ~= "string" then return nil end
+	p = p:gsub("^%s+", ""):gsub("%s+$", "")
+	if p == "" or #p > 255 then return nil end
+	if p:find("\0", 1, true) or p:match("%c") then return nil end
+	if p:find("'", 1, true) or p:find('"', 1, true) then return nil end
+	if platform == "windows" then
+		-- A drive-letter path or a UNC path. The separators may be either
+		-- slash: PowerShell accepts both, and a value pasted from Explorer
+		-- carries backslashes.
+		if not (p:match("^%a:[/\\]") or p:match("^\\\\")) then return nil end
+		for seg in p:gmatch("[^/\\]+") do
+			if seg == ".." then return nil end
+		end
+		return p
+	end
+	if not p:match("^/") then return nil end
+	if p:find("~", 1, true) then return nil end
+	for seg in p:gmatch("[^/]+") do
+		if seg == ".." then return nil end
+	end
+	return p
+end
+
 --- Did the platform name get typed into the service field?
 -- The platform select and the service field sit next to each other in Advanced
 -- settings, and the platform name has been entered in the second. No init

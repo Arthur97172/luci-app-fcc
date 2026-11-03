@@ -241,6 +241,22 @@ page says it is not installed and to install it there, rather than pointing at
 a log that has never been written. A machine without `pgrep` skips that check
 rather than passing on a guess.
 
+**Working directory.** Outside the *Advanced settings* fold the LAN panel has a
+**Run new sessions in a custom directory** checkbox. Ticked, with an absolute
+path beside it (for example `/home/arthur/claude/`), new sessions the Web
+Console starts on that machine begin there; unticked, they begin in that
+account's login directory. The setting applies to **new sessions only** — an
+existing session keeps the directory it started in — and the path must exist on
+that machine: it is checked when saved and again on that machine before a
+session is created, so a mistake is named rather than surfacing as an agent that
+will not start. The path is used only for the session's own `cd`, never
+concatenated into a command, so a path containing spaces is passed as it is.
+Under the Web Console's top hint a line now names where the agent runs:
+`[This router]` shows this router's runtime directory (it follows the install
+path in *Configuration*), and `[LAN]` shows that machine's `user@address` and
+the session's working directory (or "login directory (default)" when none is
+set).
+
 While the server is running the LAN panel shows the same six lines as
 `[This router]`: running, version, process ID, uptime, memory (RSS) and
 listening on. A machine carrying this package answers with its own `status.sh`;

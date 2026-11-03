@@ -118,6 +118,51 @@ fcc_remote_valid_platform() {
 	return 1
 }
 
+fcc_remote_valid_workdir() {
+	# The same rule as util.valid_remote_workdir: an absolute path on the far
+	# platform that survives being quoted as one word. Quote characters and
+	# control characters are refused; `~` is refused rather than expanded
+	# because the quoting below would stop it from expanding anyway.
+	_vw_p="$1"
+	_vw_plat="${2:-$(fcc_remote_platform)}"
+	[ -n "$_vw_p" ] || return 1
+	[ "${#_vw_p}" -le 255 ] || return 1
+	case "$_vw_p" in
+		*"'"*|*'"'*) return 1 ;;
+	esac
+	printf '%s' "$_vw_p" | LC_ALL=C grep -q '[[:cntrl:]]' && return 1
+	# `..` as a whole segment, with either separator. A path with a literal
+	# double dot inside a name ("notes..old") is left alone.
+	_vw_cmp="$(printf '%s' "$_vw_p" | tr '\\' '/')"
+	case "/$_vw_cmp/" in
+		*/../*) return 1 ;;
+	esac
+	case "$_vw_plat" in
+		windows)
+			case "$_vw_p" in
+				[A-Za-z]:[\\/]*|\\\\*) : ;;
+				*) return 1 ;;
+			esac
+			;;
+		*)
+			case "$_vw_p" in
+				/*) : ;;
+				*) return 1 ;;
+			esac
+			case "$_vw_p" in
+				*~*) return 1 ;;
+			esac
+			;;
+	esac
+	return 0
+}
+
+fcc_remote_win_ps_quote() {
+	# PowerShell's single-quoted literal: a quote inside is written twice.
+	# Validation already refuses one; this keeps the two rules independent.
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
 fcc_remote_valid_port() {
 	_vo_p="$1"
 	case "$_vo_p" in
@@ -222,6 +267,13 @@ fcc_remote_service() {
 	printf '%s' "$_sv_name"
 }
 fcc_remote_fingerprint() { fcc_uci_get main remote_fingerprint ''; }
+fcc_remote_workdir_enabled() {
+	case "$(fcc_uci_get main remote_workdir_enabled 0)" in
+		1|true|yes|on) return 0 ;;
+	esac
+	return 1
+}
+fcc_remote_workdir() { fcc_uci_get main remote_workdir ''; }
 
 fcc_remote_config_ok() {
 	# Everything a command needs except the key and host trust, which are
@@ -584,6 +636,32 @@ fcc_remote_ssh() {
 		-o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
 		-i "$FCC_REMOTE_KEY" -p "$_rs_sport" \
 		-l "$_rs_user" "$_rs_host" "$1" 2>&1
+}
+
+# Does the configured working directory exist on the far side?
+#
+# Asked before the pane is created, and only when the feature is in use: a
+# directory that was renamed away would otherwise leave a terminal that exits
+# on its first statement. The answer is a word, not an exit status alone, so a
+# machine that answered with something else is not mistaken for a missing
+# directory. 0 exists, 1 missing, 2 the far side could not be reached.
+fcc_remote_workdir_ok() {
+	_wk_dir="$1"
+	case "$(fcc_remote_platform)" in
+		windows)
+			_wk_script="if (Test-Path -LiteralPath $(fcc_remote_win_ps_quote "$_wk_dir") -PathType Container) { Write-Output 'workdir present' } else { Write-Output 'workdir missing' }"
+			_wk_cmd="$(fcc_remote_win_cmd "$_wk_script")" ;;
+		*)
+			_wk_inner="if [ -d $(fcc_shquote "$_wk_dir") ]; then echo 'workdir present'; else echo 'workdir missing'; fi"
+			_wk_cmd="sh -c $(fcc_shquote "$_wk_inner")" ;;
+	esac
+	_wk_out="$(fcc_remote_ssh "$_wk_cmd")"
+	_wk_code=$?
+	[ "$_wk_code" -eq 255 ] && return 2
+	case "$_wk_out" in
+		*"workdir present"*) return 0 ;;
+	esac
+	return 1
 }
 
 # Drop the lines the local ssh client writes about itself.
@@ -1723,7 +1801,15 @@ fcc_remote_win_session_script() {
 	# launcher. Starting the server is not this command's job — the launcher is
 	# what the terminal is for. The launcher is a registry name, never anything
 	# a user typed, so quoting it with PowerShell's single quotes is enough.
-	printf '%s' "$(fcc_remote_win_path_script); & '$1'"
+	#
+	# An optional working directory goes first, with -ErrorAction Stop: without
+	# it Set-Location writes an error and continues, and the agent would start in
+	# the old directory while the console said it had moved.
+	_ws_cd=""
+	if [ -n "${2:-}" ]; then
+		_ws_cd="Set-Location -LiteralPath $(fcc_remote_win_ps_quote "$2") -ErrorAction Stop; "
+	fi
+	printf '%s' "$_ws_cd$(fcc_remote_win_path_script); & '$1'"
 }
 
 fcc_remote_console_cmd() {
@@ -2151,6 +2237,19 @@ fcc_remote_session_command() {
 		|| { fcc_remote_console_error "invalid-agent" "unknown agent"; return 2; }
 	fcc_remote_console_ready || return 1
 
+	# The working directory is a setting about new sessions only. It is read
+	# here, not passed by the page, for the same reason the target is: the
+	# Configuration tab is the one place that writes it. Disabled means the
+	# login directory, and the stored path is left alone for the next time the
+	# box is ticked.
+	_sc_workdir=""
+	if fcc_remote_workdir_enabled; then
+		_sc_workdir="$(fcc_remote_workdir)"
+		fcc_remote_valid_workdir "$_sc_workdir" "$(fcc_remote_platform)" \
+			|| { fcc_remote_console_error "workdir-invalid" \
+				"the configured working directory is not a valid absolute path"; return 2; }
+	fi
+
 	_sc_ssh="$(command -v ssh 2>/dev/null)" \
 		|| { fcc_remote_console_error "no-ssh-client" "$(fcc_remote_client_message)"; return 1; }
 	fcc_remote_openssh "$_sc_ssh" \
@@ -2188,6 +2287,21 @@ fcc_remote_session_command() {
 				fcc_remote_console_error "no-agent-tools" \
 					"the LAN machine does not have $_sc_launcher with its client"
 				return 1 ;;
+		esac
+	fi
+
+	# The directory is asked about once, before the pane exists. This costs one
+	# more connection only when the feature is in use, and it turns a terminal
+	# that would die on its first statement into a page notice that names the
+	# setting to fix.
+	if [ -n "$_sc_workdir" ]; then
+		fcc_remote_workdir_ok "$_sc_workdir"
+		case $? in
+			0) : ;;
+			2) fcc_remote_console_error "unreachable" \
+				"the LAN machine could not be reached"; return 1 ;;
+			*) fcc_remote_console_error "workdir-missing" \
+				"the working directory does not exist on the LAN machine"; return 1 ;;
 		esac
 	fi
 
@@ -2238,21 +2352,32 @@ fcc_remote_session_command() {
 		_sc_pre="printf '%s\n' 'FCC_DSH_TUNNEL=http://$_sc_bind:$_sc_port/'; "
 	fi
 
+	# The POSIX working-directory prefix. `|| exit 1` is deliberate: a cd that
+	# failed must not fall through to an agent that would start in the login
+	# directory while the console said otherwise. The directory was checked a
+	# moment ago; this is the same-state guard for anything that moved between
+	# the check and the pane. Windows builds its own form in
+	# fcc_remote_win_session_script.
+	_sc_cd=""
+	if [ -n "$_sc_workdir" ]; then
+		_sc_cd="cd $(fcc_shquote "$_sc_workdir") || exit 1; "
+	fi
+
 	# Assembled last: the harness words depend on the far side's answer above.
 	case "$(fcc_remote_platform)" in
 		linux|macos)
-			_sc_remote="$(fcc_shquote "${_sc_pre}export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher$_sc_args")" ;;
+			_sc_remote="$(fcc_shquote "${_sc_cd}${_sc_pre}export PATH=\"$FCC_REMOTE_BARE_PATH:\$PATH\"; exec $_sc_launcher$_sc_args")" ;;
 		windows)
 			# cmd.exe parses the one double-quoted argument and hands the script
 			# to PowerShell untouched; fcc_shquote keeps the whole thing one word
 			# on this side, so ssh sends it as one command.
-			_sc_remote="$(fcc_shquote "$(fcc_remote_win_cmd "$(fcc_remote_win_session_script "$_sc_launcher")")")" ;;
+			_sc_remote="$(fcc_shquote "$(fcc_remote_win_cmd "$(fcc_remote_win_session_script "$_sc_launcher" "$_sc_workdir")")")" ;;
 		*)
 			# The marker line brings shell syntax with it (quotes and `;`), so
 			# the command is quoted as a whole. Without it the words stay plain:
 			# they are the ones fcc-env and the launcher expect.
-			if [ -n "$_sc_pre" ]; then
-				_sc_remote="$(fcc_shquote "${_sc_pre}/usr/bin/fcc-env $_sc_launcher$_sc_args")"
+			if [ -n "$_sc_pre" ] || [ -n "$_sc_cd" ]; then
+				_sc_remote="$(fcc_shquote "${_sc_cd}${_sc_pre}/usr/bin/fcc-env $_sc_launcher$_sc_args")"
 			else
 				_sc_remote="/usr/bin/fcc-env $_sc_launcher$_sc_args"
 			fi ;;
@@ -2484,6 +2609,9 @@ fcc_remote_status() {
 	_st_platform="$(fcc_remote_platform)"
 	_st_service="$(fcc_remote_service)"
 	_st_fp="$(fcc_remote_fingerprint)"
+	_st_wd_enabled=0
+	fcc_remote_workdir_enabled && _st_wd_enabled=1
+	_st_wd="$(fcc_remote_workdir)"
 
 	# The page offers the key's Generate button while key_ready is false, which
 	# is what makes an unusable key repairable. The word behind it says which
@@ -2527,10 +2655,13 @@ fcc_remote_status() {
 		"$(fcc_json_str "$_st_user")" \
 		"$(fcc_json_str "$_st_sport")" \
 		"$(fcc_json_str "$_st_aport")"
-	printf '"platform":%s,"service":%s,"fingerprint":%s},' \
+	printf '"platform":%s,"service":%s,"fingerprint":%s,' \
 		"$(fcc_json_str "$_st_platform")" \
 		"$(fcc_json_str "$_st_service")" \
 		"$(fcc_json_str "$_st_fp")"
+	printf '"workdir_enabled":%s,"workdir":%s},' \
+		"$(fcc_json_bool "$_st_wd_enabled")" \
+		"$(fcc_json_str "$_st_wd")"
 	printf '"key_ready":%s,"key_state":%s,"public_key":%s,"trusted":%s,"ready":%s,' \
 		"$(fcc_json_bool "$_st_key")" \
 		"$(fcc_json_str "$_st_key_state")" \

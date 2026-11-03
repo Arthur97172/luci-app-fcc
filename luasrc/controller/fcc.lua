@@ -719,6 +719,30 @@ function act_remote_set()
 	local service = util.valid_remote_service(http.formvalue("service") or "fcc")
 	if not service then return fail("invalid service name") end
 
+	-- The working directory is an absolute path on the far machine, used only
+	-- when the box beside it is ticked. Disabled means "stored, not in effect":
+	-- the page keeps the last path so re-ticking it restores the same directory,
+	-- the same way the mode panels keep their values while hidden. A value that
+	-- is not a usable path is discarded rather than stored, and the page is told
+	-- so it can refill the field from the answer.
+	local wd_enabled = (http.formvalue("workdir_enabled") == "1")
+	local workdir = util.trim(http.formvalue("workdir") or "")
+	local workdir_reset = false
+	if workdir ~= "" then
+		local valid = util.valid_remote_workdir(workdir, platform)
+		if valid then
+			workdir = valid
+		elseif wd_enabled then
+			return fail("invalid working directory")
+		else
+			workdir = ""
+			workdir_reset = true
+		end
+	end
+	if wd_enabled and workdir == "" then
+		return fail("a working directory is required")
+	end
+
 	-- The service field is directly under the platform select, and the platform
 	-- name has been typed into it. Stored as it is, every state check and every
 	-- start asks the remote machine for /etc/init.d/OpenWrt and fails — a
@@ -746,6 +770,8 @@ function act_remote_set()
 	c:set("fcc", "main", "remote_admin_port", tostring(aport))
 	c:set("fcc", "main", "remote_platform", platform)
 	c:set("fcc", "main", "remote_service", service)
+	c:set("fcc", "main", "remote_workdir_enabled", wd_enabled and "1" or "0")
+	c:set("fcc", "main", "remote_workdir", workdir)
 	if host_changed then
 		-- The pinned key belonged to the old endpoint.
 		c:set("fcc", "main", "remote_fingerprint", "")
@@ -763,7 +789,8 @@ function act_remote_set()
 
 	json_out('{"ok":true,"changed":' .. (changed and "true" or "false") ..
 		',"trust_reset":' .. (host_changed and "true" or "false") ..
-		',"service_reset":' .. (service_reset and "true" or "false") .. '}')
+		',"service_reset":' .. (service_reset and "true" or "false") ..
+		',"workdir_reset":' .. (workdir_reset and "true" or "false") .. '}')
 end
 
 --- Switch the FCC Server section between this router and the LAN.
@@ -928,6 +955,32 @@ function act_sessions()
 	relay("session", { "list" })
 end
 
+--- Where the console's agent will run, as the page describes it.
+--
+-- The local side's answer is the runtime root the launchers live under, which
+-- follows the Configuration tab's install path. The LAN side's is the account
+-- and working directory: a Linux, macOS or Windows machine that carries only
+-- the upstream install has no FCC runtime directory to name, and the agent is
+-- resolved from that account's PATH. The working directory is reported even
+-- when the box is unticked — the page then says "login directory (default)" —
+-- because the stored path is what re-ticking the box restores.
+local function console_runtime(c)
+	local host, user, wd, wd_on = "", "", "", false
+	if c then
+		host = c:get("fcc", "main", "remote_host") or ""
+		user = c:get("fcc", "main", "remote_user") or ""
+		wd_on = (c:get("fcc", "main", "remote_workdir_enabled") == "1")
+		wd = c:get("fcc", "main", "remote_workdir") or ""
+	end
+	return {
+		host = host,
+		user = user,
+		workdir = wd,
+		workdir_enabled = wd_on,
+		fcc_root = paths.fcc_root(),
+	}
+end
+
 --- Which machine the console is controlling, as the Configuration tab set it.
 ---
 --- Read-only and local: no SSH, no backend script, one UCI read. The page polls
@@ -936,14 +989,15 @@ end
 --- the other machine's agents.
 function act_console_target()
 	local target = "local"
-	local host = ""
 	local c = cfg_cursor()
-	if c then
-		if c:get("fcc", "main", "control_target") == "lan" then target = "lan" end
-		host = c:get("fcc", "main", "remote_host") or ""
-	end
+	if c and c:get("fcc", "main", "control_target") == "lan" then target = "lan" end
+	local r = console_runtime(c)
 	json_out('{"target":' .. util.json_encode(target) ..
-		',"host":' .. util.json_encode(host) .. '}')
+		',"host":' .. util.json_encode(r.host) ..
+		',"user":' .. util.json_encode(r.user) ..
+		',"workdir_enabled":' .. (r.workdir_enabled and "true" or "false") ..
+		',"workdir":' .. util.json_encode(r.workdir) ..
+		',"fcc_root":' .. util.json_encode(r.fcc_root) .. '}')
 end
 
 --- The agents a new session could start, on whichever machine is targeted.
@@ -962,17 +1016,30 @@ function act_console()
 	if target == "local" then
 		local out = run("agent", { "list" })
 		if not looks_like_json(out) then out = "{}" end
-		return json_out('{"ok":true,"target":"local","agents":' .. util.trim(out) .. '}')
+		return json_out('{"ok":true,"target":"local","fcc_root":'
+			.. util.json_encode(paths.fcc_root()) ..
+			',"agents":' .. util.trim(out) .. '}')
 	end
 
 	local out = util.trim(run("remote", { "console" }))
 	local d = util.json_decode(out)
+	-- The where line names the configured machine and directory even when the
+	-- probe fails: that is exactly when the page has to say which machine it
+	-- could not reach. These fields come from UCI, so they are known before the
+	-- round trip and on every branch.
+	local rt = console_runtime(c)
+	local where = ',"user":' .. util.json_encode(rt.user) ..
+		',"workdir_enabled":' .. (rt.workdir_enabled and "true" or "false") ..
+		',"workdir":' .. util.json_encode(rt.workdir) ..
+		',"fcc_root":' .. util.json_encode(rt.fcc_root)
 	if type(d) ~= "table" then
-		return json_out('{"ok":false,"target":"lan","reason":"unreadable","error":'
+		return json_out('{"ok":false,"target":"lan","host":'
+			.. util.json_encode(rt.host) .. where .. ',"reason":"unreadable","error":'
 			.. util.json_encode(out:sub(1, 300)) .. '}')
 	end
 	if d.ok ~= true then
-		return json_out('{"ok":false,"target":"lan","reason":'
+		return json_out('{"ok":false,"target":"lan","host":'
+			.. util.json_encode(rt.host) .. where .. ',"reason":'
 			.. util.json_encode(d.reason or "unreadable") ..
 			',"error":' .. util.json_encode(d.error or "") .. '}')
 	end
@@ -981,6 +1048,7 @@ function act_console()
 	local running = (server.running == true)
 	local list = type(status.agents) == "table" and status.agents or {}
 	json_out('{"ok":true,"target":"lan","host":' .. util.json_encode(d.host or "") ..
+		where ..
 		',"running":' .. (running and "true" or "false") ..
 		',"agents":' .. util.json_encode(list) .. '}')
 end

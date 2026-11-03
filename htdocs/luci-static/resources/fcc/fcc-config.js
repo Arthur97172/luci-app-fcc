@@ -210,6 +210,11 @@
 		admin_port: '8082',
 		platform: 'linux',
 		service: 'fcc',
+		/* The agent's working directory on the LAN machine. Stored while the
+		 * box is clear so re-ticking it restores the same path; enabled is what
+		 * decides whether a new session uses it. */
+		workdir_enabled: false,
+		workdir: '',
 		fingerprint: '',
 		public_key: '',
 		key_ready: false,
@@ -268,6 +273,13 @@
 			FCC._('The platform selected for the LAN machine is not valid.'),
 		'invalid fingerprint':
 			FCC._('The host key fingerprint is not valid.'),
+		/* The path is checked by both sides — the controller before it stores
+		 * it, remote.sh before it builds the command — so this sentence covers
+		 * either refusal. */
+		'invalid working directory':
+			FCC._('The working directory is not a valid absolute path on the LAN machine.'),
+		'a working directory is required':
+			FCC._('The box is ticked but the working directory is empty. Enter a path, or clear the box.'),
 		'could not create a temporary directory':
 			FCC._('A temporary directory could not be created on this router.'),
 		'could not store the remote host key':
@@ -558,7 +570,9 @@
 			ssh_port: FCC.$('#fcc-remote-ssh-port').value || '22',
 			admin_port: FCC.$('#fcc-remote-admin-port').value || '8082',
 			platform: FCC.$('#fcc-remote-platform').value,
-			service: FCC.$('#fcc-remote-service').value || 'fcc'
+			service: FCC.$('#fcc-remote-service').value || 'fcc',
+			workdir_enabled: FCC.$('#fcc-remote-workdir-enable').checked ? '1' : '0',
+			workdir: FCC.$('#fcc-remote-workdir').value
 		};
 	}
 
@@ -913,6 +927,17 @@
 		updateRemoteControls();
 	}
 
+	/* The path is editable only while the box is ticked. Its value stays in the
+	 * field while the box is clear: emptying it would make re-ticking the box
+	 * forget the directory that was already typed, and the stored path is what
+	 * the next tick is meant to restore. */
+	function syncWorkdirControls() {
+		var box = FCC.$('#fcc-remote-workdir-enable');
+		var input = FCC.$('#fcc-remote-workdir');
+		if (!box || !input) { return; }
+		input.disabled = !box.checked;
+	}
+
 	function fillRemoteFields() {
 		var map = {
 			'#fcc-remote-host': remote.host,
@@ -928,6 +953,14 @@
 			 * the address is half-written would undo the edit. */
 			if (el && el !== document.activeElement) { el.value = map[sel]; }
 		});
+
+		var box = FCC.$('#fcc-remote-workdir-enable');
+		if (box && box !== document.activeElement) {
+			box.checked = remote.workdir_enabled === true;
+		}
+		var wd = FCC.$('#fcc-remote-workdir');
+		if (wd && wd !== document.activeElement) { wd.value = remote.workdir || ''; }
+		syncWorkdirControls();
 	}
 
 	function loadRemote() {
@@ -940,6 +973,8 @@
 			remote.admin_port = c.admin_port || '8082';
 			remote.platform = c.platform || 'linux';
 			remote.service = c.service || 'fcc';
+			remote.workdir_enabled = c.workdir_enabled === true;
+			remote.workdir = c.workdir || '';
 			remote.fingerprint = c.fingerprint || '';
 			remote.public_key = d.public_key || '';
 			remote.key_ready = d.key_ready === true;
@@ -1040,6 +1075,14 @@
 				if (r.service_reset) {
 					FCC.notice(remoteStatus(), 'warn',
 						FCC._('The service name was the platform name. It is now fcc — change it if the init script has another name.'));
+				}
+				/* The path is validated on every save, including while the box is
+				 * clear. A value that is not usable is discarded rather than kept
+				 * in UCI; say so, because the field is about to be refilled from
+				 * the answer and would otherwise look like it lost the text. */
+				if (r.workdir_reset) {
+					FCC.notice(remoteStatus(), 'warn',
+						FCC._('The working directory was cleared because it is not a valid absolute path.'));
 				}
 				return loadRemote().then(function () { return r; });
 			})
@@ -1313,6 +1356,25 @@
 				field.addEventListener('input', previewCommands);
 			}
 		});
+
+		/* The working directory saves like every other remote setting, but the
+		 * tick also decides whether the path below it can be edited. Ticking it
+		 * puts the cursor in the path: the next thing to do is type one. */
+		var wdBox = FCC.$('#fcc-remote-workdir-enable');
+		if (wdBox) {
+			wdBox.addEventListener('change', function () {
+				syncWorkdirControls();
+				if (wdBox.checked) {
+					var input = FCC.$('#fcc-remote-workdir');
+					if (input) { input.focus(); }
+				}
+				saveRemoteConfig();
+			});
+		}
+		var wdInput = FCC.$('#fcc-remote-workdir');
+		if (wdInput) {
+			wdInput.addEventListener('change', function () { saveRemoteConfig(); });
+		}
 
 		loadConfig().catch(function (err) {
 			FCC.notice(FCC.$('#fcc-config-status'), 'fail', err.message);

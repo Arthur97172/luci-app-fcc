@@ -303,6 +303,47 @@ check("valid_remote_platform/rejects_empty", util.valid_remote_platform("") == n
 check("valid_remote_platform/rejects_nil",   util.valid_remote_platform(nil) == nil)
 
 -- ---------------------------------------------------------------------------
+-- valid_remote_workdir — an absolute path on the far platform, one word
+--
+-- The path becomes a `cd` statement in the pane's command, so it is checked
+-- for the two things that would stop it surviving that: a quote the quoting
+-- would not contain, and any traversal that would land the agent somewhere the
+-- console does not name. It is not a sanitiser — the controller keeps what it
+-- stores to this grammar, and remote.sh checks the stored value again.
+-- ---------------------------------------------------------------------------
+check("valid_remote_workdir/posix",  util.valid_remote_workdir("/home/arthur/claude", "linux") == "/home/arthur/claude")
+check("valid_remote_workdir/root",   util.valid_remote_workdir("/", "linux") == "/")
+check("valid_remote_workdir/macos",  util.valid_remote_workdir("/Users/arthur/p", "macos") == "/Users/arthur/p")
+check("valid_remote_workdir/space",  util.valid_remote_workdir("/home/arthur/my project", "linux") == "/home/arthur/my project")
+check("valid_remote_workdir/dots",   util.valid_remote_workdir("/home/a/notes..old", "linux") == "/home/a/notes..old")
+check("valid_remote_workdir/trim",   util.valid_remote_workdir("  /home/arthur  ", "linux") == "/home/arthur")
+check("valid_remote_workdir/no_platform", util.valid_remote_workdir("/home/arthur") == "/home/arthur")
+check("valid_remote_workdir/rejects_relative", util.valid_remote_workdir("home/arthur", "linux") == nil)
+check("valid_remote_workdir/rejects_tilde",    util.valid_remote_workdir("~/claude", "linux") == nil)
+check("valid_remote_workdir/rejects_tilde_mid", util.valid_remote_workdir("/home/~arthur", "linux") == nil)
+check("valid_remote_workdir/rejects_traversal", util.valid_remote_workdir("/home/../etc", "linux") == nil)
+check("valid_remote_workdir/rejects_dotdot_tail", util.valid_remote_workdir("/home/arthur/..", "linux") == nil)
+check("valid_remote_workdir/rejects_squote",  util.valid_remote_workdir("/home/a'b", "linux") == nil)
+check("valid_remote_workdir/rejects_dquote",  util.valid_remote_workdir('/home/a"b', "linux") == nil)
+check("valid_remote_workdir/rejects_newline", util.valid_remote_workdir("/home/a\nb", "linux") == nil)
+check("valid_remote_workdir/rejects_tab",     util.valid_remote_workdir("/home/a\tb", "linux") == nil)
+check("valid_remote_workdir/rejects_long",    util.valid_remote_workdir("/" .. string.rep("a", 255), "linux") == nil)
+check("valid_remote_workdir/rejects_empty",   util.valid_remote_workdir("", "linux") == nil)
+check("valid_remote_workdir/rejects_nil",     util.valid_remote_workdir(nil, "linux") == nil)
+check("valid_remote_workdir/rejects_windows_path_on_posix", util.valid_remote_workdir("C:\\Users\\arthur", "linux") == nil)
+
+-- Windows has drive letters and UNC shares instead of one root, and either
+-- separator means the same thing there.
+local _wdrive = "C:\\Users\\arthur\\project"
+check("valid_remote_workdir/windows_drive", util.valid_remote_workdir(_wdrive, "windows") == _wdrive)
+check("valid_remote_workdir/windows_fwd",   util.valid_remote_workdir("C:/Users/arthur", "windows") == "C:/Users/arthur")
+check("valid_remote_workdir/windows_unc",   util.valid_remote_workdir("\\\\nas\\share\\p", "windows") == "\\\\nas\\share\\p")
+check("valid_remote_workdir/windows_traversal", util.valid_remote_workdir("C:\\Users\\..\\Windows", "windows") == nil)
+check("valid_remote_workdir/windows_traversal_fwd", util.valid_remote_workdir("C:/Users/../Windows", "windows") == nil)
+check("valid_remote_workdir/windows_no_drive", util.valid_remote_workdir("\\Users\\arthur", "windows") == nil)
+check("valid_remote_workdir/windows_relative", util.valid_remote_workdir("Users\\arthur", "windows") == nil)
+
+-- ---------------------------------------------------------------------------
 -- valid_fingerprint — one SHA256: base64 key fingerprint
 -- ---------------------------------------------------------------------------
 local _fp43 = "SHA256:" .. string.rep("A", 43)

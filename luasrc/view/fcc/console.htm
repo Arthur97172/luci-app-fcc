@@ -61,6 +61,12 @@
 		<%:An interactive terminal running a coding agent. Sessions keep running after you close this page, and reattaching to one restores its screen.%>
 	</div>
 
+	<!-- Where the agent will run: the runtime root on this router, or the account
+	     and working directory on the LAN machine. fcc-terminal.js rewrites this
+	     line from the same answer that rewrites the agent label below. It starts
+	     hidden because the first answer decides which of the two it is. -->
+	<div id="fcc-term-where" class="fcc-term-where fcc-muted" hidden></div>
+
 	<div class="fcc-toolbar">
 		<!-- Which machine the dropdown and the New session button act on follows
 		     the Configuration tab's switch; fcc-terminal.js rewrites this text

@@ -89,6 +89,9 @@ msgstr "智能体意外退出。"
 msgid "Agent list unavailable"
 msgstr "智能体列表不可用"
 
+msgid "Agent working directory"
+msgstr "智能体工作目录"
+
 msgid "Agents"
 msgstr "智能体"
 
@@ -97,6 +100,14 @@ msgstr "全部智能体"
 
 msgid "All unsaved terminal state will be lost."
 msgstr "所有未保存的终端状态都将丢失。"
+
+msgid ""
+"An absolute path on the LAN machine. When unchecked, new sessions start in "
+"the account's login directory. Existing sessions keep the directory they "
+"started in. Applies to new sessions only."
+msgstr ""
+"局域网主机上的绝对路径。未勾选时，新会话从该账号的登录目录开始；已存在的会话"
+"保持启动时的目录不变。仅对新会话生效。"
 
 msgid ""
 "An interactive terminal running a coding agent. Sessions keep running after "
@@ -348,6 +359,9 @@ msgstr "局域网"
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr "已在防火墙中开放局域网访问。WAN 不受影响。"
 
+msgid "LAN machine:"
+msgstr "局域网主机："
+
 msgid "Latest"
 msgstr "最新"
 
@@ -509,6 +523,9 @@ msgstr "重试"
 
 msgid "Run checks"
 msgstr "运行检查"
+
+msgid "Run new sessions in a custom directory"
+msgstr "新会话在自定义目录中运行"
 
 msgid "Running"
 msgstr "运行中"
@@ -828,6 +845,11 @@ msgstr ""
 msgid "The address or SSH port changed — the pinned host key was forgotten."
 msgstr "地址或 SSH 端口已更改——已忘记固定的主机密钥。"
 
+msgid ""
+"The box is ticked but the working directory is empty. Enter a path, or clear "
+"the box."
+msgstr "已勾选但工作目录为空。请输入路径，或取消勾选。"
+
 msgid "The browser blocked the new window."
 msgstr "浏览器阻止了新窗口。"
 
@@ -947,6 +969,27 @@ msgid ""
 "The unusable key was replaced. Add the public key below to the LAN machine."
 msgstr "无法使用的密钥已被替换。请把下面的公钥添加到局域网主机。"
 
+msgid "The working directory is not a valid absolute path on the LAN machine."
+msgstr "工作目录不是局域网主机上的有效绝对路径。"
+
+msgid ""
+"The working directory set for the LAN machine does not exist there. Create "
+"it on that machine, or correct the path in Configuration → FCC Server."
+msgstr ""
+"为局域网主机设置的工作目录在该主机上不存在。请在该主机上创建它，或在“配置管"
+"理 → FCC Server”中修正路径。"
+
+msgid ""
+"The working directory set for the LAN machine is not a valid absolute path. "
+"Correct it in Configuration → FCC Server."
+msgstr ""
+"为局域网主机设置的工作目录不是有效的绝对路径。请在“配置管理 → FCC Server”中"
+"修正。"
+
+msgid ""
+"The working directory was cleared because it is not a valid absolute path."
+msgstr "工作目录不是有效的绝对路径，已被清除。"
+
 msgid "They take effect when you choose Save & Apply."
 msgstr "选择“保存并应用”后生效。"
 
@@ -978,6 +1021,9 @@ msgid ""
 "client-utils)."
 msgstr ""
 "本机需要 ssh-keyscan 才能读取远程主机密钥（软件包 openssh-client-utils）。"
+
+msgid "This router · agent runtime:"
+msgstr "本机 · 智能体运行时："
 
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
@@ -1067,6 +1113,9 @@ msgstr "已安装"
 msgid "listening"
 msgstr "监听中"
 
+msgid "login directory (default)"
+msgstr "登录目录（默认）"
+
 msgid "not checked"
 msgstr "未检查"
 
@@ -1108,6 +1157,9 @@ msgstr "有可用更新"
 
 msgid "uptime"
 msgstr "运行时间"
+
+msgid "working directory:"
+msgstr "工作目录："
 
 msgid ""
 "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large "

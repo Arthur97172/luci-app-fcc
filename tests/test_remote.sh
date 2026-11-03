@@ -169,6 +169,19 @@ case "${last:-}" in
 			printf '%s\n' "$SSH_DETAILS_OUT"
 			exit "${SSH_DETAILS_EXIT:-0}"
 		fi ;;
+	# Whether the configured working directory exists. The question is asked in
+	# the far side's own shell, so it is recognised by the words that shell
+	# prints — POSIX and PowerShell alike — rather than by its wrapper. The
+	# default is a directory that is there: the feature is off unless a test
+	# turns it on, and a forgotten fixture should not turn every pane into a
+	# refusal.
+	*"workdir present"*)
+		if [ -n "${SSH_WORKDIR_OUT+x}" ]; then
+			printf '%s\n' "$SSH_WORKDIR_OUT"
+		else
+			printf '%s\n' 'workdir present'
+		fi
+		exit "${SSH_WORKDIR_EXIT:-0}" ;;
 	*pgrep*)
 		if [ -n "${SSH_PROBE_OUT+x}" ]; then
 			printf '%s\n' "$SSH_PROBE_OUT"
@@ -1731,6 +1744,10 @@ test_the_uci_defaults_match_the_script_defaults() {
 			"$(basename "$f") defaults to Linux"
 		assert_contains "$(cat "$f")" "option remote_service 'fcc'" \
 			"$(basename "$f") defaults to the fcc service"
+		assert_contains "$(cat "$f")" "option remote_workdir_enabled '0'" \
+			"$(basename "$f") starts with the working directory off"
+		assert_contains "$(cat "$f")" "option remote_workdir ''" \
+			"$(basename "$f") and no path stored"
 	done
 	assert_contains "$(sed -n '/fcc_remote_sport()/,+1p' "$SCRIPT")" '22' \
 		"the script agrees on the SSH port"
@@ -1904,8 +1921,137 @@ test_session_command_refuses_what_it_cannot_safely_run() {
 }
 
 # ---------------------------------------------------------------------------
-# A Linux or macOS machine that runs only the upstream install
+# The agent's working directory on the LAN machine
 #
+# A setting about new sessions only, and the only one in the LAN panel that is
+# about where the agent runs rather than about how this router reaches it. It
+# is stored even while the box is clear — re-ticking the box is meant to bring
+# the same directory back — and it is enforced twice: once as a path, before
+# anything is quoted, and once as a directory that exists over there, before a
+# pane is created. The pane's own first statement is the `cd`, so a directory
+# that goes away between the check and the start still cannot leave an agent
+# running somewhere the console does not name.
+# ---------------------------------------------------------------------------
+
+test_status_reports_the_working_directory() {
+	fresh
+	ready_lan
+	uci_set remote_workdir_enabled 1
+	uci_set remote_workdir /home/arthur/project
+	out="$(run_remote status)"
+	assert_contains "$out" '"workdir_enabled":true' \
+		"a ticked box is reported"
+	assert_contains "$out" '"workdir":"/home/arthur/project"' \
+		"with the path it holds"
+
+	# Clearing the box leaves the path stored: the field is refilled from this
+	# answer, and an emptied one would forget the directory the next tick is
+	# meant to restore.
+	uci_set remote_workdir_enabled 0
+	out="$(run_remote status)"
+	assert_contains "$out" '"workdir_enabled":false' \
+		"a cleared box is reported as such"
+	assert_contains "$out" '"workdir":"/home/arthur/project"' \
+		"and the path is still echoed back"
+	drop_sandbox
+}
+
+test_session_command_starts_in_the_working_directory() {
+	fresh
+	ready_lan
+	uci_set remote_workdir_enabled 1
+	uci_set remote_workdir /home/arthur/project
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' run_remote session-command claude)" || true
+	assert_contains "$out" "cd '\\''/home/arthur/project'\\'' || exit 1; export PATH=" \
+		"the pane changes directory before the launcher runs"
+	assert_contains "$out" 'fcc-claude' "and still starts the agent"
+
+	# An OpenWrt machine carries this package, so the directory travels in
+	# front of fcc-env instead.
+	fresh
+	ready_lan
+	uci_set remote_platform openwrt
+	uci_set remote_workdir_enabled 1
+	uci_set remote_workdir /root/project
+	out="$(run_remote session-command claude)" || true
+	assert_contains "$out" "cd '\\''/root/project'\\'' || exit 1; /usr/bin/fcc-env fcc-claude" \
+		"fcc-env runs after the directory is entered"
+
+	# Windows builds the same step in PowerShell, with -ErrorAction Stop so a
+	# failure ends the script instead of leaving the agent in the old place.
+	fresh
+	ready_lan
+	uci_set remote_platform windows
+	uci_set remote_workdir_enabled 1
+	uci_set remote_workdir 'C:\Users\arthur\project'
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' run_remote session-command claude)" || true
+	assert_contains "$out" \
+		"Set-Location -LiteralPath '\\''C:\\Users\\arthur\\project'\\'' -ErrorAction Stop; " \
+		"the pane enters the directory through PowerShell"
+	assert_contains "$out" '& ' "and then calls the launcher"
+	drop_sandbox
+}
+
+test_session_command_refuses_a_working_directory_it_cannot_use() {
+	# Not a path the far side could have: refused before anything is quoted,
+	# and without asking the machine anything.
+	fresh
+	ready_lan
+	uci_set remote_workdir_enabled 1
+	uci_set remote_workdir ../project
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' run_remote session-command claude)" || true
+	assert_contains "$out" '"reason":"workdir-invalid"' \
+		"a relative path in UCI is refused"
+	assert_not_contains "$out" 'fcc-claude' "and no pane command is handed out"
+
+	# The same rule as the controller's: one absolute path that survives being
+	# quoted as one word, and nothing that means something other than itself.
+	# `~` is refused rather than expanded, because the pane's quoting is what
+	# stops it from expanding and the far side would then look for a directory
+	# literally named "~".
+	for _bad in '/home/../etc' '~/project' "/home/a'b" '/home/a"b' \
+		'C:\Users\arthur'; do
+		fresh
+		ready_lan
+		uci_set remote_workdir_enabled 1
+		uci_set remote_workdir "$_bad"
+		out="$(SSH_PROBE_OUT='server running
+agent claude installed' run_remote session-command claude)" || true
+		assert_contains "$out" '"reason":"workdir-invalid"' \
+			"$_bad is refused as a working directory"
+	done
+
+	# A path that is fine and a directory that is not: the check over there
+	# names the directory, not the typing.
+	fresh
+	ready_lan
+	uci_set remote_workdir_enabled 1
+	uci_set remote_workdir /home/arthur/gone
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' SSH_WORKDIR_OUT='workdir missing' \
+		run_remote session-command claude)" || true
+	assert_contains "$out" '"reason":"workdir-missing"' \
+		"a directory that is not there is refused"
+	assert_not_contains "$out" 'fcc-claude' "and no pane command is handed out"
+
+	# The machine going away during the check is its own answer: retrying is
+	# what helps there, and it is not a path to correct.
+	fresh
+	ready_lan
+	uci_set remote_workdir_enabled 1
+	uci_set remote_workdir /home/arthur/project
+	out="$(SSH_PROBE_OUT='server running
+agent claude installed' SSH_WORKDIR_EXIT=255 \
+		run_remote session-command claude)" || true
+	assert_contains "$out" '"reason":"unreachable"' \
+		"an unreachable machine is not reported as a missing directory"
+	drop_sandbox
+}
+
+
 # `curl -fsSL .../install.sh | sh` writes the launchers into the account's bin
 # directory and installs no service unit. There is no status.sh to ask and no
 # fcc-env to run, so the answers come from the far side's own shell: one probe

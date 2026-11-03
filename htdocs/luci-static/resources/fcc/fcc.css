@@ -135,6 +135,7 @@
 .fcc-page .cbi-section > :not(h3):not(.cbi-section-node),
 .fcc-page > .fcc-toolbar,
 .fcc-page > #fcc-term-status,
+.fcc-page > .fcc-term-where,
 .fcc-page > .fcc-term-tabs,
 .fcc-page > .fcc-term-banner,
 .fcc-page > .fcc-term-wrap,
@@ -294,6 +295,21 @@ table.fcc-table tr.fcc-row-active { background: rgba(25, 118, 210, .08); }
 	flex-wrap: wrap;
 	gap: .25em;
 	margin-bottom: .5em;
+}
+
+/* The agent's location, under the page description. It is one line of prose
+ * and a path; the path is monospace so a directory reads as a value rather
+ * than as part of the sentence. Long paths wrap instead of widening the page. */
+.fcc-term-where {
+	margin: -.25em 0 .75em;
+	font-size: .9em;
+	overflow-wrap: anywhere;
+}
+
+.fcc-term-where code {
+	font-family: monospace;
+	padding: 0;
+	background: none;
 }
 
 /* Section 74: the terminal's three endings. It sits directly above the

@@ -554,6 +554,63 @@ test_pages_share_the_key_queue() {
 	done
 }
 
+# ---------------------------------------------------------------------------
+# The console names where the agent runs
+#
+# "Where does this agent run" cannot be answered by a path on every platform:
+# a LAN target on Linux or macOS starts the launcher from that account's PATH,
+# so there is no runtime directory to name. The line therefore answers per
+# mode — this router names its runtime, a LAN target names the account and the
+# working directory a new session starts in — and it is the same row under the
+# hint in both cases.
+# ---------------------------------------------------------------------------
+
+test_console_names_where_the_agent_runs() {
+	_tt_view="$ROOT/luasrc/view/fcc/console.htm"
+	_tt_src="$(cat "$TERMINAL")"
+	_tt_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
+
+	# The row exists before the first answer and sits between the hint and the
+	# toolbar, so a console with nothing to say does not shift the pane down.
+	assert_contains "$(cat "$_tt_view")" 'id="fcc-term-where"' \
+		"the console has the where row"
+	assert_contains "$(sed -n '/id="fcc-term-where"/p' "$_tt_view")" 'hidden' \
+		"hidden until there is an answer"
+	_tt_descr_at="$(grep -n 'cbi-map-descr' "$_tt_view" | head -1 | cut -d: -f1)"
+	_tt_where_at="$(grep -n 'id="fcc-term-where"' "$_tt_view" | cut -d: -f1)"
+	_tt_status_at="$(grep -n 'id="fcc-term-status"' "$_tt_view" | cut -d: -f1)"
+	assert_eq 1 "$((_tt_descr_at < _tt_where_at))" \
+		"the row follows the top hint"
+	assert_eq 1 "$((_tt_where_at < _tt_status_at))" \
+		"and stands above the status line it is not"
+
+	# What the script draws, per mode.
+	assert_contains "$_tt_src" 'function renderRuntimeLine()' \
+		"the console has one renderer for the row"
+	assert_contains "$_tt_src" "FCC.\$('#fcc-term-where')" \
+		"which owns that element"
+	assert_contains "$_tt_src" 'state.runtime' \
+		"and reads the runtime answer"
+	assert_contains "$_tt_src" 'workdir_enabled' \
+		"the working directory counts only while it is enabled"
+	assert_contains "$_tt_src" 'login directory (default)' \
+		"an unset directory says which default applies"
+	assert_contains "$_tt_src" 'This router · agent runtime:' \
+		"local mode names this router's runtime"
+	assert_contains "$_tt_src" 'LAN machine:' \
+		"and LAN mode names the machine it reaches"
+
+	# The ten-second target poll carries the fields, so a directory changed on
+	# the Configuration tab reaches an open console without an SSH round trip.
+	assert_contains "$(sed -n '/function refreshTarget()/,/^	}$/p' "$TERMINAL")" \
+		'state.runtime = {' "the poll refreshes the runtime answer"
+	assert_contains "$(sed -n '/function refreshTarget()/,/^	}$/p' "$TERMINAL")" \
+		'renderRuntimeLine();' "and redraws the row when only the directory changed"
+
+	assert_contains "$(cat "$_tt_css")" '.fcc-term-where' \
+		"the row has its own style"
+}
+
 test_cgi_quotes_its_argv() {
 	_tt_src="$(cat "$CGI")"
 	assert_not_contains "$_tt_src" "os.execute" "the CGI never builds a shell command"

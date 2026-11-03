@@ -1106,6 +1106,59 @@ written = {}
 ctrl.act_remote_set()
 print("svcok=" .. body())
 print("stored_ok=" .. tostring(store.remote_service))
+
+-- The working directory. Both halves of it are stored: whether it is in effect
+-- is the box, and the path stays behind when the box is cleared, so re-ticking
+-- it restores the same directory rather than an empty field.
+store.remote_workdir_enabled = nil
+store.remote_workdir = nil
+form = { host = "192.168.5.3", user = "root", ssh_port = "22",
+         admin_port = "8082", platform = "linux", service = "fcc",
+         workdir_enabled = "1", workdir = "  /home/arthur/claude  " }
+written = {}
+ctrl.act_remote_set()
+print("wdok=" .. body())
+print("stored_wd=" .. tostring(store.remote_workdir)
+	.. " enabled=" .. tostring(store.remote_workdir_enabled))
+
+-- A value that is not one absolute path is refused while the box is ticked:
+-- the setting is in effect, so there is nothing to fall back to.
+form = { host = "192.168.5.3", user = "root", ssh_port = "22",
+         admin_port = "8082", platform = "linux", service = "fcc",
+         workdir_enabled = "1", workdir = "/home/../etc" }
+written = {}
+ctrl.act_remote_set()
+print("wdbad=" .. body())
+print("stored_wd_after_bad=" .. tostring(store.remote_workdir))
+
+-- Ticked with nothing in the field is the same kind of mistake.
+form = { host = "192.168.5.3", user = "root", ssh_port = "22",
+         admin_port = "8082", platform = "linux", service = "fcc",
+         workdir_enabled = "1", workdir = "" }
+written = {}
+ctrl.act_remote_set()
+print("wdempty=" .. body())
+
+-- Cleared, a path is still checked — the field is refilled from the answer,
+-- so a value that is not one must not come back from UCI — and the answer
+-- says it was discarded rather than leaving the field unexplained.
+form = { host = "192.168.5.3", user = "root", ssh_port = "22",
+         admin_port = "8082", platform = "linux", service = "fcc",
+         workdir_enabled = "0", workdir = "relative/path" }
+written = {}
+ctrl.act_remote_set()
+print("wdreset=" .. body())
+print("stored_wd_after_reset=[" .. tostring(store.remote_workdir) .. "]")
+
+-- And a good path is kept while the box is clear, for the next tick.
+form = { host = "192.168.5.3", user = "root", ssh_port = "22",
+         admin_port = "8082", platform = "linux", service = "fcc",
+         workdir_enabled = "0", workdir = "/home/arthur/claude" }
+written = {}
+ctrl.act_remote_set()
+print("wdkept=" .. body())
+print("stored_wd_kept=" .. tostring(store.remote_workdir)
+	.. " enabled=" .. tostring(store.remote_workdir_enabled))
 LUA
 
 	_ts_out="$(FCC_TEST_ROOT="$ROOT" \
@@ -1212,6 +1265,38 @@ LUA
 		"a real service name is left alone: [$_ts_svcok]"
 	assert_contains "$_ts_out" "stored_ok=MyService" \
 		"and stored as it was typed"
+
+	_ts_wdok="$(printf '%s\n' "$_ts_out" | sed -n 's/^wdok=//p')"
+	assert_contains "$_ts_wdok" '"ok":true' \
+		"a working directory is saved: [$_ts_wdok]"
+	assert_contains "$_ts_wdok" '"workdir_reset":false' \
+		"and nothing was discarded"
+	assert_contains "$_ts_out" "stored_wd=/home/arthur/claude enabled=1" \
+		"the path is trimmed and stored with the box ticked"
+
+	_ts_wdbad="$(printf '%s\n' "$_ts_out" | sed -n 's/^wdbad=//p')"
+	assert_contains "$_ts_wdbad" 'invalid working directory' \
+		"a path with a traversal in it is refused: [$_ts_wdbad]"
+	# The refusal happens before any value is written, so what was stored
+	# stays as it was: a rejected save changes nothing.
+	assert_contains "$_ts_out" "stored_wd_after_bad=/home/arthur/claude" \
+		"and the previously stored path is left in place"
+
+	_ts_wdempty="$(printf '%s\n' "$_ts_out" | sed -n 's/^wdempty=//p')"
+	assert_contains "$_ts_wdempty" 'a working directory is required' \
+		"a ticked box with no path is refused: [$_ts_wdempty]"
+
+	_ts_wdreset="$(printf '%s\n' "$_ts_out" | sed -n 's/^wdreset=//p')"
+	assert_contains "$_ts_wdreset" '"workdir_reset":true' \
+		"a bad path is discarded while the box is clear: [$_ts_wdreset]"
+	assert_contains "$_ts_out" "stored_wd_after_reset=[]" \
+		"the stored value is cleared rather than kept"
+
+	_ts_wdkept="$(printf '%s\n' "$_ts_out" | sed -n 's/^wdkept=//p')"
+	assert_contains "$_ts_wdkept" '"workdir_reset":false' \
+		"a good path is not touched while the box is clear: [$_ts_wdkept]"
+	assert_contains "$_ts_out" "stored_wd_kept=/home/arthur/claude enabled=0" \
+		"it stays stored, waiting for the box to be ticked again"
 }
 
 test_the_console_follows_the_configuration_tab() {
@@ -1359,6 +1444,18 @@ written = {}
 ctrl.act_console_target()
 print("target=" .. body())
 
+-- The answer carries what the console page's runtime line draws: the account
+-- and directory a new session would use, and this router's own runtime root
+-- for the local form. It rides on the poll, so a working directory changed on
+-- the Configuration tab reaches the open page within one tick and without the
+-- SSH round trip a target change costs.
+store.remote_user = "fcc"
+store.remote_workdir_enabled = "1"
+store.remote_workdir = "/home/arthur/project"
+written = {}
+ctrl.act_console_target()
+print("target_wd=" .. body())
+
 -- A target that cannot be used answers with the reason code, not with prose.
 answer('{"ok":false,"reason":"no-host-key","error":"the remote host key has not been trusted"}')
 written = {}
@@ -1448,6 +1545,8 @@ LUA
 		"this router's console opens: [$_cc_local]"
 	assert_contains "$_cc_local" '"target":"local"' "and says which machine it describes"
 	assert_contains "$_cc_local" '"claude"' "with this router's agents"
+	assert_contains "$_cc_local" '"fcc_root":"/opt/fcc"' \
+		"and names the runtime root the local agents run from"
 
 	_cc_lan="$(printf '%s\n' "$_cc_out" | sed -n 's/^lan=//p')"
 	assert_contains "$_cc_lan" '"target":"lan"' "the LAN console says so: [$_cc_lan]"
@@ -1465,15 +1564,38 @@ LUA
 		"the poll answers with the target alone: [$_cc_target]"
 	assert_contains "$_cc_target" '"host":"192.168.5.3"' "and the machine it names"
 
+	_cc_target_wd="$(printf '%s\n' "$_cc_out" | sed -n 's/^target_wd=//p')"
+	assert_contains "$_cc_target_wd" '"user":"fcc"' \
+		"the poll names the account the agent would run as: [$_cc_target_wd]"
+	assert_contains "$_cc_target_wd" '"workdir_enabled":true' \
+		"and whether the working directory is in effect"
+	assert_contains "$_cc_target_wd" '"workdir":"/home/arthur/project"' \
+		"with the path itself"
+	assert_contains "$_cc_target_wd" '"fcc_root":"/opt/fcc"' \
+		"and this router's runtime root, for the local form"
+
 	_cc_refused="$(printf '%s\n' "$_cc_out" | sed -n 's/^refused=//p')"
 	assert_contains "$_cc_refused" '"reason":"no-host-key"' \
 		"a refused console relays its reason code: [$_cc_refused]"
 	assert_contains "$_cc_refused" '"error":"the remote host key has not been trusted"' \
 		"with the script's own words kept for the log"
+	# The page draws its where line from the same answer, and an unreachable
+	# machine is when naming it matters most. The fields come from UCI, so they
+	# are present even though the round trip failed.
+	assert_contains "$_cc_refused" '"host":"192.168.5.3"' \
+		"a refused answer still names the configured machine: [$_cc_refused]"
+	assert_contains "$_cc_refused" '"user":"fcc"' \
+		"and the account"
+	assert_contains "$_cc_refused" '"workdir_enabled":true' \
+		"and the working directory in effect"
+	assert_contains "$_cc_refused" '"workdir":"/home/arthur/project"' \
+		"with its path"
 
 	_cc_garbage="$(printf '%s\n' "$_cc_out" | sed -n 's/^garbage=//p')"
 	assert_contains "$_cc_garbage" '"reason":"unreadable"' \
 		"an answer that is not a document is refused as unreadable: [$_cc_garbage]"
+	assert_contains "$_cc_garbage" '"host":"192.168.5.3"' \
+		"an unreadable answer names the machine too: [$_cc_garbage]"
 
 	assert_contains "$_cc_out" "local_calls=no" \
 		"this router's console never asks the LAN machine anything"

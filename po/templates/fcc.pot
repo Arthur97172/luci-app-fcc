@@ -66,6 +66,9 @@ msgstr ""
 msgid "Agent list unavailable"
 msgstr ""
 
+msgid "Agent working directory"
+msgstr ""
+
 msgid "Agents"
 msgstr ""
 
@@ -73,6 +76,9 @@ msgid "All agents"
 msgstr ""
 
 msgid "All unsaved terminal state will be lost."
+msgstr ""
+
+msgid "An absolute path on the LAN machine. When unchecked, new sessions start in the account's login directory. Existing sessions keep the directory they started in. Applies to new sessions only."
 msgstr ""
 
 msgid "An interactive terminal running a coding agent. Sessions keep running after you close this page, and reattaching to one restores its screen."
@@ -273,6 +279,9 @@ msgstr ""
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr ""
 
+msgid "LAN machine:"
+msgstr ""
+
 msgid "Latest"
 msgstr ""
 
@@ -403,6 +412,9 @@ msgid "Retry"
 msgstr ""
 
 msgid "Run checks"
+msgstr ""
+
+msgid "Run new sessions in a custom directory"
 msgstr ""
 
 msgid "Running"
@@ -636,6 +648,9 @@ msgstr ""
 msgid "The address or SSH port changed — the pinned host key was forgotten."
 msgstr ""
 
+msgid "The box is ticked but the working directory is empty. Enter a path, or clear the box."
+msgstr ""
+
 msgid "The browser blocked the new window."
 msgstr ""
 
@@ -732,6 +747,18 @@ msgstr ""
 msgid "The unusable key was replaced. Add the public key below to the LAN machine."
 msgstr ""
 
+msgid "The working directory is not a valid absolute path on the LAN machine."
+msgstr ""
+
+msgid "The working directory set for the LAN machine does not exist there. Create it on that machine, or correct the path in Configuration → FCC Server."
+msgstr ""
+
+msgid "The working directory set for the LAN machine is not a valid absolute path. Correct it in Configuration → FCC Server."
+msgstr ""
+
+msgid "The working directory was cleared because it is not a valid absolute path."
+msgstr ""
+
 msgid "They take effect when you choose Save & Apply."
 msgstr ""
 
@@ -754,6 +781,9 @@ msgid "This router needs ssh-keygen to create the key (package openssh-keygen)."
 msgstr ""
 
 msgid "This router needs ssh-keyscan to read the remote host key (package openssh-client-utils)."
+msgstr ""
+
+msgid "This router · agent runtime:"
 msgstr ""
 
 msgid "To upgrade luci-app-fcc itself, run on the router:"
@@ -828,6 +858,9 @@ msgstr ""
 msgid "listening"
 msgstr ""
 
+msgid "login directory (default)"
+msgstr ""
+
 msgid "not checked"
 msgstr ""
 
@@ -859,6 +892,9 @@ msgid "update available"
 msgstr ""
 
 msgid "uptime"
+msgstr ""
+
+msgid "working directory:"
 msgstr ""
 
 msgid "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large download, makes progress slow and takes about 8 GB of storage. Choose only the items you need and install them in batches."

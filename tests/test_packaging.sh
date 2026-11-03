@@ -2002,8 +2002,63 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 }
 
 # ---------------------------------------------------------------------------
-# The server controls end their row, like the settings verbs above them
+# The LAN panel can start agents in a directory
 #
+# The working directory is a setting about the sessions the Web Console starts
+# on the other machine, not about how this router reaches that machine, so it
+# is not behind the advanced fold. It is the only row in the page with a tick
+# box and a path beside it, and the path is editable only while the box is
+# ticked: a field that can be typed into while the setting is off reads as a
+# setting that is in effect.
+# ---------------------------------------------------------------------------
+
+test_the_lan_panel_can_start_agents_in_a_directory() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_js="$ROOT/htdocs/luci-static/resources/fcc/fcc-config.js"
+
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-workdir-enable"' \
+		"the LAN panel offers the box"
+	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-workdir"' \
+		"and the path it controls"
+	# The path starts unavailable, so the page cannot be read as asking for one
+	# before the feature is turned on.
+	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" 'disabled' \
+		"with the path disabled until the box is ticked"
+	assert_contains "$(cat "$_ts_view")" '<%:Run new sessions in a custom directory%>' \
+		"the box says what ticking it does"
+	# New sessions only: an existing pane cannot be moved without ending it,
+	# and the description has to say so rather than let the user find out.
+	assert_contains "$(cat "$_ts_view")" 'Applies to new sessions only.' \
+		"and the description says the setting is about new sessions"
+
+	# It belongs to neither the connection settings nor the key, and hiding it
+	# in Advanced would put the one question about where the agent runs behind
+	# a fold opened to fix a port.
+	_ts_wd_line="$(grep -n 'id="fcc-remote-workdir-enable"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_ready_line="$(grep -n '<details class="fcc-advanced"' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_close_line="$(grep -n '</details>' "$_ts_view" | head -1 | cut -d: -f1)"
+	_ts_key_line="$(grep -n 'id="fcc-remote-key-state"' "$_ts_view" | head -1 | cut -d: -f1)"
+	assert_eq 1 "$((_ts_ready_line < _ts_close_line))" \
+		"the advanced block closes before the directory row"
+	assert_eq 1 "$((_ts_close_line < _ts_wd_line))" \
+		"so the row is outside the fold"
+	assert_eq 1 "$((_ts_wd_line < _ts_key_line))" \
+		"and ahead of the key it does not need"
+
+	# What the page sends and what it does with the answer.
+	assert_contains "$(cat "$_ts_js")" "workdir_enabled:" \
+		"the page sends the box"
+	assert_contains "$(cat "$_ts_js")" "workdir:" \
+		"and the path"
+	assert_contains "$(cat "$_ts_js")" "function syncWorkdirControls()" \
+		"one place decides whether the path is editable"
+	assert_contains "$(cat "$_ts_js")" "input.disabled = !box.checked" \
+		"which follows the box"
+	assert_contains "$(cat "$_ts_js")" "r.workdir_reset" \
+		"a discarded path is reported rather than silently replaced"
+}
+
+
 # Settings closes on three right-aligned verbs. The FCC Server controls a
 # section below started at the left edge, so two rows of buttons on one page
 # began on opposite sides. The row keeps the toolbar's gap and wrap and only

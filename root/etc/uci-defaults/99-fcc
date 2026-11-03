@@ -31,6 +31,8 @@ if [ ! -f /etc/config/fcc ]; then
 			option remote_platform 'linux'
 			option remote_service 'fcc'
 			option remote_fingerprint ''
+			option remote_workdir_enabled '0'
+			option remote_workdir ''
 	EOF
 fi
 
