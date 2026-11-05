@@ -1658,6 +1658,10 @@ test_the_server_section_switches_between_this_router_and_the_lan() {
 
 	# The two fields and the button that acts on them.
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-host"' "the address field exists"
+	# The sample is a private address the way a home router hands one out, so it
+	# reads as an example rather than as this router's own address.
+	assert_contains "$(sed -n '/id="fcc-remote-host"/,/^$/p' "$_ts_view")" \
+		'placeholder="192.168.1.1"' "with a private-address example"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-user"' "the account field exists"
 	assert_contains "$(cat "$_ts_view")" 'id="fcc-remote-test"' "and the connection test"
 
@@ -2030,6 +2034,10 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 	# before the feature is turned on.
 	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" 'disabled' \
 		"with the path disabled until the box is ticked"
+	# The example names an account's home, which is where sessions start when
+	# the box is clear, so it cannot be mistaken for a required project path.
+	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" \
+		'placeholder="/home/username"' "with a home-directory example"
 	assert_contains "$(cat "$_ts_view")" '<%:Custom directory%>' \
 		"the row is named Custom directory"
 	# The box belongs beside the name, not at the field column's edge: the path
