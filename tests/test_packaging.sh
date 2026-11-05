@@ -2034,10 +2034,10 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 	# before the feature is turned on.
 	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" 'disabled' \
 		"with the path disabled until the box is ticked"
-	# The example names an account's home, which is where sessions start when
-	# the box is clear, so it cannot be mistaken for a required project path.
+	# The example names a project under an account's home, so it reads as a
+	# directory to work in rather than as the home itself.
 	assert_contains "$(sed -n '/id="fcc-remote-workdir"/,/^$/p' "$_ts_view")" \
-		'placeholder="/home/username"' "with a home-directory example"
+		'placeholder="/home/username/project"' "with a project-directory example"
 	assert_contains "$(cat "$_ts_view")" '<%:Custom directory%>' \
 		"the row is named Custom directory"
 	# The box belongs beside the name, not at the field column's edge: the path
