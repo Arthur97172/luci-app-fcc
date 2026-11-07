@@ -2495,7 +2495,8 @@ test_the_tab_bar_orders_console_settings_monitor_install() {
 		"with the script it loads"
 
 	# The tab bar label reuses the Install msgid the button already has, so the
-	# catalogue needs no new entry for it.
+	# catalogue needs no new entry for it — the one entry is translated once, as
+	# 安装部署, which is therefore the Chinese name of both.
 	assert_contains "$(cat "$ROOT/luasrc/view/fcc/install.htm")" '<%:Install%>' \
 		"the page still names its install button with that msgid"
 

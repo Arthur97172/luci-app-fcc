@@ -13,7 +13,7 @@
 | **Web 控制台** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider、Antigravity CLI 的交互式会话——每个 Agent 一个 tmux 会话，直接在浏览器里用（DeepSeek Harness 只有浏览器界面，见下文）。 |
 | **配置管理** | 本机设置（地址、端口、日志级别）、安装与备份路径、启动/停止/重启、FCC Admin 入口，以及通过 SSH 控制局域网内另一台机器。 |
 | **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储。 |
-| **安装** | Agent 选择、安装/卸载/彻底卸载、更新、诊断报告（运行时信息每 2 秒刷新，后台标签页暂停）。 |
+| **安装部署** | Agent 选择、安装/卸载/彻底卸载、更新、诊断报告（运行时信息每 2 秒刷新，后台标签页暂停）。 |
 
 `luci-app-fcc` **只是控制层**：只包含 Lua、JavaScript 和 POSIX shell，**不包含** Python、
 Node.js、`uv`、FCC 运行时或任何编程 Agent——它们按需单独安装在 `/opt/fcc` 下。
@@ -66,7 +66,7 @@ make package/luci-app-fcc/compile V=s
 
 ## 首次使用
 
-**1. 安装 FCC 运行时。** 在*安装*页面选择 Agent，点 **安装**。页面通过 HTTPS 拉取官方
+**1. 安装 FCC 运行时。** 在*安装部署*页面选择 Agent，点 **安装**。页面通过 HTTPS 拉取官方
 安装器、记录其 SHA-256 后执行；Python、`uv` 和运行时本身都装在配置的安装路径下（默认
 `/opt/fcc`），不进入本软件包。
 
@@ -102,7 +102,7 @@ make package/luci-app-fcc/compile V=s
 **3. 使用 Agent。** 在 *Web 终端* 页面选择 Agent 并按 **Start**，每个 Agent 的会话命名为
 `fcc-<agent>-NNN`。
 
-**4. 更新。** *安装* → **FCC 运行时** → **Check for updates** → **Update FCC**。检查只在
+**4. 更新。** *安装部署* → **FCC 运行时** → **Check for updates** → **Update FCC**。检查只在
 点按钮时执行，打开或切回标签页不会联网；**彻底卸载**之后的 **Clear record** 同时清掉版本表
 和任务记录（进度条与日志），回到"尚未检查"并禁用 **Update FCC**。更新是一串步骤：检查剩余空间、提示仍打开的终端、
 保存状态、停止服务器、重新安装、校验二进制、重启，最后确认服务器在响应才报告成功。
@@ -292,7 +292,7 @@ luci-base  luci-compat  curl  ca-bundle  tmux
 
 ### 安装前自动补齐的包
 
-*安装* → **诊断** → **运行检查** 列出每项检查的值、要求和结果。按下 **安装** 或 **更新**
+*安装部署* → **诊断** → **运行检查** 列出每项检查的值、要求和结果。按下 **安装** 或 **更新**
 时，如果所有未通过的检查都能由装包解决，安装程序会先补包、重新检查，全部通过后才下载
 运行时；有装包解决不了的项（空间、DNS、HTTPS、没有可用的 Node 构建）则直接拒绝并给出
 完整报告。

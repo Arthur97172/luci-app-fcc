@@ -219,6 +219,23 @@ test_context_keys_are_claimed_by_our_catalogue() {
 	assert_eq "" "$_ts_bad" "the context-naming key \"CPU Info\" is translated rather than passed through"
 }
 
+test_the_install_tab_is_named_install_and_deploy_in_chinese() {
+	# The tab bar's fifth entry is the install page. Its msgid is "Install", so
+	# the English interface keeps that label, and the Chinese catalogue names the
+	# same key 安装部署. The page's own install button uses that msgid too, so
+	# it reads 安装部署 in Chinese as well — one key, one translation, no
+	# second entry that could drift away from the tab.
+	_ts_zh="$(po_pairs "$PO" | awk -F'\t' '$1 == "Install" { print $2 }')"
+	assert_eq "安装部署" "$_ts_zh" "the Install key is translated to 安装部署"
+
+	# English is the msgid itself: a non-empty msgstr here would change what the
+	# English interface shows, which the request explicitly rules out.
+	_ts_en="$(po_pairs "$POT" | awk -F'\t' '$1 == "Install" { print $2 }')"
+	assert_eq "" "$_ts_en" "the template leaves the label untranslated, so English stays Install"
+	assert_contains "$(cat "$CTRL/fcc.lua")" '"fcc", "install"}, template("fcc/install"), _("Install"), 40' \
+		"the tab is declared with the bare English label"
+}
+
 test_translations_are_actually_translated() {
 	# Guards against a .po that was copied from the .pot and "translated" by
 	# pasting the same text back. Most strings in this UI are prose, so the
