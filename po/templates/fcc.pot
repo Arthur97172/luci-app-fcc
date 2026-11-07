@@ -279,9 +279,6 @@ msgstr ""
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr ""
 
-msgid "LAN machine:"
-msgstr ""
-
 msgid "Latest"
 msgstr ""
 
@@ -774,9 +771,6 @@ msgstr ""
 msgid "This router needs ssh-keyscan to read the remote host key (package openssh-client-utils)."
 msgstr ""
 
-msgid "This router · agent runtime:"
-msgstr ""
-
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr ""
 
@@ -849,9 +843,6 @@ msgstr ""
 msgid "listening"
 msgstr ""
 
-msgid "login directory (default)"
-msgstr ""
-
 msgid "not checked"
 msgstr ""
 
@@ -883,9 +874,6 @@ msgid "update available"
 msgstr ""
 
 msgid "uptime"
-msgstr ""
-
-msgid "working directory:"
 msgstr ""
 
 msgid "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large download, makes progress slow and takes about 8 GB of storage. Choose only the items you need and install them in batches."

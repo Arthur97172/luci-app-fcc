@@ -555,31 +555,41 @@ test_pages_share_the_key_queue() {
 }
 
 # ---------------------------------------------------------------------------
-# The console names where the agent runs
+# The console does not name where the agent runs
 #
-# "Where does this agent run" cannot be answered by a path on every platform:
-# a LAN target on Linux or macOS starts the launcher from that account's PATH,
-# so there is no runtime directory to name. The line therefore answers per
-# mode — this router names its runtime, a LAN target names the account and the
-# working directory a new session starts in — and it is the same row under the
-# hint in both cases.
+# A row above the toolbar used to answer it: this router's runtime root, or the
+# LAN account and the working directory a new session starts in. It was removed
+# on request in both modes — the toolbar's agent label already says which
+# machine the dropdown acts on, and the row pushed the terminal down for a
+# second copy of what the Configuration tab holds.
 # ---------------------------------------------------------------------------
 
-test_console_names_where_the_agent_runs() {
+test_console_has_no_where_line() {
 	_tt_view="$ROOT/luasrc/view/fcc/console.htm"
 	_tt_src="$(cat "$TERMINAL")"
 	_tt_css="$ROOT/htdocs/luci-static/resources/fcc/fcc.css"
 
-	# The row exists before the first answer and is the page's first element,
-	# so a console with nothing to say does not shift the pane down.
-	assert_contains "$(cat "$_tt_view")" 'id="fcc-term-where"' \
-		"the console has the where row"
-	assert_contains "$(sed -n '/id="fcc-term-where"/p' "$_tt_view")" 'hidden' \
-		"hidden until there is an answer"
-	_tt_where_at="$(grep -n 'id="fcc-term-where"' "$_tt_view" | cut -d: -f1)"
-	_tt_toolbar_at="$(grep -n 'class="fcc-toolbar"' "$_tt_view" | head -1 | cut -d: -f1)"
-	assert_eq 1 "$((_tt_where_at < _tt_toolbar_at))" \
-		"the row stands above the toolbar"
+	# The element, its renderer and the poll's runtime answer went together: a
+	# leftover of any one of them would draw the row into nothing.
+	assert_not_contains "$(cat "$_tt_view")" 'fcc-term-where' \
+		"the console carries no where row"
+	assert_not_contains "$_tt_src" 'renderRuntimeLine' \
+		"the script has no renderer for one"
+	assert_not_contains "$_tt_src" "FCC.\$('#fcc-term-where')" \
+		"and nothing looks the element up"
+	assert_not_contains "$_tt_src" 'state.runtime' \
+		"the target poll no longer carries a runtime answer"
+
+	# Both modes' sentences, so neither can come back with only its half.
+	assert_not_contains "$_tt_src" 'This router · agent runtime:' \
+		"local mode's runtime label is gone"
+	assert_not_contains "$_tt_src" 'LAN machine:' \
+		"and LAN mode's machine label is gone"
+	assert_not_contains "$_tt_src" 'login directory (default)' \
+		"nor the sentence a LAN default used to show"
+
+	assert_not_contains "$(cat "$_tt_css")" '.fcc-term-where' \
+		"and no style is left for the removed row"
 
 	# The page's two hint paragraphs were removed on request: the tab bar and
 	# the toolbar name the page, and neither paragraph left a blank slot.
@@ -589,29 +599,6 @@ test_console_names_where_the_agent_runs() {
 		"and no bottom note"
 	assert_not_contains "$(cat "$_tt_view")" 'survive a page reload' \
 		"nor any fragment of one"
-
-	# What the script draws, per mode.
-	assert_contains "$_tt_src" 'function renderRuntimeLine()' \
-		"the console has one renderer for the row"
-	assert_contains "$_tt_src" "FCC.\$('#fcc-term-where')" \
-		"which owns that element"
-	assert_contains "$_tt_src" 'state.runtime' \
-		"and reads the runtime answer"
-	assert_contains "$_tt_src" 'workdir_enabled' \
-		"the working directory counts only while it is enabled"
-	assert_contains "$_tt_src" 'login directory (default)' \
-		"an unset directory says which default applies"
-	assert_contains "$_tt_src" 'This router · agent runtime:' \
-		"local mode names this router's runtime"
-	assert_contains "$_tt_src" 'LAN machine:' \
-		"and LAN mode names the machine it reaches"
-
-	# The ten-second target poll carries the fields, so a directory changed on
-	# the Configuration tab reaches an open console without an SSH round trip.
-	assert_contains "$(sed -n '/function refreshTarget()/,/^	}$/p' "$TERMINAL")" \
-		'state.runtime = {' "the poll refreshes the runtime answer"
-	assert_contains "$(sed -n '/function refreshTarget()/,/^	}$/p' "$TERMINAL")" \
-		'renderRuntimeLine();' "and redraws the row when only the directory changed"
 
 	# A LAN target that was never configured is a standing fact Basic
 	# Information already states. The console's status line stays empty for
@@ -624,9 +611,6 @@ test_console_names_where_the_agent_runs() {
 	# two empty rows below the toolbar; the console takes it out of the flow.
 	assert_contains "$(cat "$_tt_css")" '#fcc-term-status:empty' \
 		"an empty status line does not reserve a row gap"
-
-	assert_contains "$(cat "$_tt_css")" '.fcc-term-where' \
-		"the row has its own style"
 }
 
 test_cgi_quotes_its_argv() {

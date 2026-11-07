@@ -251,11 +251,9 @@ that machine: it is checked when saved and again on that machine before a
 session is created, so a mistake is named rather than surfacing as an agent that
 will not start. The path is used only for the session's own `cd`, never
 concatenated into a command, so a path containing spaces is passed as it is.
-At the top of the Web Console a line names where the agent runs:
-`[This router]` shows this router's runtime directory (it follows the install
-path in *Configuration Management*), and `[LAN]` shows that machine's `user@address` and
-the session's working directory (or "login directory (default)" when none is
-set).
+The Web Console does not repeat where the agent runs: the agent label above
+the dropdown already says whether the controls act on this router or on the LAN
+machine.
 
 While the server is running the LAN panel shows the same six lines as
 `[This router]`: running, version, process ID, uptime, memory (RSS) and

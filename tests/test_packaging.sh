@@ -609,12 +609,13 @@ test_the_console_follows_the_configured_side() {
 		"whose static text is the default, this router"
 	assert_not_contains "$(cat "$_view")" 'running a coding agent on this router' \
 		"the page description no longer claims the agent runs here"
-	# The static LAN note went with the hints: the where line names the machine,
-	# the account and the directory for the mode actually in effect.
+	# The static LAN note went with the hints, and the line that replaced it —
+	# the machine, the account and the working directory — was removed on
+	# request. The label above the dropdown is what names the machine now.
 	assert_not_contains "$(cat "$_view")" 'On the LAN side the agent itself' \
 		"and the static LAN note is gone"
-	assert_contains "$(cat "$_view")" 'id="fcc-term-where"' \
-		"its job is done by the runtime line"
+	assert_not_contains "$(cat "$_view")" 'fcc-term-where' \
+		"and no runtime line stands above the toolbar"
 
 	assert_contains "$(cat "$_js")" "FCC.api('console'" \
 		"the page asks for the console state rather than only an agent list"

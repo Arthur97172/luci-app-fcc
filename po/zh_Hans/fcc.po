@@ -355,9 +355,6 @@ msgstr "局域网"
 msgid "LAN access was opened in the firewall. The WAN is unaffected."
 msgstr "已在防火墙中开放局域网访问。WAN 不受影响。"
 
-msgid "LAN machine:"
-msgstr "局域网主机："
-
 msgid "Latest"
 msgstr "最新"
 
@@ -1005,9 +1002,6 @@ msgid ""
 msgstr ""
 "本机需要 ssh-keyscan 才能读取远程主机密钥（软件包 openssh-client-utils）。"
 
-msgid "This router · agent runtime:"
-msgstr "本机 · 智能体运行时："
-
 msgid "To upgrade luci-app-fcc itself, run on the router:"
 msgstr "如需升级 luci-app-fcc 本身，请在路由器上执行："
 
@@ -1096,9 +1090,6 @@ msgstr "已安装"
 msgid "listening"
 msgstr "监听中"
 
-msgid "login directory (default)"
-msgstr "登录目录（默认）"
-
 msgid "not checked"
 msgstr "未检查"
 
@@ -1141,9 +1132,6 @@ msgstr "有可用更新"
 msgid "uptime"
 msgstr "运行时间"
 
-msgid "working directory:"
-msgstr "工作目录："
-
 msgid ""
 "⚠️ Note: avoid choosing “All agents” when installing. It triggers a large "
 "download, makes progress slow and takes about 8 GB of storage. Choose only "
@@ -1151,6 +1139,18 @@ msgid ""
 msgstr ""
 "⚠️ 注意：安装时请避免选择“全部智能体”。这会触发大量下载导致进度缓慢，并占用约 "
 "8 GB 存储空间。建议只选择您需要的项分批安装。"
+
+#~ msgid "LAN machine:"
+#~ msgstr "局域网主机："
+
+#~ msgid "This router · agent runtime:"
+#~ msgstr "本机 · 智能体运行时："
+
+#~ msgid "login directory (default)"
+#~ msgstr "登录目录（默认）"
+
+#~ msgid "working directory:"
+#~ msgstr "工作目录："
 
 #~ msgid "Custom"
 #~ msgstr "自定义"
