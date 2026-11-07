@@ -2478,7 +2478,7 @@ test_the_tab_bar_orders_console_settings_monitor_install() {
 		'"fcc", "info"}, template("fcc/info"), _("Basic Information"), 30' \
 		"the monitor is third"
 	assert_contains "$(cat "$_ts_ctrl")" \
-		'"fcc", "install"}, template("fcc/install"), _("Install"), 40' \
+		'"fcc", "install"}, template("fcc/install"), _("Install & Deploy"), 40' \
 		"and the install tab is last"
 
 	assert_contains "$(cat "$ROOT/luasrc/view/fcc/config.htm")" \
@@ -2494,8 +2494,8 @@ test_the_tab_bar_orders_console_settings_monitor_install() {
 		'./htdocs/luci-static/resources/fcc/fcc-install.js' \
 		"with the script it loads"
 
-	# The tab bar label reuses the Install msgid the button already has, so the
-	# catalogue needs no new entry for it.
+	# The tab names the page's two jobs; the button inside keeps the short
+	# "Install" msgid, which it shares with the action it starts.
 	assert_contains "$(cat "$ROOT/luasrc/view/fcc/install.htm")" '<%:Install%>' \
 		"the page still names its install button with that msgid"
 

@@ -5,11 +5,12 @@
 --   Web Console              /admin/services/fcc/console   interactive terminal
 --   Configuration Management /admin/services/fcc/config    settings + server control
 --   Basic Info               /admin/services/fcc/info      runtime monitor
---   Install                  /admin/services/fcc/install   runtime lifecycle + diagnostics
+--   Install & Deploy         /admin/services/fcc/install   runtime lifecycle + diagnostics
 --
 -- The tab bar follows the order above: the console first, then the settings and
--- the monitor an operator consults while the server runs, and Install last,
--- because it is the rare, long-running action rather than the everyday page.
+-- the monitor an operator consults while the server runs, and Install & Deploy
+-- last, because it is the rare, long-running action rather than the everyday
+-- page.
 --
 -- Every API action follows the same shape: validate every parameter with
 -- luci.fcc.util, run one backend script with an explicit argv, and relay the
@@ -41,7 +42,7 @@ function index()
 	entry({"admin", "services", "fcc", "console"}, template("fcc/console"), _("Web Console"), 10)
 	entry({"admin", "services", "fcc", "config"}, template("fcc/config"), _("Configuration Management"), 20)
 	entry({"admin", "services", "fcc", "info"}, template("fcc/info"), _("Basic Information"), 30)
-	entry({"admin", "services", "fcc", "install"}, template("fcc/install"), _("Install"), 40)
+	entry({"admin", "services", "fcc", "install"}, template("fcc/install"), _("Install & Deploy"), 40)
 
 	-- One console session in a browser window of its own, opened from the Web
 	-- Console's toolbar. It is a page, not an API action, and it is routed by

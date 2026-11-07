@@ -337,8 +337,11 @@ msgstr ""
 msgid "Install"
 msgstr "安装"
 
-msgid "Install an agent first (Install → FCC Runtime)."
-msgstr "请先安装一个智能体（安装 → FCC 运行时）。"
+msgid "Install & Deploy"
+msgstr "安装部署"
+
+msgid "Install an agent first (Install & Deploy → FCC Runtime)."
+msgstr "请先安装一个智能体（安装部署 → FCC 运行时）。"
 
 msgid "Install path"
 msgstr "安装路径"
