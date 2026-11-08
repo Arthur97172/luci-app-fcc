@@ -48,8 +48,12 @@ anything else is installed.
 English is the source language and ships in `luci-app-fcc`; the compiled
 Simplified Chinese catalogue is a **separate package, `luci-i18n-fcc-zh-cn`**,
 which LuCI loads by itself whenever the interface language is Chinese — no
-configuration, no service restart. The two are independent and can be
-installed, upgraded and removed separately.
+configuration, no service restart. The catalogue depends on the application, so
+removing `luci-app-fcc` from `LuCI → System → Software` removes
+`luci-i18n-fcc-zh-cn` along with it instead of leaving an unused package behind.
+On the command line, pass the same option the page uses —
+`--force-removal-of-dependent-packages` for opkg, `-r` for apk — or opkg will
+refuse the removal and apk will keep the application installed.
 
 ### Build from source
 

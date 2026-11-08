@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.2.1))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -219,15 +219,25 @@ endef
 #
 # Separate from the app package on purpose: the app ships English and nothing
 # else, and the translation is something you add. This is the layout upstream
-# LuCI uses for every application, and it is what lets the two be installed,
-# upgraded and removed independently — an English-only install no longer carries
-# 40 KB of catalogue it will never load.
+# LuCI uses for every application, and it is what keeps an English-only install
+# from carrying 40 KB of catalogue it will never load.
 #
-# It depends on luci-base and deliberately NOT on luci-app-fcc. A dependency on
-# the app would be circular the moment anything wanted the translation selected
-# by default, and nothing here needs it: the .lmo is a data file that LuCI's
-# template parser loads by name, so installing it without the app is harmless —
-# it simply sits unread. Adding the app afterwards needs no reinstall.
+# It DEPENDS on luci-app-fcc, which is what upstream's `define LuciTranslation`
+# in luci.mk writes as DEPENDS:=$(PKG_NAME). The reason only shows up when the
+# package is removed. LuCI's Software page never issues a bare removal: it
+# passes --force-removal-of-dependent-packages, and /usr/libexec/package-manager-call
+# turns that into `apk del -r` on 25.12. Both package managers read the flag as
+# "and everything that depends on it" — `apk del -r luci-app-uhttpd` purges
+# luci-i18n-uhttpd-zh-cn, and opkg's flag removes the dependent first, then the
+# package named on the command line. Without this edge the catalogue is linked
+# to the app by nothing at all, so uninstalling luci-app-fcc from that page left
+# luci-i18n-fcc-zh-cn installed as an orphan; --autoremove does not help,
+# because that flag only prunes dependencies the removed package had pulled in,
+# not a package the user selected in its own right.
+#
+# The trade-off is that the catalogue can no longer be installed on its own —
+# installing it pulls the app in. That is upstream's behaviour for every
+# luci-i18n-* package, and it is the price of removing both in one step.
 #
 # The path is the whole of the wiring. LuCI looks for <name>.<lang>.lmo under
 # /usr/lib/lua/luci/i18n when the interface language is zh-cn, where <name> is
@@ -245,7 +255,7 @@ define Package/luci-i18n-fcc-zh-cn
   CATEGORY:=LuCI
   SUBMENU:=Translations
   TITLE:=Chinese (Simplified) translation for luci-app-fcc
-  DEPENDS:=+luci-base
+  DEPENDS:=+luci-base +luci-app-fcc
   PKGARCH:=all
   URL:=https://github.com/Arthur97172/luci-app-fcc
 endef

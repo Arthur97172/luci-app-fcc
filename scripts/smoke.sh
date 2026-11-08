@@ -269,10 +269,11 @@ smoke_install() {
 }
 
 smoke_remove() {
-	# Both packages, in the reverse of the order they were installed. They are
-	# independent — the translation does not depend on the app — so neither
-	# manager would take the other out on its own, and a check that only removed
-	# the app would leave the catalogue behind and then fail on it.
+	# Both packages, in the reverse of the order they were installed. The
+	# translation depends on the app, so either manager's dependent-removal flag
+	# would take it out with the app — but the smoke run removes both by name so
+	# that the check proves both removal paths execute, not that one depends on
+	# the other.
 	if [ "$SMOKE_EXT" = apk ]; then
 		smoke_sh "apk del luci-i18n-fcc-zh-cn luci-app-fcc"
 	else
@@ -348,8 +349,9 @@ _sm_rc=0
 smoke_install "$SMOKE_STAGE/app.$SMOKE_EXT" || _sm_rc=$?
 smoke_check "the package installs" 0 "$_sm_rc"
 
-# Installed second, and separately, because that is how it is meant to arrive:
-# on its own, without the app present, and with nothing else to carry it.
+# Installed separately, as a second command, because that is how a person adds
+# it: the catalogue is its own package and its own install, not a file smuggled
+# into the app. The app is installed first because the catalogue depends on it.
 _sm_rc=0
 smoke_install "$SMOKE_STAGE/i18n.$SMOKE_EXT" || _sm_rc=$?
 smoke_check "the translation installs as a package of its own" 0 "$_sm_rc"

@@ -296,17 +296,21 @@ test_the_translation_package_is_defined_and_built() {
 		"the translation package is architecture-independent"
 }
 
-test_the_translation_package_does_not_depend_on_the_app() {
-	# Not a style rule. A dependency on luci-app-fcc would be circular the
-	# moment anything selected the translation by default, and it is not needed:
-	# the .lmo is a data file LuCI loads by name, so it is harmless to install
-	# on its own. What it must depend on is luci-base, which is where the loader
-	# that reads it lives.
+test_the_translation_package_depends_on_the_app() {
+	# This edge is what makes one removal take both packages out. LuCI's
+	# Software page removes with --force-removal-of-dependent-packages (which
+	# /usr/libexec/package-manager-call maps to `apk del -r` on 25.12), and both
+	# managers read that flag as "remove the dependents too" — opkg removes the
+	# dependent first, apk purges it. Upstream luci.mk's LuciTranslation writes
+	# the same edge as DEPENDS:=$(PKG_NAME) for every translation package.
+	# Without it the catalogue is linked to the app by nothing, and removing
+	# luci-app-fcc used to leave luci-i18n-fcc-zh-cn installed.
 	# The DEPENDS line itself, not the whole block: the block's TITLE and URL
-	# both name luci-app-fcc, and a check over the block would fail on those.
+	# both name luci-app-fcc, and a check over the block would pass vacuously.
 	_ts_dep="$(printf '%s\n' "$(makefile_define 'Package/luci-i18n-fcc-zh-cn')" \
 		| grep '^[[:space:]]*DEPENDS:=')"
-	assert_eq "  DEPENDS:=+luci-base" "$_ts_dep" "it depends on luci-base and nothing else"
+	assert_eq "  DEPENDS:=+luci-base +luci-app-fcc" "$_ts_dep" \
+		"it depends on luci-base and on the app it translates"
 }
 
 # ---------------------------------------------------------------------------

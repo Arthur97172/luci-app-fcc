@@ -44,7 +44,10 @@ apk add --allow-untrusted luci-i18n-fcc-zh-cn-*.apk   # 中文界面需额外安
 然后打开 `LuCI → 服务 → FCC智能体`。四个页面装完即可使用。
 
 英文界面随 `luci-app-fcc` 一起安装；简体中文目录在单独的 `luci-i18n-fcc-zh-cn` 包里，
-LuCI 界面语言为中文时会自动加载，无需配置、无需重启。两个包互相独立，可分别升级和卸载。
+LuCI 界面语言为中文时会自动加载，无需配置、无需重启。语言包依赖主包，所以在
+`LuCI → 系统 → 软件包` 里卸载 `luci-app-fcc` 时，`luci-i18n-fcc-zh-cn` 会作为依赖一起
+卸掉，不会留下没人使用的残留。命令行卸载要带上同样的选项——opkg 用
+`--force-removal-of-dependent-packages`，apk 用 `-r`——否则 opkg 会拒绝卸载，apk 会保留主包。
 
 ### 从源码编译
 

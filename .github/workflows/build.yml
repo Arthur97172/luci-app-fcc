@@ -401,6 +401,18 @@ jobs:
             d="$(unpack "$(basename "$f")")"
             test -f "$d/usr/lib/lua/luci/i18n/fcc.zh-cn.lmo" \
               || { echo "::error::$f carries no compiled zh-cn catalogue"; fail=1; }
+            # The catalogue must depend on the application. LuCI's Software page
+            # removes packages with --force-removal-of-dependent-packages, which
+            # /usr/libexec/package-manager-call maps to `apk del -r`; both
+            # package managers read that as "and its dependents". Drop the edge
+            # and removing luci-app-fcc leaves this package installed with
+            # nothing left to read it.
+            case "$f" in
+              *.ipk) grep -q '^Depends:.*luci-app-fcc' "$d/CONTROL/control" \
+                || { echo "::error::$f does not depend on luci-app-fcc"; fail=1; } ;;
+              *.apk) "$APK" adbdump "$f" 2>/dev/null | grep -q '^ *- luci-app-fcc$' \
+                || { echo "::error::$f does not depend on luci-app-fcc"; fail=1; } ;;
+            esac
             rm -rf "$d"
             echo "$(basename "$f"): payload ok"
           done
@@ -642,7 +654,7 @@ jobs:
             printf '| Version | `%s` |\n' "$ver"
             printf '| OpenWrt | 24.10 and earlier — `.ipk` (opkg) · 25.12 and later — `.apk` (apk) |\n'
             printf '| Architecture | `all` — pure Lua, JavaScript and shell, so one artifact fits ARM, x86 and MIPS |\n'
-            printf '| Packages | `luci-app-fcc` — the application, English only · `luci-i18n-fcc-zh-cn` — the Simplified Chinese catalogue, install it for a Chinese interface |\n'
+            printf '| Packages | `luci-app-fcc` — the application, English only · `luci-i18n-fcc-zh-cn` — the Simplified Chinese catalogue, install it for a Chinese interface; it depends on the application and is removed together with it |\n'
             printf '| FCC runtime | not shipped and not pinned — installed on demand from upstream |\n\n'
             printf '**Agents**\n\n'
             awk -F'|' '/^[a-z]/ { printf "- %s (`%s`)\n", $2, $3 }' \
