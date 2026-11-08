@@ -185,6 +185,32 @@ test_postinst_leaves_uci_defaults_to_the_wrapper() {
 		"and the script is still shipped and installed"
 }
 
+test_postrm_uninstalls_cleanly() {
+	_ts_pr="$(makefile_define Package/luci-app-fcc/postrm)"
+	assert_ne "" "$_ts_pr" "the package declares a postrm"
+
+	# A removal is meant to leave nothing of the package behind. The config is
+	# what "nothing" starts with: it belongs to a controller and an init script
+	# that are being deleted, and a reinstall must start from the packaged
+	# default rather than inherit whatever the last install left behind.
+	assert_contains "$_ts_pr" 'rm -f /etc/config/fcc' \
+		"the removal deletes the UCI config"
+
+	# And the browser session goes with it. LuCI sessions are objects inside
+	# rpcd, so `restart` is what makes the cookie held by the tab that clicked
+	# Remove stop resolving; `reload` (the postinst's choice) keeps them.
+	assert_contains "$_ts_pr" '/etc/init.d/rpcd restart' \
+		"the removal restarts rpcd so the LuCI session stops resolving"
+
+	# Neither of those may run against an image build's staging root.
+	assert_contains "$_ts_pr" 'IPKG_INSTROOT' \
+		"the removal is a no-op during an image build"
+
+	# The runtime and its user data are not the package's to delete.
+	assert_not_contains "$_ts_pr" 'rm -rf /opt/fcc' \
+		"the runtime under /opt/fcc is left alone"
+}
+
 # ---------------------------------------------------------------------------
 # Section 87: the package must not drag a language runtime onto the router
 # ---------------------------------------------------------------------------

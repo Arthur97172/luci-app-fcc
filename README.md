@@ -48,6 +48,8 @@ LuCI 界面语言为中文时会自动加载，无需配置、无需重启。语
 `LuCI → 系统 → 软件包` 里卸载 `luci-app-fcc` 时，`luci-i18n-fcc-zh-cn` 会作为依赖一起
 卸掉，不会留下没人使用的残留。命令行卸载要带上同样的选项——opkg 用
 `--force-removal-of-dependent-packages`，apk 用 `-r`——否则 opkg 会拒绝卸载，apk 会保留主包。
+卸载会删除 `/etc/config/fcc`（升级不会，配置原样保留），并重启 rpcd 让当前 LuCI 会话失效，
+浏览器退回登录页。
 
 ### 从源码编译
 

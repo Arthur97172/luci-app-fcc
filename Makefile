@@ -16,7 +16,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fcc
-PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.2.1))
+PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.2.2))
 # Bumped rather than PKG_VERSION: the package's contents changed while its
 # upstream version did not. Section 62 names the release and its tag after both
 # numbers — the release carrying luci-app-fcc_0.1.1-r4_all.ipk is called
@@ -31,7 +31,7 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.2.1))
 # file and setting this back to 1. scripts/version.sh composes the two into the
 # package name, the git tag and the release name at once, which is why the
 # number may not be reused.
-PKG_RELEASE:=2
+PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Arthur97172 <Arthur97172@users.noreply.github.com>
 PKG_LICENSE:=GPL-3.0
@@ -202,11 +202,27 @@ define Package/luci-app-fcc/postinst
 }
 endef
 
+# Removing the package is meant to leave nothing of it behind. /etc/config/fcc
+# is still declared in conffiles above — that is what keeps an *upgrade* from
+# overwriting the user's settings — but a removal is not an upgrade, and a
+# config left on disk belongs to a controller and init script that no longer
+# exist. A later reinstall would silently adopt stale values from it. OxiDNS
+# reaches the same end by not declaring a conffile at all; here the upgrade
+# protection is worth the explicit line.
+#
+# The rpcd restart is what logs the browser out. LuCI's session is an object
+# inside the rpcd process: the package that served the pages is now gone, so
+# the cookie held by the tab that clicked Remove has to stop resolving, and
+# the next click lands on the login page rather than on a request the removed
+# controller can no longer answer. The postinst uses `reload`, which keeps
+# sessions; only `restart` drops them.
 define Package/luci-app-fcc/postrm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	rm -f /tmp/luci-indexcache 2>/dev/null
+	rm -f /etc/config/fcc
+	rm -f /tmp/luci-indexcache* 2>/dev/null
 	rm -rf /tmp/luci-modulecache 2>/dev/null
+	[ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd restart >/dev/null 2>&1
 	# Intentionally do NOT remove /opt/fcc (runtime + user data).
 	# Removing the FCC runtime is an explicit user action (fcc-env uninstall).
 	exit 0

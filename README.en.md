@@ -53,7 +53,9 @@ removing `luci-app-fcc` from `LuCI → System → Software` removes
 `luci-i18n-fcc-zh-cn` along with it instead of leaving an unused package behind.
 On the command line, pass the same option the page uses —
 `--force-removal-of-dependent-packages` for opkg, `-r` for apk — or opkg will
-refuse the removal and apk will keep the application installed.
+refuse the removal and apk will keep the application installed. The removal also
+deletes `/etc/config/fcc` (an upgrade keeps it) and restarts rpcd, which ends
+the current LuCI session and sends the browser back to the login page.
 
 ### Build from source
 
