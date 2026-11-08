@@ -1,7 +1,7 @@
 <%#
  luci-app-fcc — Configuration.
 
- The settings form, the FCC Server service controls, and the SSH panel that
+ The FCC Server service controls, the settings form, and the SSH panel that
  controls one other machine on the LAN. The FCC runtime lifecycle — install,
  update, uninstall — and its diagnostics report moved to the Install tab in
  1.1.0; the install path and backup path the jobs read stay here, in the form
@@ -25,100 +25,6 @@
 
 <div class="cbi-map fcc-page">
 	<!-- No <h2 name="content">: the tab bar already names the page. -->
-
-	<!-- ------------------------------------------------------- settings -->
-	<div class="cbi-section">
-		<h3><%:Local settings%></h3>
-		<div class="cbi-section-node">
-			<div class="cbi-value">
-				<label class="cbi-value-title" for="fcc-enabled"><%:Enable FCC%></label>
-				<div class="cbi-value-field">
-					<input type="checkbox" id="fcc-enabled" class="cbi-input-checkbox">
-					<div class="cbi-value-description">
-						<%:Start the FCC server automatically and keep it supervised by procd.%>
-					</div>
-				</div>
-			</div>
-
-			<div class="cbi-value">
-				<label class="cbi-value-title" for="fcc-install-path"><%:Install path%></label>
-				<div class="cbi-value-field">
-					<input type="text" id="fcc-install-path" class="cbi-input-text" spellcheck="false">
-					<div class="cbi-value-description">
-						<%:Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation.%>
-					</div>
-				</div>
-			</div>
-
-			<div class="cbi-value">
-				<label class="cbi-value-title" for="fcc-backup-path"><%:Backup path%></label>
-				<div class="cbi-value-field">
-					<input type="text" id="fcc-backup-path" class="cbi-input-text" spellcheck="false">
-					<div class="cbi-value-description">
-						<%:Directory where an install sets its rollback copy aside — the previous runtime, and your data as it was before the install. It needs room for a full copy of the FCC data directory, so it is /tmp/fcc by default: /tmp is memory on OpenWrt, which keeps the copy off the flash the runtime lives on. The copy is removed as soon as the install ends either way. Set this to the install path if you would rather keep it beside the runtime.%>
-					</div>
-				</div>
-			</div>
-
-			<div class="cbi-value">
-				<label class="cbi-value-title" for="fcc-bind"><%:Bind address%></label>
-				<div class="cbi-value-field">
-					<input type="text" id="fcc-bind" class="cbi-input-text" spellcheck="false">
-					<div class="cbi-value-description">
-						<%:Address the FCC server listens on. The FCC Admin page is served through LuCI, which reaches the server on 127.0.0.1, so keep that unless another device must reach the FCC API directly. Only 0.0.0.0 exposes the server to the LAN, and it adds a LAN-only firewall rule; the port is never opened to the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page cannot be reached through one.%>
-					</div>
-				</div>
-			</div>
-
-			<div class="cbi-value">
-				<label class="cbi-value-title" for="fcc-port"><%:Port%></label>
-				<div class="cbi-value-field">
-					<input type="text" id="fcc-port" class="cbi-input-text" size="6" spellcheck="false">
-				</div>
-			</div>
-
-			<div class="cbi-value">
-				<label class="cbi-value-title" for="fcc-log-level"><%:Log level%></label>
-				<div class="cbi-value-field">
-					<select id="fcc-log-level" class="cbi-input-select">
-						<option value="debug">debug</option>
-						<option value="info">info</option>
-						<option value="warning">warning</option>
-						<option value="error">error</option>
-						<option value="critical">critical</option>
-					</select>
-				</div>
-			</div>
-
-			<div class="cbi-value">
-				<label class="cbi-value-title" for="fcc-auto-start"><%:Start on boot%></label>
-				<div class="cbi-value-field">
-					<input type="checkbox" id="fcc-auto-start" class="cbi-input-checkbox">
-				</div>
-			</div>
-
-			<!-- The form's primary action closes the form, so it sits at the
-			     right end of its own row. It is not a .cbi-value: Argon lays
-			     those out left to right and the button would sit under the
-			     labels, which read as an unfinished row rather than the end
-			     of the settings.
-
-			     Three verbs, in increasing strength. Save & Apply stores the
-			     values and restarts the server (and reconciles the firewall
-			     rule) so they take effect now; Save settings stores them and
-			     leaves a running server alone; Reset changes throws the edits
-			     away and puts the saved values back in the form. The labels
-			     name their context rather than saying Save/Reset, because
-			     LuCI's catalogues share one namespace and a bare "Reset"
-			     would retitle every other package's button. -->
-			<div class="fcc-actions">
-				<button id="fcc-save" class="cbi-button cbi-button-apply"><%:Save &amp; Apply%></button>
-				<button id="fcc-save-only" class="cbi-button"><%:Save settings%></button>
-				<button id="fcc-reset" class="cbi-button cbi-button-reset"><%:Reset changes%></button>
-			</div>
-		</div>
-		<div id="fcc-config-status"></div>
-	</div>
 
 	<!-- --------------------------------------------------- server control -->
 	<div class="cbi-section">
@@ -381,6 +287,99 @@
 		</div>
 	</div>
 
+	<!-- ------------------------------------------------------- settings -->
+	<div class="cbi-section">
+		<h3><%:Local settings%></h3>
+		<div class="cbi-section-node">
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-enabled"><%:Enable FCC%></label>
+				<div class="cbi-value-field">
+					<input type="checkbox" id="fcc-enabled" class="cbi-input-checkbox">
+					<div class="cbi-value-description">
+						<%:Start the FCC server automatically and keep it supervised by procd.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-install-path"><%:Install path%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-install-path" class="cbi-input-text" spellcheck="false">
+					<div class="cbi-value-description">
+						<%:Base directory for the FCC runtime. The runtime is placed in a “fcc” subdirectory, so /opt gives /opt/fcc. Changing this does not move an existing installation.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-backup-path"><%:Backup path%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-backup-path" class="cbi-input-text" spellcheck="false">
+					<div class="cbi-value-description">
+						<%:Directory where an install sets its rollback copy aside — the previous runtime, and your data as it was before the install. It needs room for a full copy of the FCC data directory, so it is /tmp/fcc by default: /tmp is memory on OpenWrt, which keeps the copy off the flash the runtime lives on. The copy is removed as soon as the install ends either way. Set this to the install path if you would rather keep it beside the runtime.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-bind"><%:Bind address%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-bind" class="cbi-input-text" spellcheck="false">
+					<div class="cbi-value-description">
+						<%:Address the FCC server listens on. The FCC Admin page is served through LuCI, which reaches the server on 127.0.0.1, so keep that unless another device must reach the FCC API directly. Only 0.0.0.0 exposes the server to the LAN, and it adds a LAN-only firewall rule; the port is never opened to the WAN. Any other address is narrowed to 127.0.0.1, because the Admin page cannot be reached through one.%>
+					</div>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-port"><%:Port%></label>
+				<div class="cbi-value-field">
+					<input type="text" id="fcc-port" class="cbi-input-text" size="6" spellcheck="false">
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-log-level"><%:Log level%></label>
+				<div class="cbi-value-field">
+					<select id="fcc-log-level" class="cbi-input-select">
+						<option value="debug">debug</option>
+						<option value="info">info</option>
+						<option value="warning">warning</option>
+						<option value="error">error</option>
+						<option value="critical">critical</option>
+					</select>
+				</div>
+			</div>
+
+			<div class="cbi-value">
+				<label class="cbi-value-title" for="fcc-auto-start"><%:Start on boot%></label>
+				<div class="cbi-value-field">
+					<input type="checkbox" id="fcc-auto-start" class="cbi-input-checkbox">
+				</div>
+			</div>
+
+			<!-- The form's primary action closes the form, so it sits at the
+			     right end of its own row. It is not a .cbi-value: Argon lays
+			     those out left to right and the button would sit under the
+			     labels, which read as an unfinished row rather than the end
+			     of the settings.
+
+			     Three verbs, in increasing strength. Save & Apply stores the
+			     values and restarts the server (and reconciles the firewall
+			     rule) so they take effect now; Save settings stores them and
+			     leaves a running server alone; Reset changes throws the edits
+			     away and puts the saved values back in the form. The labels
+			     name their context rather than saying Save/Reset, because
+			     LuCI's catalogues share one namespace and a bare "Reset"
+			     would retitle every other package's button. -->
+			<div class="fcc-actions">
+				<button id="fcc-save" class="cbi-button cbi-button-apply"><%:Save &amp; Apply%></button>
+				<button id="fcc-save-only" class="cbi-button"><%:Save settings%></button>
+				<button id="fcc-reset" class="cbi-button cbi-button-reset"><%:Reset changes%></button>
+			</div>
+		</div>
+		<div id="fcc-config-status"></div>
+	</div>
 	<!-- The runtime lifecycle and the diagnostics report are on the Install
 	     tab, beside the settings they read. -->
 </div>

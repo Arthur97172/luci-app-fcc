@@ -10,7 +10,7 @@ Four pages, one package:
 | Page | What it does |
 | --- | --- |
 | **Web Console** | An interactive session for Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, Aider and Antigravity CLI — one tmux session per agent, in the browser (DeepSeek Harness has a browser UI of its own; see below). |
-| **Configuration Management** | Local settings (address, port, log level), install and backup paths, start/stop/restart, the FCC Admin link, and control of the FCC server on one other machine over SSH. |
+| **Configuration Management** | The FCC Server controls (start/stop/restart on this router, the FCC Admin link, and control of the FCC server on one other machine over SSH), followed by this router's settings (address, port, log level) and the install and backup paths. |
 | **Basic Information** | Version, status, PID, uptime, RSS memory, CPU and hardware platform, system memory and storage. |
 | **Install** | The agent picker, install/uninstall/complete uninstall, updates, and the diagnostics report (the runtime panel refreshes every two seconds and pauses while the tab is hidden). |
 

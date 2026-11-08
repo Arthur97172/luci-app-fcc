@@ -167,11 +167,11 @@
 	margin: .5em 0 1em;
 }
 
-/* A toolbar that ends its row instead of starting it. The Settings form's
- * Save & Apply / Save settings / Reset changes already sit at the right end of
- * their row; the FCC Server controls directly below them used to start at the
- * left, so two rows of buttons a section apart began on opposite sides. The
- * actions stay .fcc-toolbar, because they keep its gap and wrap. */
+/* A toolbar that ends its row instead of starting it. The FCC Server controls
+ * used to start at the left edge while the Settings form's Save & Apply /
+ * Save settings / Reset changes sit at the right end of their row, so two rows
+ * of buttons a section apart began on opposite sides. The actions stay
+ * .fcc-toolbar, because they keep its gap and wrap. */
 .fcc-toolbar-end {
 	justify-content: flex-end;
 }

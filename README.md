@@ -11,7 +11,7 @@
 | 页面 | 作用 |
 | --- | --- |
 | **Web 控制台** | Claude Code、Codex、Pi、OpenCode、Cline、Hermes、DeepSeek Harness、Grok Build、Muse Code、Aider、Antigravity CLI 的交互式会话——每个 Agent 一个 tmux 会话，直接在浏览器里用（DeepSeek Harness 只有浏览器界面，见下文）。 |
-| **配置管理** | 本机设置（地址、端口、日志级别）、安装与备份路径、启动/停止/重启、FCC Admin 入口，以及通过 SSH 控制局域网内另一台机器。 |
+| **配置管理** | FCC Server 控制（本机启动/停止/重启、FCC Admin 入口，以及通过 SSH 控制局域网内另一台机器），其后是本机设置（地址、端口、日志级别）与安装、备份路径。 |
 | **基本信息** | 版本、状态、PID、运行时长、RSS 内存、CPU 与硬件平台、系统内存与存储。 |
 | **安装部署** | Agent 选择、安装/卸载/彻底卸载、更新、诊断报告（运行时信息每 2 秒刷新，后台标签页暂停）。 |
 

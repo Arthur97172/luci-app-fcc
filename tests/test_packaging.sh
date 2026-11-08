@@ -2116,10 +2116,10 @@ test_the_lan_panel_can_start_agents_in_a_directory() {
 }
 
 
-# Settings closes on three right-aligned verbs. The FCC Server controls a
-# section below started at the left edge, so two rows of buttons on one page
-# began on opposite sides. The row keeps the toolbar's gap and wrap and only
-# gains the alignment.
+# The FCC Server controls once started at the left edge while Settings closes
+# on three right-aligned verbs, so two rows of buttons on one page began on
+# opposite sides. The row keeps the toolbar's gap and wrap and only gains the
+# alignment.
 # ---------------------------------------------------------------------------
 
 test_the_server_controls_end_their_row() {
@@ -2138,6 +2138,28 @@ test_the_server_controls_end_their_row() {
 	# The settings row keeps its own class: it has no toolbar gap to inherit.
 	assert_contains "$(cat "$_ts_view")" 'class="fcc-actions"' \
 		"the settings verbs keep their own right-aligned row"
+}
+
+# ---------------------------------------------------------------------------
+# The Configuration tab opens on the server, not on the form
+#
+# The everyday question is whether FCC is running and how to start or stop it;
+# the address, port and paths below it are changed rarely. So the FCC Server
+# section — the mode switch, the state card and its buttons — comes first, and
+# the Local settings form closes the page.
+# ---------------------------------------------------------------------------
+
+test_the_server_controls_come_before_the_settings() {
+	_ts_view="$ROOT/luasrc/view/fcc/config.htm"
+	_ts_server=$(grep -n '<%:FCC Server%>' "$_ts_view" | head -1 | cut -d: -f1)
+	_ts_settings=$(grep -n '<%:Local settings%>' "$_ts_view" | head -1 | cut -d: -f1)
+
+	assert_ok "the page still names the server section" test -n "$_ts_server"
+	assert_ok "and the settings section" test -n "$_ts_settings"
+	assert_eq 1 "$((_ts_server < _ts_settings))" \
+		"the server section is rendered first"
+	assert_eq 2 "$(grep -c 'class="cbi-section"' "$_ts_view")" \
+		"and the page still holds exactly the two sections"
 }
 
 # ---------------------------------------------------------------------------
