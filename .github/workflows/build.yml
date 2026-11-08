@@ -333,11 +333,15 @@ jobs:
           fail=0
 
           # An .ipk is a tar holding control.tar.gz and data.tar.gz. Unpacking
-          # both is safe: neither is executed.
+          # both is safe: neither is executed. Both are unpacked into one
+          # directory because the control archive is where the Depends line
+          # lives — ./control, at the root — and the data archive is where the
+          # files a package ships live.
           unpack_ipk() {
             _vi_d="$(mktemp -d)"
             tar -C "$_vi_d" -xzf "$DIST/$1"
             tar -C "$_vi_d" -xzf "$_vi_d/data.tar.gz"
+            tar -C "$_vi_d" -xzf "$_vi_d/control.tar.gz"
             printf '%s' "$_vi_d"
           }
 
@@ -408,7 +412,13 @@ jobs:
             # and removing luci-app-fcc leaves this package installed with
             # nothing left to read it.
             case "$f" in
-              *.ipk) grep -q '^Depends:.*luci-app-fcc' "$d/CONTROL/control" \
+              # An .ipk keeps its control file at the archive root — the
+              # control.tar.gz inside it holds ./control, ./postinst, ./prerm,
+              # and unpack_ipk extracts both members into the same directory.
+              # There is no CONTROL/ directory; that is the layout opkg builds
+              # while installing under /usr/lib/opkg, not the layout of the
+              # package file.
+              *.ipk) grep -q '^Depends:.*luci-app-fcc' "$d/control" \
                 || { echo "::error::$f does not depend on luci-app-fcc"; fail=1; } ;;
               *.apk) "$APK" adbdump "$f" 2>/dev/null | grep -q '^ *- luci-app-fcc$' \
                 || { echo "::error::$f does not depend on luci-app-fcc"; fail=1; } ;;
