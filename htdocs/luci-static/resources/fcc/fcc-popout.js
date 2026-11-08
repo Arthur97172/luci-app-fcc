@@ -70,6 +70,22 @@
 			convertEol: false,
 			theme: { background: '#1e1e1e', foreground: '#d4d4d4' }
 		});
+
+		/* xterm keeps Ctrl+V as the terminal's own ^V: it sends 0x16 and
+		 * cancels the keydown, so the browser never runs its paste command
+		 * and the paste event xterm listens for is never dispatched — users
+		 * typed ^V instead of pasting. Returning false here skips xterm's
+		 * handling, so the browser pastes natively and feeds xterm's paste
+		 * handler, which reaches onData like any other paste. AltGr is
+		 * Ctrl+Alt on Windows, so a keydown with Alt stays with xterm. */
+		term.attachCustomKeyEventHandler(function (ev) {
+			if (ev.type === 'keydown' && (ev.ctrlKey || ev.metaKey) && !ev.altKey
+				&& (ev.key === 'v' || ev.key === 'V' || ev.code === 'KeyV')) {
+				return false;
+			}
+			return true;
+		});
+
 		fit = new window.FitAddon.FitAddon();
 		term.loadAddon(fit);
 		term.open(FCC.$('#fcc-popout'));

@@ -16,7 +16,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fcc
-PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.2.3))
+PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo 1.2.4))
 # Bumped rather than PKG_VERSION: the package's contents changed while its
 # upstream version did not. Section 62 names the release and its tag after both
 # numbers — the release carrying luci-app-fcc_0.1.1-r4_all.ipk is called

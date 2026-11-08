@@ -555,6 +555,46 @@ test_pages_share_the_key_queue() {
 }
 
 # ---------------------------------------------------------------------------
+# Ctrl+V pastes into the agent's conversation
+#
+# xterm keeps Ctrl+V as the terminal's own ^V: it sends 0x16 and cancels the
+# keydown, so the browser never runs its paste command and the paste event
+# xterm listens for is never dispatched. Copying text and pressing Ctrl+V in
+# the console — or in the window "Open in browser" opens — typed ^V into the
+# agent instead of pasting. Both pages now hand Ctrl/Cmd+V back to the browser
+# through the supported hook; the browser's own paste then reaches xterm's
+# paste handler, and the bytes travel the normal onData path.
+#
+# The shortcut is matched on the key and on the physical code: xterm decides
+# from keyCode, which is layout-independent, and a non-Latin layout reports
+# its own character in ev.key. AltGr reports Ctrl+Alt on Windows, so a keydown
+# carrying Alt must stay with xterm.
+# ---------------------------------------------------------------------------
+
+test_ctrl_v_is_left_to_the_browser() {
+	for _tt_f in "$TERMINAL" "$POPOUT"; do
+		_tt_name="$(basename "$_tt_f")"
+		_tt_hook="$(sed -n '/attachCustomKeyEventHandler/,/^		});/p' "$_tt_f")"
+		assert_contains "$(cat "$_tt_f")" 'attachCustomKeyEventHandler' \
+			"$_tt_name attaches a custom key handler"
+		assert_contains "$_tt_hook" "ev.type === 'keydown'" \
+			"$_tt_name only acts on keydown"
+		assert_contains "$_tt_hook" 'ev.ctrlKey || ev.metaKey' \
+			"$_tt_name takes Ctrl and Cmd"
+		assert_contains "$_tt_hook" '!ev.altKey' \
+			"$_tt_name leaves AltGr (Ctrl+Alt) to xterm"
+		assert_contains "$_tt_hook" "ev.key === 'v'" \
+			"$_tt_name matches the v key"
+		assert_contains "$_tt_hook" "ev.code === 'KeyV'" \
+			"$_tt_name matches the physical key, whatever the layout"
+		assert_contains "$_tt_hook" 'return false;' \
+			"$_tt_name lets the browser run its paste"
+		assert_contains "$_tt_hook" 'return true;' \
+			"and every other key still goes to the agent"
+	done
+}
+
+# ---------------------------------------------------------------------------
 # The console does not name where the agent runs
 #
 # A row above the toolbar used to answer it: this router's runtime root, or the
